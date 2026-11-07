@@ -589,7 +589,21 @@ dropping entries are layered:
   they stay omitted and the count-based policing covers them. Residual: if the
   direct cache lacks the current version (for example, the node was down when
   it was folded and the upstream pruned it), the entry remains unavailable
-  until a source capable of proving that version is used.
+  until a source capable of proving that version is used. The checkpoint
+  archive is such a source, but only for checkpoints named in the archive
+  backfill list (see *Archive backfill* under the cache fast path).
+- **Per-entry failure isolation**: the producer proves each listed child
+  separately. `NotFound` skips that child (above); so does an `Encoding`
+  failure — something about that one child cannot be decoded or built,
+  typically a defining checkpoint holding a transaction this binary cannot
+  decode — counted by
+  `ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total` and warned once
+  per id per hour. Before this, one such child failed the whole page, and with
+  it every walk of the collection: on mainnet a single undecodable checkpoint
+  starved the bag event pump of every session in the bag. A `Network` failure
+  still fails the page, because it is a property of the source, not of the
+  child, and the consumer must back off rather than act on a page that
+  silently lost its entries.
 - **Downstream session-id dedup**: the MPC engine keys sessions by
   `SessionIdentifier`, skips already-completed sessions via the
   perpetual store, and treats re-delivery of an in-flight session as a
@@ -1023,6 +1037,70 @@ overwrite a genuine retained entry with an unverified blob.
 Gaps are in-memory only — after a restart the on-chain
 uncompleted-session re-pull is the backstop.
 
+**Archive backfill (checkpoints lost for good).** A checkpoint can also be
+lost after its fetch succeeded: the fold failed (on mainnet, checkpoint
+`342064089` held a transaction whose `TransactionExpiration` encoding the
+deployed binary could not decode, so the fold failed every tick until the
+gap was dropped), and the fullnode then pruned it. The pending gap is gone
+(in-memory, ten minutes), the proof provider can rebuild proofs only from the
+fullnode or this cache, and the uncompleted-session re-pull reads the bag
+through the same verified path — so an entry whose only proof rode that
+checkpoint is permanently invisible, on this node and on every mirrored peer
+it relays to. On mainnet that entry was the epoch's network encryption key
+reconfiguration request, without which the epoch cannot close.
+
+A direct node therefore re-folds a list of checkpoints from the archive at
+startup (`IkaCheckpointPusher::with_archive_backfill`): the binary's built-in
+list for the chain (`builtin_sui_checkpoint_archive_backfill` — mainnet
+`[342064089]`) merged with the operator's
+`sui-checkpoint-archive-backfill` config list. Rules:
+
+- The scan cursor never moves. A listed seq above the cursor is left to the
+  scan; a listed seq with any snapshot already in the cache is skipped
+  (folded earlier, and pinned — below). Mirrored nodes and nodes with no
+  archive skip the backfill with an info log.
+- The fetch runs in its own task, bounded at 90 s — above the object-store
+  reader's internal 60 s retry of every non-NotFound error, including blobs
+  it cannot decode, so such a blob surfaces as its error rather than as a
+  timeout — and never holds back the scan. Every failure is retried with
+  doubling backoff from 5 s, capped at 10 minutes, until the checkpoint
+  settles; nothing is dropped.
+- Verification is the archive-gap verification unchanged
+  (`verify_archive_checkpoint`: sequence binding, committee BLS, artifacts
+  digest over the whole object set), then the fold-time verification inside
+  `build_entries`, then one more binding the other fold paths lack: each
+  folded object must be the output object whose reference equals the
+  committee-attested reference for its id
+  (`bind_objects_to_attested_state`; see *Residuals*). A blob failing any of
+  them is refused at `error!` (`security_critical`) and retried, never
+  folded. Verifying an old checkpoint needs its Sui epoch's committee, which
+  the committee store derives from the persisted end-of-epoch summary of the
+  epoch before; a missing committee is its own failure reason, and the log
+  says whether the ratchet has not reached that epoch yet or the chain has a
+  hole below the head.
+- Only objects the node's own fullnode still reports at exactly the archived
+  reference are folded. The in-order scan never folds an old version over a
+  newer one, but a backfilled checkpoint is far older than anything the scan
+  reaches: a newer version may have aged out of the cache since, or the
+  object may have been deleted, and folding either would let a cache-first
+  read serve state that is no longer current. This is the currency bar the
+  proof provider already applies before reusing a snapshot; it grants a
+  lying fullnode nothing beyond the withholding it already has. Objects the
+  cache already holds at that version or newer are left alone.
+
+A backfilled entry then reaches every consumer through existing paths: the
+direct reader's pruned-proof fallback and the proof provider's
+exact-current snapshot reuse (served to mirrored peers through the mirror
+server, where it passes the peer's own committee, inclusion, membership and
+currency checks — an anchor this old is below any changeset index window,
+so currency reads `Unknown` and accepts).
+
+The public archive keeps ordinary checkpoints about 30 days, so a built-in
+entry must be removed by a later release once it has done its job; a node
+that never backfilled the entry and boots after the archive expired it
+keeps retrying at the 10-minute cap and reports
+`ika_ocs_pusher_backfill_pending` > 0.
+
 The two **singleton anchors** — the `System` and `DWalletCoordinator`
 inner objects (and their versioned-child inners) — are served from the
 folded cache **even when the staleness tripwire trips**.
@@ -1106,6 +1184,34 @@ path silently disables itself. Restore both or neither.
 The parent→children index is **rebuilt from the objects' owners on load**,
 not persisted — it is derived state, so persisting it would create a second
 thing to keep consistent.
+
+### Backfilled snapshots are pinned against the retain window
+
+A backfilled checkpoint is typically far older than the retain window
+(mainnet `342064089` was ~600k checkpoints behind the head when it was needed,
+against a 432k default window), so the next sweep would drop exactly the
+snapshot the backfill exists to provide. On a direct node the cache is built
+with the backfill list as its pinned set
+(`VerifiedStateCache::with_pinned_checkpoints`), and the sweep keeps every
+snapshot whose source checkpoint is in it.
+
+- **What is pinned** is a snapshot, not an object id: absorbing a newer
+  version of the object replaces the snapshot, whose source is then the newer
+  checkpoint, so the object follows the window again.
+- **Restarts**: nothing pin-specific is persisted. The set is re-applied from
+  configuration when the cache is built — before the pusher's first absorb,
+  which is what runs the first sweep after a boot — and it matches persisted
+  snapshots by their stored source checkpoint. A seq leaving the list (removed
+  from the config, or from the built-in list by a later binary) releases its
+  snapshots to the next sweep.
+- **Deletion**: the cache has no tombstones, so a pinned object deleted or
+  wrapped on chain keeps its snapshot until its seq leaves the list —
+  bounded by the Ika objects of the listed checkpoints. It is not served as
+  a live bag entry: direct bag walks list children from the node's own
+  fullnode, and the provider reuses a snapshot only when the fullnode reports
+  the identical current reference. A direct cache-first read of that exact
+  id would still return it — the exposure every deleted object already has
+  until the window would prune it.
 
 ### A direct node serves the ratchet from its own retained store
 
@@ -1361,6 +1467,21 @@ because the bytes came from a peer's disk rather than its fullnode.
   Harmless only because `children_of` has no production caller today —
   every reference is inside `mod tests`. Whoever wires the first real
   caller has to reconcile them first.
+- **The scan and gap-repair folds do not bind object bytes to the attested
+  reference.** `build_entries` proves the reference the checkpoint's effects
+  attest for each Ika id, but pairs that proof with the FIRST output object
+  carrying the id and never compares the two; the artifacts digest covers the
+  effects, not the object bytes. Two consequences on a direct node, whose
+  cache-first reads serve the cached object without re-checking its proof:
+  an object written by several transactions of one checkpoint is cached at an
+  intermediate version until its next fold, and a source that serves genuine
+  summary and effects with altered object bytes (the node's own fullnode, or
+  the archive on gap repair) gets those bytes cached. Peers are not exposed:
+  the mirror serves a snapshot only on an exact current-reference match, and
+  a mirrored reader re-verifies every inclusion proof against the object it
+  receives. Only the archive backfill binds them
+  (`bind_objects_to_attested_state`); the same binding on the scan and
+  gap-repair folds is still open.
 - **The end-of-publish retention floor is not coupled to a lagging
   peer.** `eop_retention_floor()` clamps to the direct node's OWN oldest
   persisted committee summary; nothing couples it to any peer's ratchet
@@ -1387,6 +1508,18 @@ eventually recovers. Reader warnings are limited to one per minute; folder
 warnings name the refusal once per stretch. Refusals leave the folder's
 cursor *behind* the chain head, the opposite signature to a poisoned cursor. These metrics contain no object
 id, checkpoint digest, peer identity, raw error, or proof material.
+
+The archive backfill exports `ika_ocs_pusher_backfill_outcomes_total{outcome}`
+(per attempt `fetched` / `verified` / `failed`; per settled checkpoint
+`folded` / `already_cached` / `nothing_to_fold`),
+`ika_ocs_pusher_backfill_failures_total{reason}` (`archive_not_found`,
+`archive_fetch`, `archive_timeout`, `missing_committee`, `verification`,
+`currency_lookup`) and the gauge `ika_ocs_pusher_backfill_pending` — the
+alert target: non-zero for long means the node still lacks objects it was
+told it needs. Any `verification` failure means the archive served a blob that
+does not verify and is also logged as security-critical. A dynamic-field child
+skipped for an encoding error counts in
+`ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total`.
 
 Code anchors: `crates/ika-core/src/sui_connector/` — `verified_reader.rs`
 (verification, freshness/high-water, bag-membership binding),

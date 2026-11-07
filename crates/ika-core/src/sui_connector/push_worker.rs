@@ -16,14 +16,14 @@
 //! is unchanged. Only Ika-touched objects (with their proofs) are kept; all
 //! non-Ika objects plus tx / effects are dropped.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures::{StreamExt, stream};
 use ika_network::proof_provider::VerifiedObjectEntry;
-use ika_sui_client::archive::CheckpointArchive;
-use ika_sui_client::transport::SuiTransport;
+use ika_sui_client::archive::{ArchiveError, CheckpointArchive};
+use ika_sui_client::transport::{SuiTransport, TransportError};
 use ika_types::error::error_chain;
 use ika_types::messages_dwallet_mpc::IkaPackageConfig;
 use sui_light_client::proof::ocs::ModifiedObjectTree;
@@ -35,6 +35,7 @@ use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
 };
 use sui_types::object::Object;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
@@ -46,6 +47,25 @@ use crate::sui_connector::watermark_guard::WatermarkGuard;
 /// Bound both outstanding RPCs and fetched checkpoints awaiting their turn
 /// to fold. Overlap fullnode latency without buffering an entire catch-up span.
 const MAX_CONCURRENT_CHECKPOINT_FETCHES: usize = 8;
+
+/// Per-attempt bound on an archive backfill fetch. Sui's object-store reader
+/// retries every error except NotFound internally for up to 60 s — HTTP
+/// failures, and also a blob that fails to decompress, decode or convert — so
+/// this sits above that window: a blob this binary cannot decode then surfaces
+/// as its decode error instead of as a timeout. The fetch runs in its own task,
+/// so the bound never holds back the scan; a timeout means the store kept
+/// failing transiently for the whole internal retry window.
+const ARCHIVE_BACKFILL_FETCH_TIMEOUT: Duration = Duration::from_secs(90);
+/// First retry delay after a failed backfill attempt; doubles per failure.
+const ARCHIVE_BACKFILL_RETRY_INITIAL: Duration = Duration::from_secs(5);
+/// Cap on the backfill retry delay. Retries continue until the attempt
+/// succeeds: a listed checkpoint is one the node needs, and the store may
+/// recover.
+const ARCHIVE_BACKFILL_RETRY_MAX: Duration = Duration::from_secs(600);
+/// Bound on the fullnode lookups that check whether a backfilled object is
+/// still current — one `get_object` per Ika object of the checkpoint, run
+/// inside the tick, so this caps how long one attempt can hold the scan.
+const ARCHIVE_BACKFILL_CURRENCY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct IkaCheckpointPusher {
     /// Raw Sui transport used to fetch full checkpoints for proof
@@ -120,6 +140,12 @@ pub struct IkaCheckpointPusher {
     /// Whether the watermark-refusal warn has already fired for the current
     /// stretch. See [`Self::stall_warned`].
     watermark_refusal_warned: bool,
+    /// Checkpoints still to be re-folded from the archive (see
+    /// [`Self::with_archive_backfill`]). Unlike `pending_gaps` these are
+    /// checkpoints far behind the cursor whose objects the node lost for good
+    /// — the fullnode pruned them before any fold succeeded — so they are
+    /// retried until they fold, never dropped.
+    archive_backfill: BTreeMap<CheckpointSequenceNumber, BackfillState>,
 }
 
 /// Retry state of one scanned-but-unfetchable checkpoint.
@@ -128,6 +154,75 @@ struct PendingGap {
     /// When the archive was last consulted for this gap, so archive fetches
     /// are paced at `ARCHIVE_RETRY_INTERVAL` instead of every 250ms tick.
     last_archive_attempt: Option<Instant>,
+}
+
+type ArchiveFetch =
+    JoinHandle<Result<Result<CheckpointData, ArchiveError>, tokio::time::error::Elapsed>>;
+
+/// Retry state of one archive-backfill checkpoint.
+struct BackfillState {
+    failures: u32,
+    next_attempt: Instant,
+    /// The archive fetch, run in its own task so a slow store never holds back
+    /// the scan; the pusher only folds its result, on the tick it finishes.
+    in_flight: Option<ArchiveFetch>,
+}
+
+/// Why one archive-backfill attempt failed; the metric label of
+/// `pusher_backfill_failures_total`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackfillFailure {
+    /// The store answered NotFound: it does not (or no longer) hold the blob.
+    ArchiveNotFound,
+    /// Any other store error, including a blob this binary cannot decode.
+    ArchiveFetch,
+    /// No answer within `ARCHIVE_BACKFILL_FETCH_TIMEOUT`.
+    ArchiveTimeout,
+    /// The committee for the checkpoint's Sui epoch is not in the committee
+    /// store.
+    MissingCommittee,
+    /// The blob failed the archive verification (sequence binding, committee
+    /// signature or artifacts digest).
+    Verification,
+    /// The node's own fullnode could not say whether an object is current.
+    CurrencyLookup,
+}
+
+impl BackfillFailure {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ArchiveNotFound => "archive_not_found",
+            Self::ArchiveFetch => "archive_fetch",
+            Self::ArchiveTimeout => "archive_timeout",
+            Self::MissingCommittee => "missing_committee",
+            Self::Verification => "verification",
+            Self::CurrencyLookup => "currency_lookup",
+        }
+    }
+}
+
+/// How one archive-backfill checkpoint was settled; the `outcome` label of
+/// `pusher_backfill_outcomes_total` (alongside the per-attempt `fetched`,
+/// `verified` and `failed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackfillSettled {
+    /// At least one object was folded.
+    Folded,
+    /// Every current object of the checkpoint was already cached.
+    AlreadyCached,
+    /// The checkpoint has no Ika object that is still current: none at all, or
+    /// each was since modified, deleted or wrapped on chain.
+    NothingToFold,
+}
+
+impl BackfillSettled {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Folded => "folded",
+            Self::AlreadyCached => "already_cached",
+            Self::NothingToFold => "nothing_to_fold",
+        }
+    }
 }
 
 impl IkaCheckpointPusher {
@@ -199,7 +294,79 @@ impl IkaCheckpointPusher {
             pending_fast_forward: None,
             stall_warned: false,
             watermark_refusal_warned: false,
+            archive_backfill: BTreeMap::new(),
         })
+    }
+
+    /// Re-fold `seqs` from the checkpoint archive, without moving the cursor.
+    ///
+    /// Each listed checkpoint is one the node needs but never folded: the
+    /// fold failed while the fullnode still served it, and the fullnode has
+    /// since pruned it, so neither the scan, the pending-gap repair (in-memory,
+    /// minutes) nor the proof provider (fullnode or this cache only) can bring
+    /// its objects back. The archive retains ordinary checkpoints far longer.
+    ///
+    /// Every attempt runs the archive-gap verification unchanged
+    /// (`verify_archive_checkpoint`, then the fold-time verification inside
+    /// `build_entries`); a blob that fails it is refused loudly and retried,
+    /// never folded. Of the verified Ika objects, only those the node's own
+    /// fullnode still reports at exactly that object reference are folded.
+    /// The in-order scan never re-folds an old version over a newer one, but
+    /// this checkpoint is far older than anything the scan reaches: a newer
+    /// version of the object may have aged out of the cache's retain window
+    /// since, and an object may have been deleted. Folding either would let a
+    /// cache-first read serve state that is no longer current. This is the
+    /// same currency bar the proof provider applies before reusing a snapshot.
+    ///
+    /// Skipped, with an info log: seqs with a snapshot already in the cache
+    /// (folded earlier, and pinned — see
+    /// `VerifiedStateCache::with_pinned_checkpoints`), and everything when no
+    /// archive resolved. A seq above the cursor waits until the scan has
+    /// passed it — the scan may fold it, or a far-behind fast-forward may skip
+    /// it — and folding it first would move the cache's processed head past
+    /// the cursor. Attempts run at the top of every tick and are retried with
+    /// capped exponential backoff until they settle.
+    pub fn with_archive_backfill(mut self, seqs: BTreeSet<CheckpointSequenceNumber>) -> Self {
+        if seqs.is_empty() {
+            return self;
+        }
+        if self.archive.is_none() {
+            info!(
+                ?seqs,
+                "no Sui checkpoint archive is configured; skipping the archive backfill"
+            );
+            return self;
+        }
+        let now = Instant::now();
+        for seq in seqs {
+            let cached = self.cache.snapshots_from_checkpoint(seq);
+            if cached > 0 {
+                info!(
+                    seq,
+                    cached, "archive backfill skipped: the checkpoint's objects are already cached"
+                );
+                self.record_backfill_settled(BackfillSettled::AlreadyCached);
+                continue;
+            }
+            info!(
+                seq,
+                cursor = self.cursor,
+                deferred_until_scanned = seq > self.cursor,
+                "archive backfill scheduled"
+            );
+            self.archive_backfill.insert(
+                seq,
+                BackfillState {
+                    failures: 0,
+                    next_attempt: now,
+                    in_flight: None,
+                },
+            );
+        }
+        self.metrics
+            .pusher_backfill_pending
+            .set(self.archive_backfill.len() as i64);
+        self
     }
 
     pub async fn run(mut self) {
@@ -216,6 +383,9 @@ impl IkaCheckpointPusher {
     }
 
     async fn advance(&mut self) -> anyhow::Result<()> {
+        // Needs no watermark and never blocks on the archive (the fetch runs in
+        // its own task), so it runs ahead of everything that can end the tick.
+        self.drive_archive_backfill().await;
         self.retry_pending_gaps().await;
 
         // Disarm the previous tick's fast-forward proposal HERE, before the
@@ -687,6 +857,271 @@ impl IkaCheckpointPusher {
         }
     }
 
+    /// One pass over the archive backfill (see [`Self::with_archive_backfill`]):
+    /// fold the result of every fetch that has finished, and start the fetches
+    /// that are due. Never waits for the archive.
+    async fn drive_archive_backfill(&mut self) {
+        let Some(archive) = self.archive.clone() else {
+            return;
+        };
+        let seqs: Vec<CheckpointSequenceNumber> = self.archive_backfill.keys().copied().collect();
+        for seq in seqs {
+            let Some(state) = self.archive_backfill.get_mut(&seq) else {
+                continue;
+            };
+            let finished = match state.in_flight.take() {
+                Some(fetch) if fetch.is_finished() => fetch,
+                Some(fetch) => {
+                    state.in_flight = Some(fetch);
+                    continue;
+                }
+                // Not due, or not scanned yet (see `with_archive_backfill`).
+                None if Instant::now() < state.next_attempt || seq > self.cursor => continue,
+                None => {
+                    // The scan may have folded it since it was scheduled.
+                    if self.cache.snapshots_from_checkpoint(seq) > 0 {
+                        self.settle_backfill(seq, BackfillSettled::AlreadyCached);
+                    } else {
+                        let archive = archive.clone();
+                        state.in_flight = Some(tokio::spawn(async move {
+                            tokio::time::timeout(
+                                ARCHIVE_BACKFILL_FETCH_TIMEOUT,
+                                archive.fetch_checkpoint_data(seq),
+                            )
+                            .await
+                        }));
+                    }
+                    continue;
+                }
+            };
+            let fetched = match finished.await {
+                Ok(Ok(Ok(data))) => Ok(data),
+                Ok(Ok(Err(e))) => {
+                    let detail = error_chain(anyhow::Error::from(e)).to_string();
+                    // The object-store reader turns a 404 into this message and
+                    // returns at once; everything else it retried first.
+                    let failure = if detail.contains("not found in archive") {
+                        BackfillFailure::ArchiveNotFound
+                    } else {
+                        BackfillFailure::ArchiveFetch
+                    };
+                    Err((failure, detail))
+                }
+                Ok(Err(_elapsed)) => Err((
+                    BackfillFailure::ArchiveTimeout,
+                    format!(
+                        "no answer within {ARCHIVE_BACKFILL_FETCH_TIMEOUT:?}; the object-store \
+                         reader retries HTTP errors and undecodable blobs internally for 60s, so \
+                         the store kept failing for that whole window"
+                    ),
+                )),
+                Err(join_error) => Err((
+                    BackfillFailure::ArchiveFetch,
+                    format!("archive fetch task failed: {join_error}"),
+                )),
+            };
+            let result = match fetched {
+                Ok(data) => {
+                    self.metrics
+                        .pusher_backfill_outcomes_total
+                        .with_label_values(&["fetched"])
+                        .inc();
+                    self.fold_backfill_checkpoint(seq, &data).await
+                }
+                Err(failure) => Err(failure),
+            };
+            match result {
+                Ok(settled) => self.settle_backfill(seq, settled),
+                Err((failure, detail)) => self.schedule_backfill_retry(seq, failure, &detail),
+            }
+        }
+    }
+
+    fn settle_backfill(&mut self, seq: CheckpointSequenceNumber, settled: BackfillSettled) {
+        self.archive_backfill.remove(&seq);
+        self.metrics
+            .pusher_backfill_pending
+            .set(self.archive_backfill.len() as i64);
+        self.record_backfill_settled(settled);
+        info!(
+            seq,
+            outcome = settled.label(),
+            pending = self.archive_backfill.len(),
+            "archive backfill settled"
+        );
+    }
+
+    /// Verify a backfill checkpoint served by the archive and fold its Ika
+    /// objects that are still current (see [`Self::with_archive_backfill`]).
+    /// Nothing is folded unless every verification passes.
+    async fn fold_backfill_checkpoint(
+        &self,
+        seq: CheckpointSequenceNumber,
+        data: &CheckpointData,
+    ) -> Result<BackfillSettled, (BackfillFailure, String)> {
+        // Classified ahead of the verification below, which would report the
+        // same condition as a generic failure. Verifying an old checkpoint
+        // needs the committee of ITS Sui epoch: the store derives it from the
+        // persisted end-of-epoch summary before it, which every node whose
+        // committee chain walked past that epoch holds. Missing above the head
+        // means the ratchet has not reached it yet; missing at or below the
+        // head means the chain has a hole the ratchet will not refill.
+        let epoch = data.checkpoint_summary.epoch();
+        if self.committees.committee(epoch).is_none() {
+            let head = self.committees.head_epoch();
+            return Err((
+                BackfillFailure::MissingCommittee,
+                if epoch > head {
+                    format!(
+                        "no committee for Sui epoch {epoch} yet: the committee head is at {head}"
+                    )
+                } else {
+                    format!(
+                        "no committee for Sui epoch {epoch} although the committee head is at \
+                         {head}: the persisted committee chain has no entry for that epoch"
+                    )
+                },
+            ));
+        }
+        self.verify_archive_checkpoint(seq, data)
+            .map_err(|e| (BackfillFailure::Verification, error_chain(&e).to_string()))?;
+        self.metrics
+            .pusher_backfill_outcomes_total
+            .with_label_values(&["verified"])
+            .inc();
+        // Re-runs the fold-time verification, so the fold below sees exactly
+        // what a fullnode-served checkpoint would.
+        let entries = self
+            .build_entries(data)
+            .map_err(|e| (BackfillFailure::Verification, error_chain(&e).to_string()))?;
+        self.capture_committee(data);
+        self.persist_end_of_epoch(data, seq);
+        let Some((summary, entries)) = entries else {
+            return Ok(BackfillSettled::NothingToFold);
+        };
+        let entries = bind_objects_to_attested_state(data, entries)
+            .map_err(|e| (BackfillFailure::Verification, error_chain(&e).to_string()))?;
+
+        let ika_objects = entries.len();
+        let (cached, candidates): (Vec<_>, Vec<_>) = entries.into_iter().partition(|entry| {
+            self.cache
+                .get(entry.object.id())
+                .is_some_and(|snapshot| snapshot.object.version() >= entry.object.version())
+        });
+        // Inline in the tick (the fold needs `&self`), hence the bound.
+        let lookups = tokio::time::timeout(ARCHIVE_BACKFILL_CURRENCY_TIMEOUT, async {
+            let mut current = Vec::with_capacity(candidates.len());
+            let mut superseded = Vec::new();
+            let mut not_live = Vec::new();
+            for entry in candidates {
+                let id = entry.object.id();
+                match self.transport.get_object(id).await {
+                    Ok(live)
+                        if live.compute_object_reference()
+                            == entry.object.compute_object_reference() =>
+                    {
+                        current.push(entry)
+                    }
+                    Ok(live) => superseded.push((id, live.version().value())),
+                    Err(TransportError::NotFound(_)) => not_live.push(id),
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok((current, superseded, not_live))
+        })
+        .await;
+        let (current, superseded, not_live) = match lookups {
+            Ok(Ok(lookups)) => lookups,
+            Ok(Err(e)) => return Err((BackfillFailure::CurrencyLookup, e.to_string())),
+            Err(_elapsed) => {
+                return Err((
+                    BackfillFailure::CurrencyLookup,
+                    format!(
+                        "fullnode object lookups timed out after {ARCHIVE_BACKFILL_CURRENCY_TIMEOUT:?}"
+                    ),
+                ));
+            }
+        };
+        let folded: Vec<(ObjectID, u64)> = current
+            .iter()
+            .map(|entry| (entry.object.id(), entry.object.version().value()))
+            .collect();
+        if !current.is_empty() {
+            self.cache.absorb_entries(&summary, &current);
+        }
+        // Once per listed checkpoint, and the record of what it restored.
+        info!(
+            seq,
+            ika_objects,
+            ?folded,
+            already_cached = ?cached.iter().map(|entry| entry.object.id()).collect::<Vec<_>>(),
+            superseded_since = ?superseded,
+            not_live = ?not_live,
+            "archive backfill verified the checkpoint and folded its Ika objects that are still \
+             current and missing from the cache"
+        );
+        Ok(if !current.is_empty() {
+            BackfillSettled::Folded
+        } else if !cached.is_empty() {
+            BackfillSettled::AlreadyCached
+        } else {
+            BackfillSettled::NothingToFold
+        })
+    }
+
+    fn record_backfill_settled(&self, settled: BackfillSettled) {
+        self.metrics
+            .pusher_backfill_outcomes_total
+            .with_label_values(&[settled.label()])
+            .inc();
+    }
+
+    fn schedule_backfill_retry(
+        &mut self,
+        seq: CheckpointSequenceNumber,
+        failure: BackfillFailure,
+        detail: &str,
+    ) {
+        self.metrics
+            .pusher_backfill_outcomes_total
+            .with_label_values(&["failed"])
+            .inc();
+        self.metrics
+            .pusher_backfill_failures_total
+            .with_label_values(&[failure.label()])
+            .inc();
+        let Some(state) = self.archive_backfill.get_mut(&seq) else {
+            return;
+        };
+        state.failures = state.failures.saturating_add(1);
+        let retry_in = archive_backfill_retry_delay(state.failures);
+        state.next_attempt = Instant::now() + retry_in;
+        let failures = state.failures;
+        if failure == BackfillFailure::Verification {
+            error!(
+                security_critical = true,
+                seq,
+                failures,
+                ?retry_in,
+                error = detail,
+                "archive backfill: the archive served a checkpoint that failed verification — \
+                 refusing to fold it"
+            );
+        } else {
+            // Paced by the backoff (at most every ten minutes once it caps),
+            // and each line is actionable: the node keeps lacking objects it
+            // needs until the attempt succeeds.
+            warn!(
+                seq,
+                failures,
+                reason = failure.label(),
+                ?retry_in,
+                error = detail,
+                "archive backfill attempt failed; will retry"
+            );
+        }
+    }
+
     /// Eagerly install the committee transition `data` commits to, if it is the
     /// end-of-epoch checkpoint of the current head epoch. A no-op otherwise.
     /// Best-effort: a verify failure is logged and left to the background
@@ -931,6 +1366,60 @@ impl IkaCheckpointPusher {
     }
 }
 
+/// Bind each entry's object CONTENTS to the committee-attested state of
+/// `data`, for the archive backfill.
+///
+/// The verification before this point binds the checkpoint's effects to the
+/// committee (artifacts digest over every written reference), and
+/// `build_entries` proves the reference the effects attest for each Ika id —
+/// but pairs that proof with the FIRST output object carrying the id, without
+/// comparing the two. That object is an earlier version when several
+/// transactions of the checkpoint wrote the id, and for a blob from an
+/// untrusted store it could carry any bytes under the right id. A cache-first
+/// read serves the cached object without re-checking its proof, so the
+/// backfill folds only the output object whose reference IS the attested one,
+/// and refuses the checkpoint if there is none.
+fn bind_objects_to_attested_state(
+    data: &CheckpointData,
+    entries: Vec<VerifiedObjectEntry>,
+) -> anyhow::Result<Vec<VerifiedObjectEntry>> {
+    let tree = ModifiedObjectTree::new(&CheckpointArtifacts::from(data))
+        .map_err(|e| anyhow::anyhow!("ModifiedObjectTree over archive blob: {e}"))?;
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            let id = entry.object.id();
+            let attested = tree
+                .get_object_state(id)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("object {id} is not in the checkpoint's tree"))?;
+            let object = data
+                .transactions
+                .iter()
+                .flat_map(|tx| tx.output_objects.iter())
+                .find(|object| object.compute_object_reference() == attested)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no output object of the blob matches the committee-attested reference \
+                         {attested:?} of object {id}"
+                    )
+                })?;
+            entry.object = object.clone();
+            Ok(entry)
+        })
+        .collect()
+}
+
+/// Delay before the next archive-backfill attempt after `failures`
+/// consecutive failures: doubling from `ARCHIVE_BACKFILL_RETRY_INITIAL`,
+/// capped at `ARCHIVE_BACKFILL_RETRY_MAX`.
+fn archive_backfill_retry_delay(failures: u32) -> Duration {
+    let doublings = failures.saturating_sub(1).min(16);
+    ARCHIVE_BACKFILL_RETRY_INITIAL
+        .saturating_mul(1 << doublings)
+        .min(ARCHIVE_BACKFILL_RETRY_MAX)
+}
+
 /// `true` if any address in the object's Move type tree matches an
 /// Ika package id. Walks through generic parameters, so wrapper types
 /// like `0x2::dynamic_field::Field<K, IkaEvent>` qualify when `K` or
@@ -969,29 +1458,46 @@ mod tests {
     use async_trait::async_trait;
     use parking_lot::Mutex;
     use std::collections::{BTreeMap, HashMap};
+    use std::slice;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use ika_network::proof_provider::{
+        BatchVerifiedObjectsResponse, ProofBuildResult, ProofProvider,
+        VerifiedDynamicFieldsPageRequest, VerifiedDynamicFieldsPageResponse,
+        VerifiedObjectResponse, recover_pruned_proof,
+    };
     use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction, TransportError};
-    use sui_types::base_types::{ObjectDigest, SequenceNumber, TransactionDigest};
+    use parking_lot::RwLock;
+    use sui_types::base_types::{
+        ExecutionDigests, ObjectDigest, SequenceNumber, TransactionDigest,
+    };
     use sui_types::committee::{Committee, ProtocolVersion};
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointDigest;
+    use sui_types::effects::{EffectsObjectChange, TransactionEffects};
+    use sui_types::execution_status::ExecutionStatus;
+    use sui_types::full_checkpoint_content::CheckpointTransaction;
     use sui_types::gas::GasCostSummary;
+    use sui_types::message_envelope::Message;
     use sui_types::messages_checkpoint::{
         CheckpointCommitment, CheckpointContents, CheckpointSummary, EndOfEpochData,
     };
-    use sui_types::object::Owner;
+    use sui_types::object::{MoveObject, Owner};
+    use sui_types::parse_sui_type_tag;
+    use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
     use tokio::time::{Instant as TokioInstant, sleep};
 
     use crate::sui_connector::committee_store::CommitteeBootstrap;
+    use crate::sui_connector::ocs_currency::ChangesetIndex;
+    use crate::sui_connector::verified_reader::{OcsVerifiedReader, VerifiedDynamicFieldsPage};
     use crate::sui_connector::verified_state_cache::{
         SharedVerifiedStateCache, VerifiedStateCache,
     };
 
     /// Mock transport that serves a fixed `get_latest_checkpoint` and a
     /// configurable set of full checkpoints; a missing seq is `NotFound`
-    /// (modeling an upstream prune). Only the three reads the pusher makes are
-    /// implemented; the rest panic so an unexpected call is loud.
+    /// (modeling an upstream prune). Only the reads the pusher makes are implemented;
+    /// the rest panic so an unexpected call is loud.
     struct MockTransport {
         fetch_control: Option<Arc<FetchControl>>,
         latest: CertifiedCheckpointSummary,
@@ -1004,6 +1510,10 @@ mod tests {
         /// `last_checkpoint_of_epoch` (the catch-up boundary walk). Empty for
         /// the slices that never reach `capture_committees_through`.
         eoe_seqs: HashMap<u64, CheckpointSequenceNumber>,
+        /// The fullnode's CURRENT objects, for `get_object` (the archive
+        /// backfill's currency check). An id absent here is `NotFound` —
+        /// deleted or wrapped on chain.
+        live_objects: HashMap<ObjectID, Object>,
     }
 
     #[derive(Default)]
@@ -1096,8 +1606,11 @@ mod tests {
                 .copied()
                 .ok_or_else(|| TransportError::NotFound(format!("epoch {epoch} boundary unknown")))
         }
-        async fn get_object(&self, _id: ObjectID) -> Result<Object, TransportError> {
-            unimplemented!()
+        async fn get_object(&self, id: ObjectID) -> Result<Object, TransportError> {
+            self.live_objects
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| TransportError::NotFound(format!("object {id} not found")))
         }
         async fn get_object_with_version(
             &self,
@@ -1284,6 +1797,7 @@ mod tests {
             latest_summary_pruned: false,
             checkpoints,
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
         let cache = Arc::new(VerifiedStateCache::new());
@@ -1362,6 +1876,7 @@ mod tests {
                 (102, plain_checkpoint(&committee, &keys, 102)),
             ]),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
         let cache = Arc::new(VerifiedStateCache::new());
@@ -1431,6 +1946,7 @@ mod tests {
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         // No `put_sui_pusher_last_seq` — this is a first start.
         assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), None);
@@ -1469,6 +1985,7 @@ mod tests {
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
 
@@ -1505,6 +2022,7 @@ mod tests {
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         // Resume from seq 99 so advance() streams exactly seq 100.
         perpetual.put_sui_pusher_last_seq(99).unwrap();
@@ -1558,6 +2076,7 @@ mod tests {
                 (102, plain_checkpoint(&committee, &keys, 102)),
             ]),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
 
@@ -1582,6 +2101,7 @@ mod tests {
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         pusher.transport = transport;
         pusher.advance().await.unwrap();
@@ -1635,6 +2155,7 @@ mod tests {
             latest,
             checkpoints: HashMap::from([(30u64, eoe_30), (90u64, eoe_90)]),
             eoe_seqs: HashMap::from([(0u64, 30), (1u64, 60), (2u64, 90)]),
+            live_objects: HashMap::new(),
         });
         // Resume from seq 0 → lag 2_100 > FAR_BEHIND_THRESHOLD → fast-forward path.
         perpetual.put_sui_pusher_last_seq(0).unwrap();
@@ -1700,6 +2221,7 @@ mod tests {
             latest: latest.clone(),
             checkpoints: checkpoints.clone(),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(0).unwrap();
 
@@ -1745,6 +2267,7 @@ mod tests {
             latest,
             checkpoints,
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         pusher.advance().await.unwrap();
 
@@ -1762,8 +2285,13 @@ mod tests {
     /// A mock checkpoint archive serving full checkpoint data from memory,
     /// for the pending-gap archive-fallback tests. The ratchet-facing methods
     /// are never called by the pusher and panic loudly if they ever are.
+    #[derive(Default)]
     struct MockCheckpointArchive {
         checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
+        /// Fetches to fail (a transient store error) before serving.
+        failures_left: AtomicUsize,
+        /// Every `fetch_checkpoint_data` call, failed or not.
+        fetches: AtomicUsize,
     }
 
     #[async_trait]
@@ -1789,11 +2317,25 @@ mod tests {
             &self,
             seq: CheckpointSequenceNumber,
         ) -> Result<CheckpointData, ika_sui_client::archive::ArchiveError> {
+            self.fetches.fetch_add(1, Ordering::Relaxed);
+            if self
+                .failures_left
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                    left.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Err(ika_sui_client::archive::ArchiveError::Fetch {
+                    url: "mock".into(),
+                    seq,
+                    source: anyhow::anyhow!("HTTP 503 from the mock archive"),
+                });
+            }
             self.checkpoints.get(&seq).cloned().ok_or_else(|| {
                 ika_sui_client::archive::ArchiveError::Fetch {
                     url: "mock".into(),
                     seq,
-                    source: anyhow::anyhow!("seq {seq} not in mock archive"),
+                    source: anyhow::anyhow!("Checkpoint {seq} not found in archive"),
                 }
             })
         }
@@ -1828,6 +2370,7 @@ mod tests {
             latest,
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
 
@@ -1843,6 +2386,7 @@ mod tests {
         .await;
         pusher.archive = Some(Arc::new(MockCheckpointArchive {
             checkpoints: HashMap::from([(100u64, eoe)]),
+            ..Default::default()
         }));
 
         pusher.advance().await.unwrap();
@@ -1900,6 +2444,7 @@ mod tests {
             latest,
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
 
@@ -1917,6 +2462,7 @@ mod tests {
         // end-of-epoch checkpoint — of seq 999.
         pusher.archive = Some(Arc::new(MockCheckpointArchive {
             checkpoints: HashMap::from([(100u64, end_of_epoch_checkpoint(&committee, &keys, 999))]),
+            ..Default::default()
         }));
 
         pusher.advance().await.unwrap();
@@ -1961,6 +2507,7 @@ mod tests {
             latest,
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
 
@@ -1976,6 +2523,7 @@ mod tests {
         .await;
         pusher.archive = Some(Arc::new(MockCheckpointArchive {
             checkpoints: HashMap::new(),
+            ..Default::default()
         }));
 
         pusher.advance().await.unwrap();
@@ -2029,6 +2577,7 @@ mod tests {
             latest: latest.clone(),
             checkpoints: checkpoints.clone(),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(0).unwrap();
 
@@ -2050,6 +2599,7 @@ mod tests {
             latest,
             checkpoints,
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         let mut resumed = pusher_over_with_cache(
             perpetual.clone(),
@@ -2090,6 +2640,7 @@ mod tests {
             latest: plain_checkpoint(committee, keys, latest_seq).checkpoint_summary,
             checkpoints,
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         })
     }
 
@@ -2685,6 +3236,7 @@ mod tests {
             latest,
             checkpoints: HashMap::from([(100u64, forged)]),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
 
@@ -2736,6 +3288,7 @@ mod tests {
             latest: end_of_epoch_checkpoint(&committee, &keys, 1).checkpoint_summary,
             checkpoints: HashMap::new(),
             eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
         });
         let pusher = pusher_over(perpetual, committees, transport).await;
 
@@ -2767,5 +3320,1090 @@ mod tests {
             pusher.verify_before_fold(&forged, &tree, true).is_err(),
             "a summary whose committed digest does not match the folded tree must be rejected"
         );
+    }
+
+    // ---- archive backfill ----
+
+    /// An object typed `0x2::coin::Coin<{package}::ika::IKA>`: Ika-relevant to
+    /// the pusher through a type parameter, the way a `Field<K, V>` bag entry
+    /// with an Ika `V` is.
+    fn ika_object(package: ObjectID, id: ObjectID, version: u64, owner: Owner) -> Object {
+        ika_object_with_value(package, id, version, owner, 1)
+    }
+
+    fn ika_object_with_value(
+        package: ObjectID,
+        id: ObjectID,
+        version: u64,
+        owner: Owner,
+        value: u64,
+    ) -> Object {
+        let ika = parse_sui_type_tag(&format!("{package}::ika::IKA")).unwrap();
+        Object::new_move(
+            MoveObject::new_coin(ika, SequenceNumber::from(version), id, value),
+            owner,
+            TransactionDigest::ZERO,
+        )
+    }
+
+    /// A committee-signed checkpoint at `seq` with one transaction per entry
+    /// of `transactions`, each writing its objects (all at one version, its
+    /// lamport version). The effects carry each object's real digest and the
+    /// summary commits to the matching artifacts digest — the shape of a
+    /// genuine archive blob, which passes `verify_archive_checkpoint` and
+    /// `build_entries`.
+    fn checkpoint_writing(
+        committee: &Committee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+        transactions: &[&[Object]],
+    ) -> CheckpointData {
+        let transactions: Vec<CheckpointTransaction> = transactions
+            .iter()
+            .enumerate()
+            .map(|(index, written)| {
+                // A well-formed transaction to carry the effects below.
+                let mut template = TestCheckpointBuilder::new(seq)
+                    .start_transaction(index as u8)
+                    .finish_transaction();
+                let transaction = CheckpointData::from(template.build_checkpoint())
+                    .transactions
+                    .remove(0)
+                    .transaction;
+                let lamport_version = written[0].version();
+                assert!(written.iter().all(|o| o.version() == lamport_version));
+                let effects = TransactionEffects::new_from_execution_v2(
+                    ExecutionStatus::Success,
+                    committee.epoch(),
+                    GasCostSummary::default(),
+                    vec![],
+                    *transaction.digest(),
+                    lamport_version,
+                    written
+                        .iter()
+                        .map(|o| (o.id(), EffectsObjectChange::new(None, Some(o), true, false)))
+                        .collect(),
+                    None,
+                    None,
+                    vec![],
+                );
+                CheckpointTransaction {
+                    transaction,
+                    effects,
+                    events: None,
+                    input_objects: vec![],
+                    output_objects: written.to_vec(),
+                }
+            })
+            .collect();
+        let contents = CheckpointContents::new_with_digests_only_for_tests(
+            transactions
+                .iter()
+                .map(|tx| ExecutionDigests::new(*tx.transaction.digest(), tx.effects.digest())),
+        );
+        let effects: Vec<&TransactionEffects> = transactions.iter().map(|tx| &tx.effects).collect();
+        let artifacts_digest = CheckpointArtifacts::from(effects.as_slice())
+            .digest()
+            .unwrap();
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: transactions.len() as u64,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::from(artifacts_digest)],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        CheckpointData {
+            checkpoint_summary: CertifiedCheckpointSummary::new_from_keypairs_for_testing(
+                summary, keys, committee,
+            ),
+            checkpoint_contents: contents,
+            transactions,
+        }
+    }
+
+    /// Committee store at genesis committee[0], a cursor persisted at 99 and
+    /// an upstream at 99 as well — so a tick scans nothing, and any cursor
+    /// movement could only come from the backfill.
+    struct BackfillFixture {
+        _dir: tempfile::TempDir,
+        committee: Committee,
+        keys: Vec<AuthorityKeyPair>,
+        perpetual: Arc<AuthorityPerpetualTables>,
+        committees: Arc<CommitteeStore>,
+        metrics: Arc<OcsMetrics>,
+    }
+
+    const BACKFILL_CURSOR: CheckpointSequenceNumber = 99;
+
+    fn backfill_fixture() -> BackfillFixture {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        perpetual.put_sui_pusher_last_seq(BACKFILL_CURSOR).unwrap();
+        BackfillFixture {
+            _dir: dir,
+            committee,
+            keys,
+            perpetual,
+            committees,
+            metrics: OcsMetrics::new_for_testing(),
+        }
+    }
+
+    /// The node's own fullnode: at the cursor, with every checkpoint pruned,
+    /// reporting `live` as the current objects.
+    fn pruned_fullnode(fx: &BackfillFixture, live: &[&Object]) -> Arc<dyn SuiTransport> {
+        Arc::new(MockTransport {
+            fetch_control: None,
+            latest_summary_pruned: false,
+            latest: plain_checkpoint(&fx.committee, &fx.keys, BACKFILL_CURSOR).checkpoint_summary,
+            checkpoints: HashMap::new(),
+            eoe_seqs: HashMap::new(),
+            live_objects: live.iter().map(|o| (o.id(), (*o).clone())).collect(),
+        })
+    }
+
+    fn durable_cache(
+        fx: &BackfillFixture,
+        pinned: &[CheckpointSequenceNumber],
+    ) -> SharedVerifiedStateCache {
+        Arc::new(
+            VerifiedStateCache::open(fx.perpetual.clone())
+                .unwrap()
+                .with_retain_window(Some(1_000))
+                .with_pinned_checkpoints(pinned.iter().copied().collect()),
+        )
+    }
+
+    /// A pusher over `cache` at the fixture's cursor, with no archive and a
+    /// fullnode reporting no live objects; tests then install both (the Ika
+    /// package the pusher filters on is only known once it exists — see
+    /// `ika_package_of`).
+    async fn backfill_pusher(
+        fx: &BackfillFixture,
+        cache: SharedVerifiedStateCache,
+    ) -> IkaCheckpointPusher {
+        pusher_over_with_cache(
+            fx.perpetual.clone(),
+            fx.committees.clone(),
+            pruned_fullnode(fx, &[]),
+            cache,
+            fx.metrics.clone(),
+        )
+        .await
+    }
+
+    fn ika_package_of(pusher: &IkaCheckpointPusher) -> ObjectID {
+        *pusher.ika_packages.iter().next().unwrap()
+    }
+
+    /// One tick to start the due fetches, a wait for them, and one tick to
+    /// fold what they returned — consecutive pusher ticks, compressed.
+    async fn tick_backfill(pusher: &mut IkaCheckpointPusher) {
+        pusher.advance().await.unwrap();
+        for _ in 0..400 {
+            let busy = pusher.archive_backfill.values().any(|state| {
+                state
+                    .in_flight
+                    .as_ref()
+                    .is_some_and(|fetch| !fetch.is_finished())
+            });
+            if !busy {
+                break;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+        pusher.advance().await.unwrap();
+    }
+
+    fn backfill_outcome(metrics: &OcsMetrics, outcome: &str) -> u64 {
+        metrics
+            .pusher_backfill_outcomes_total
+            .with_label_values(&[outcome])
+            .get()
+    }
+
+    fn backfill_failures(metrics: &OcsMetrics, reason: &str) -> u64 {
+        metrics
+            .pusher_backfill_failures_total
+            .with_label_values(&[reason])
+            .get()
+    }
+
+    /// A single-object, committee-signed entry at `seq`, for folding filler
+    /// into the cache directly.
+    fn signed_entry_at(
+        fx: &BackfillFixture,
+        seq: CheckpointSequenceNumber,
+        object: &Object,
+    ) -> (CertifiedCheckpointSummary, VerifiedObjectEntry) {
+        let (tree, digest) = tree_and_digest_over(object);
+        let summary = signed_summary_with_commitment(&fx.committee, &fx.keys, seq, digest.into());
+        let entry = VerifiedObjectEntry {
+            object: object.clone(),
+            checkpoint_seq: seq,
+            proof: tree
+                .get_inclusion_proof(object.compute_object_reference())
+                .unwrap(),
+            dynamic_field_name_type: String::new(),
+            dynamic_field_name_bcs: Vec::new(),
+        };
+        (summary, entry)
+    }
+
+    /// The incident shape: a bag entry whose defining checkpoint the fullnode
+    /// has pruned and no cache ever folded. The backfill re-folds it from the
+    /// archive into the cache — without moving the scan cursor — pins it
+    /// against the retain window, and a restarted pusher finds it cached and
+    /// does not touch the archive again.
+    #[tokio::test]
+    async fn archive_backfill_folds_a_pruned_checkpoint_without_moving_the_cursor() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[42]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let bag = ObjectID::from_single_byte(0xBA);
+        let entry = ika_object(
+            package,
+            ObjectID::from_single_byte(0xE1),
+            7,
+            Owner::ObjectOwner(bag.into()),
+        );
+        let unrelated = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0x0F),
+            SequenceNumber::from(7u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x01).into()),
+        );
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                42u64,
+                checkpoint_writing(
+                    &fx.committee,
+                    &fx.keys,
+                    42,
+                    &[&[entry.clone(), unrelated.clone()]],
+                ),
+            )]),
+            ..Default::default()
+        });
+        pusher.transport = pruned_fullnode(&fx, &[&entry, &unrelated]);
+        pusher.archive = Some(archive.clone());
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([42]));
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 1);
+        assert!(cache.get(entry.id()).is_none());
+
+        tick_backfill(&mut pusher).await;
+
+        let snapshot = cache
+            .get(entry.id())
+            .expect("the backfilled bag entry is cached");
+        assert_eq!(snapshot.source_checkpoint_seq, 42);
+        assert_eq!(
+            snapshot.object.compute_object_reference(),
+            entry.compute_object_reference()
+        );
+        assert!(cache.get(unrelated.id()).is_none(), "only Ika objects fold");
+        assert_eq!(cache.children_of(bag), vec![entry.id()]);
+        assert_eq!(
+            pusher.cursor, BACKFILL_CURSOR,
+            "the backfill never moves the cursor"
+        );
+        assert_eq!(
+            fx.perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(BACKFILL_CURSOR)
+        );
+        for (outcome, count) in [
+            ("fetched", 1),
+            ("verified", 1),
+            ("folded", 1),
+            ("failed", 0),
+        ] {
+            assert_eq!(backfill_outcome(&fx.metrics, outcome), count, "{outcome}");
+        }
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 0);
+        assert!(pusher.archive_backfill.is_empty());
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 1);
+
+        // Pinned: a fold far past the retain window sweeps everything else of
+        // that age and keeps the backfilled snapshot.
+        let filler = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0xF1),
+            SequenceNumber::from(1u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x01).into()),
+        );
+        let (summary, filler_entry) = signed_entry_at(&fx, 5_000, &filler);
+        cache.absorb_entries(&summary, &[filler_entry]);
+        assert!(
+            cache.get(entry.id()).is_some(),
+            "the backfilled snapshot is pinned"
+        );
+        drop(pusher);
+        drop(cache);
+
+        // Restart: the reopened (re-pinned) cache still holds it, so the new
+        // pusher settles the checkpoint as cached without fetching it again.
+        let reopened = durable_cache(&fx, &[42]);
+        assert!(reopened.get(entry.id()).is_some());
+        let mut restarted = backfill_pusher(&fx, reopened).await;
+        let untouched = Arc::new(MockCheckpointArchive::default());
+        restarted.archive = Some(untouched.clone());
+        let mut restarted = restarted.with_archive_backfill(BTreeSet::from([42]));
+        assert!(restarted.archive_backfill.is_empty());
+        tick_backfill(&mut restarted).await;
+        assert_eq!(untouched.fetches.load(Ordering::Relaxed), 0);
+        assert_eq!(backfill_outcome(&fx.metrics, "already_cached"), 1);
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 0);
+    }
+
+    /// Nothing the archive serves is folded unless it verifies: a blob signed
+    /// by a foreign committee, a genuine blob of another sequence, a genuine
+    /// summary and effects with tampered object contents, and a checkpoint
+    /// whose committee the store does not hold. Each attempt fails loudly with
+    /// its reason, folds nothing, and stays scheduled for a retry.
+    #[tokio::test]
+    async fn archive_backfill_never_folds_a_checkpoint_that_fails_verification() {
+        let fx = backfill_fixture();
+        let (foreign_committee, foreign_keys) = Committee::new_simple_test_committee_of_size(7);
+        let later_epoch = Committee::new(5, fx.committee.voting_rights.iter().cloned().collect());
+
+        // Each case builds the archive's blob for seq 42 from the genuine bag
+        // entry and the pusher's Ika package.
+        type Blob = Box<dyn Fn(&BackfillFixture, &Object, ObjectID) -> CheckpointData>;
+        let cases: Vec<(&str, Blob, &str)> = vec![
+            (
+                "signed by a foreign committee",
+                Box::new(move |_, entry, _| {
+                    checkpoint_writing(
+                        &foreign_committee,
+                        &foreign_keys,
+                        42,
+                        &[slice::from_ref(entry)],
+                    )
+                }),
+                "verification",
+            ),
+            (
+                "a genuine blob of another sequence",
+                Box::new(|fx, entry, _| {
+                    checkpoint_writing(&fx.committee, &fx.keys, 43, &[slice::from_ref(entry)])
+                }),
+                "verification",
+            ),
+            (
+                "tampered object contents under a genuine summary and effects",
+                Box::new(|fx, entry, package| {
+                    let mut blob =
+                        checkpoint_writing(&fx.committee, &fx.keys, 42, &[slice::from_ref(entry)]);
+                    blob.transactions[0].output_objects = vec![ika_object_with_value(
+                        package,
+                        entry.id(),
+                        entry.version().value(),
+                        entry.owner().clone(),
+                        1_000_000,
+                    )];
+                    blob
+                }),
+                "verification",
+            ),
+            (
+                "a Sui epoch the committee store does not hold",
+                Box::new(move |fx, entry, _| {
+                    checkpoint_writing(&later_epoch, &fx.keys, 42, &[slice::from_ref(entry)])
+                }),
+                "missing_committee",
+            ),
+        ];
+
+        for (case, blob, reason) in cases {
+            let cache = durable_cache(&fx, &[42]);
+            let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+            let package = ika_package_of(&pusher);
+            let entry = ika_object(
+                package,
+                ObjectID::from_single_byte(0xE1),
+                7,
+                Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into()),
+            );
+            pusher.transport = pruned_fullnode(&fx, &[&entry]);
+            pusher.archive = Some(Arc::new(MockCheckpointArchive {
+                checkpoints: HashMap::from([(42u64, blob(&fx, &entry, package))]),
+                ..Default::default()
+            }));
+            let mut pusher = pusher.with_archive_backfill(BTreeSet::from([42]));
+            let failures_before = backfill_failures(&fx.metrics, reason);
+
+            tick_backfill(&mut pusher).await;
+
+            assert!(cache.get(entry.id()).is_none(), "{case}: nothing may fold");
+            assert_eq!(
+                backfill_failures(&fx.metrics, reason),
+                failures_before + 1,
+                "{case}: failure reason"
+            );
+            let state = pusher
+                .archive_backfill
+                .get(&42)
+                .unwrap_or_else(|| panic!("{case}: must stay scheduled"));
+            assert_eq!(state.failures, 1, "{case}");
+            assert!(state.next_attempt > Instant::now(), "{case}: backs off");
+        }
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 0);
+    }
+
+    /// The archive failing transiently is retried with doubling, capped
+    /// backoff — no fetch before the backoff elapses — until it serves, and
+    /// the checkpoint then folds.
+    #[tokio::test]
+    async fn archive_backfill_retries_with_backoff_until_the_archive_serves() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[42]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = ika_object(
+            ika_package_of(&pusher),
+            ObjectID::from_single_byte(0xE1),
+            7,
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into()),
+        );
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                42u64,
+                checkpoint_writing(&fx.committee, &fx.keys, 42, &[slice::from_ref(&entry)]),
+            )]),
+            failures_left: AtomicUsize::new(2),
+            ..Default::default()
+        });
+        pusher.transport = pruned_fullnode(&fx, &[&entry]);
+        pusher.archive = Some(archive.clone());
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([42]));
+
+        tick_backfill(&mut pusher).await;
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 1);
+        assert_eq!(backfill_failures(&fx.metrics, "archive_fetch"), 1);
+        let retry_in = pusher.archive_backfill[&42]
+            .next_attempt
+            .saturating_duration_since(Instant::now());
+        assert!(retry_in > Duration::from_secs(4) && retry_in <= Duration::from_secs(5));
+
+        // Not due yet: ticks do not touch the archive.
+        tick_backfill(&mut pusher).await;
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 1);
+
+        pusher.archive_backfill.get_mut(&42).unwrap().next_attempt = Instant::now();
+        tick_backfill(&mut pusher).await;
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 2);
+        assert_eq!(backfill_failures(&fx.metrics, "archive_fetch"), 2);
+        let retry_in = pusher.archive_backfill[&42]
+            .next_attempt
+            .saturating_duration_since(Instant::now());
+        assert!(retry_in > Duration::from_secs(9) && retry_in <= Duration::from_secs(10));
+        assert!(cache.get(entry.id()).is_none());
+
+        pusher.archive_backfill.get_mut(&42).unwrap().next_attempt = Instant::now();
+        tick_backfill(&mut pusher).await;
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 3);
+        assert!(pusher.archive_backfill.is_empty());
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+        assert_eq!(backfill_outcome(&fx.metrics, "failed"), 2);
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 0);
+    }
+
+    #[test]
+    fn archive_backfill_retry_delay_doubles_and_caps() {
+        let delays: Vec<u64> = [1, 2, 3, 4, 7, 8, 9, 1_000]
+            .into_iter()
+            .map(|failures| archive_backfill_retry_delay(failures).as_secs())
+            .collect();
+        assert_eq!(delays, vec![5, 10, 20, 40, 320, 600, 600, 600]);
+    }
+
+    /// Only objects the node's own fullnode still reports at exactly the
+    /// archived reference fold: a newer version may have aged out of the cache
+    /// and an object may have been deleted, and folding either would let a
+    /// cache-first read serve state that is no longer current. Objects the
+    /// cache already holds at that version or newer are left alone.
+    #[tokio::test]
+    async fn archive_backfill_folds_only_objects_that_are_still_current() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[42]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let bag = Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into());
+        let object = |byte: u8, version: u64| {
+            ika_object(
+                package,
+                ObjectID::from_single_byte(byte),
+                version,
+                bag.clone(),
+            )
+        };
+        let current = object(0xC1, 7);
+        let superseded = object(0xC2, 7);
+        let deleted = object(0xC3, 7);
+        let cached_newer = object(0xC4, 7);
+        let (summary, newer_entry) = signed_entry_at(&fx, 60, &object(0xC4, 8));
+        cache.absorb_entries(&summary, &[newer_entry]);
+
+        pusher.transport = pruned_fullnode(&fx, &[&current, &object(0xC2, 9), &object(0xC4, 8)]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                42u64,
+                checkpoint_writing(
+                    &fx.committee,
+                    &fx.keys,
+                    42,
+                    &[&[
+                        current.clone(),
+                        superseded.clone(),
+                        deleted.clone(),
+                        cached_newer.clone(),
+                    ]],
+                ),
+            )]),
+            ..Default::default()
+        }));
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([42]));
+        tick_backfill(&mut pusher).await;
+
+        assert_eq!(cache.get(current.id()).unwrap().source_checkpoint_seq, 42);
+        assert!(cache.get(superseded.id()).is_none(), "superseded since");
+        assert!(cache.get(deleted.id()).is_none(), "deleted since");
+        let kept = cache.get(cached_newer.id()).unwrap();
+        assert_eq!(kept.object.version(), SequenceNumber::from(8u64));
+        assert_eq!(kept.source_checkpoint_seq, 60);
+        assert_eq!(cache.snapshots_from_checkpoint(42), 1);
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+
+        // A checkpoint with nothing current left settles without folding.
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let gone = ika_object(
+            ika_package_of(&pusher),
+            ObjectID::from_single_byte(0xD1),
+            7,
+            bag.clone(),
+        );
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                43u64,
+                checkpoint_writing(&fx.committee, &fx.keys, 43, &[slice::from_ref(&gone)]),
+            )]),
+            ..Default::default()
+        }));
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([43]));
+        tick_backfill(&mut pusher).await;
+        assert!(pusher.archive_backfill.is_empty());
+        assert!(cache.get(gone.id()).is_none());
+        assert_eq!(backfill_outcome(&fx.metrics, "nothing_to_fold"), 1);
+    }
+
+    /// When several transactions of the checkpoint wrote the object, the
+    /// backfill folds the version the committee attests for the checkpoint
+    /// (the last write), never an intermediate one.
+    #[tokio::test]
+    async fn archive_backfill_folds_the_attested_version_of_an_object_written_twice() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[42]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let owner = Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into());
+        let id = ObjectID::from_single_byte(0xE1);
+        let first_write = ika_object(package, id, 7, owner.clone());
+        let last_write = ika_object_with_value(package, id, 8, owner, 2);
+        pusher.transport = pruned_fullnode(&fx, &[&last_write]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                42u64,
+                checkpoint_writing(
+                    &fx.committee,
+                    &fx.keys,
+                    42,
+                    &[&[first_write], slice::from_ref(&last_write)],
+                ),
+            )]),
+            ..Default::default()
+        }));
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([42]));
+        tick_backfill(&mut pusher).await;
+
+        assert_eq!(
+            cache.get(id).unwrap().object.compute_object_reference(),
+            last_write.compute_object_reference()
+        );
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+    }
+
+    /// Without an archive the backfill is a no-op. A listed checkpoint the
+    /// scan has not reached yet waits for it — the scan may fold it, or a
+    /// far-behind fast-forward may skip it — and is backfilled once the cursor
+    /// has passed it, unless the scan folded it meanwhile.
+    #[tokio::test]
+    async fn archive_backfill_waits_for_the_scan_and_needs_an_archive() {
+        let fx = backfill_fixture();
+        let pusher = backfill_pusher(&fx, durable_cache(&fx, &[])).await;
+        let pusher = pusher.with_archive_backfill(BTreeSet::from([42]));
+        assert!(pusher.archive_backfill.is_empty());
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 0);
+
+        let ahead = BACKFILL_CURSOR + 1;
+        let cache = durable_cache(&fx, &[ahead, ahead + 1]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let owner = Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into());
+        let skipped_by_the_scan =
+            ika_object(package, ObjectID::from_single_byte(0xE1), 7, owner.clone());
+        let folded_by_the_scan = ika_object(package, ObjectID::from_single_byte(0xE2), 7, owner);
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                ahead,
+                checkpoint_writing(
+                    &fx.committee,
+                    &fx.keys,
+                    ahead,
+                    &[slice::from_ref(&skipped_by_the_scan)],
+                ),
+            )]),
+            ..Default::default()
+        });
+        pusher.transport = pruned_fullnode(&fx, &[&skipped_by_the_scan, &folded_by_the_scan]);
+        pusher.archive = Some(archive.clone());
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([ahead, ahead + 1]));
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 2);
+        tick_backfill(&mut pusher).await;
+        assert_eq!(
+            archive.fetches.load(Ordering::Relaxed),
+            0,
+            "not scanned yet"
+        );
+
+        // The cursor passes both — one skipped (as a fast-forward would), one
+        // folded by the scan itself.
+        let (summary, entry) = signed_entry_at(&fx, ahead + 1, &folded_by_the_scan);
+        cache.absorb_entries(&summary, &[entry]);
+        pusher.cursor = ahead + 1;
+        tick_backfill(&mut pusher).await;
+
+        assert_eq!(
+            archive.fetches.load(Ordering::Relaxed),
+            1,
+            "only the skipped one is fetched"
+        );
+        assert_eq!(
+            cache
+                .get(skipped_by_the_scan.id())
+                .unwrap()
+                .source_checkpoint_seq,
+            ahead
+        );
+        assert!(pusher.archive_backfill.is_empty());
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+        assert_eq!(backfill_outcome(&fx.metrics, "already_cached"), 1);
+    }
+
+    /// The direct node's proof provider over a bag whose defining checkpoint
+    /// the fullnode has pruned. It lists the bag's live children and reports
+    /// their current objects but can no longer rebuild their proofs, so —
+    /// as `LocalProofProvider::build_object_entry` does — it falls back to
+    /// `recover_pruned_proof` over the node's verified cache, reporting the
+    /// children it cannot prove in `skipped_entry_ids`. With
+    /// `unprovable_entries`, every child is reported skipped instead, the way
+    /// the provider reports an entry whose proof fails with an encoding error.
+    struct PrunedBagProvider {
+        bag: ObjectID,
+        live_children: Vec<Object>,
+        cache: SharedVerifiedStateCache,
+        claimed_head: CheckpointSequenceNumber,
+        unprovable_entries: bool,
+    }
+
+    impl PrunedBagProvider {
+        fn prove(&self, object: &Object) -> ProofBuildResult {
+            if self.unprovable_entries {
+                return Err(TransportError::Encoding("undecodable checkpoint".into()));
+            }
+            recover_pruned_proof(
+                Err(TransportError::NotFound(
+                    "defining checkpoint pruned".into(),
+                )),
+                Some(self.cache.as_ref()),
+                object.compute_object_reference(),
+            )
+            .0
+        }
+    }
+
+    #[async_trait]
+    impl ProofProvider for PrunedBagProvider {
+        async fn verified_object(
+            &self,
+            id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            let object = self
+                .live_children
+                .iter()
+                .find(|o| o.id() == id)
+                .ok_or_else(|| TransportError::NotFound(format!("object {id}")))?;
+            let (_, entry, summary) = self.prove(object)?;
+            Ok(VerifiedObjectResponse {
+                object: entry.object,
+                summary,
+                proof: entry.proof,
+                claimed_latest_checkpoint_seq: self.claimed_head,
+            })
+        }
+        async fn batch_verified_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            unimplemented!()
+        }
+        async fn verified_dynamic_fields_page(
+            &self,
+            request: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
+            assert_eq!(request.parent_id, self.bag);
+            let mut summaries = BTreeMap::new();
+            let mut entries = Vec::new();
+            let mut skipped_entry_ids = Vec::new();
+            for (index, object) in self.live_children.iter().enumerate() {
+                match self.prove(object) {
+                    Ok((seq, mut entry, summary)) => {
+                        entry.dynamic_field_name_type = "u64".to_string();
+                        entry.dynamic_field_name_bcs = bcs::to_bytes(&(index as u64)).unwrap();
+                        summaries.entry(seq).or_insert(summary);
+                        entries.push(entry);
+                    }
+                    Err(TransportError::NotFound(_) | TransportError::Encoding(_)) => {
+                        skipped_entry_ids.push(object.id())
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(VerifiedDynamicFieldsPageResponse {
+                summaries,
+                entries,
+                next_page_token: None,
+                claimed_latest_checkpoint_seq: self.claimed_head,
+                skipped_entry_ids,
+            })
+        }
+    }
+
+    /// The same provider seen across the relay: every response crosses the
+    /// wire as BCS, as it does from the mirror server to a mirrored peer.
+    struct OverTheWire(Arc<PrunedBagProvider>);
+
+    fn over_the_wire<T: serde::Serialize + serde::de::DeserializeOwned>(value: T) -> T {
+        bcs::from_bytes(&bcs::to_bytes(&value).unwrap()).unwrap()
+    }
+
+    #[async_trait]
+    impl ProofProvider for OverTheWire {
+        async fn verified_object(
+            &self,
+            id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            self.0.verified_object(id).await.map(over_the_wire)
+        }
+        async fn batch_verified_objects(
+            &self,
+            ids: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            self.0.batch_verified_objects(ids).await.map(over_the_wire)
+        }
+        async fn verified_dynamic_fields_page(
+            &self,
+            request: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
+            self.0
+                .verified_dynamic_fields_page(request)
+                .await
+                .map(over_the_wire)
+        }
+    }
+
+    /// End to end over the pieces a direct node and its mirrored peers share:
+    /// a bag entry whose defining checkpoint is pruned upstream and absent from
+    /// the cache is invisible to both the direct reader and a mirrored reader.
+    /// After the pusher backfills that checkpoint from the archive, the direct
+    /// provider's pruned-proof fallback serves the entry with its committee
+    /// proof, and both readers verify and return it — the mirrored one across
+    /// a BCS wire and a changeset index whose window no longer covers the
+    /// entry's checkpoint (currency `Unknown`, accepted). The direct reader also
+    /// resolves the entry when the provider can only report it as skipped.
+    #[tokio::test]
+    async fn a_backfilled_bag_entry_reaches_direct_and_mirrored_readers() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[42]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let bag = ObjectID::from_single_byte(0xBA);
+        let entry = ika_object(
+            ika_package_of(&pusher),
+            ObjectID::from_single_byte(0xE1),
+            7,
+            Owner::ObjectOwner(bag.into()),
+        );
+        pusher.transport = pruned_fullnode(&fx, &[&entry]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                42u64,
+                checkpoint_writing(&fx.committee, &fx.keys, 42, &[slice::from_ref(&entry)]),
+            )]),
+            ..Default::default()
+        }));
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([42]));
+
+        let provider = |unprovable_entries| {
+            Arc::new(PrunedBagProvider {
+                bag,
+                live_children: vec![entry.clone()],
+                cache: cache.clone(),
+                claimed_head: BACKFILL_CURSOR,
+                unprovable_entries,
+            })
+        };
+        let direct_reader = |unprovable_entries| {
+            OcsVerifiedReader::new(
+                provider(unprovable_entries),
+                fx.committees.clone(),
+                OcsMetrics::new_for_testing(),
+                None,
+                cache.clone(),
+                true,
+                Some(100),
+            )
+        };
+        // The mirrored peer's changeset index covers only checkpoint 90, so
+        // its window no longer brackets the entry's checkpoint 42.
+        let index = {
+            let anchor = Object::with_id_owner_version_for_testing(
+                ObjectID::from_single_byte(0xAA),
+                SequenceNumber::from(1u64),
+                Owner::AddressOwner(ObjectID::from_single_byte(0x01).into()),
+            );
+            let (id, version, digest) = anchor.compute_object_reference();
+            let states = BTreeMap::from([(id, (version, digest))]);
+            let summary = signed_summary_with_commitment(
+                &fx.committee,
+                &fx.keys,
+                90,
+                CheckpointArtifacts::from_object_states(states.clone())
+                    .digest()
+                    .unwrap()
+                    .into(),
+            );
+            let mut index = ChangesetIndex::new();
+            index.absorb(&summary, states).unwrap();
+            Arc::new(RwLock::new(index))
+        };
+        let mirrored_reader = OcsVerifiedReader::new(
+            Arc::new(OverTheWire(provider(false))),
+            fx.committees.clone(),
+            OcsMetrics::new_for_testing(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            false,
+            None,
+        )
+        .with_changeset_index(Some(index));
+
+        let page_ids = |page: VerifiedDynamicFieldsPage| -> Vec<ObjectID> {
+            page.entries.iter().map(|e| e.object.id()).collect()
+        };
+
+        // Before the backfill nobody can prove the entry.
+        let direct = direct_reader(false)
+            .verified_dynamic_fields_page(bag, None, None)
+            .await
+            .unwrap();
+        assert!(page_ids(direct).is_empty());
+        let mirrored = mirrored_reader
+            .verified_dynamic_fields_page(bag, None, None)
+            .await
+            .unwrap();
+        assert!(page_ids(mirrored).is_empty());
+
+        tick_backfill(&mut pusher).await;
+        assert_eq!(cache.snapshots_from_checkpoint(42), 1);
+
+        let direct = direct_reader(false)
+            .verified_dynamic_fields_page(bag, None, None)
+            .await
+            .unwrap();
+        assert_eq!(page_ids(direct), vec![entry.id()]);
+        let mirrored = mirrored_reader
+            .verified_dynamic_fields_page(bag, None, None)
+            .await
+            .unwrap();
+        assert_eq!(mirrored.entries.len(), 1);
+        assert_eq!(
+            mirrored.entries[0].object.compute_object_reference(),
+            entry.compute_object_reference()
+        );
+        assert_eq!(mirrored.entries[0].source_checkpoint_seq, 42);
+
+        // The provider reports the entry only as skipped: the direct reader
+        // resolves it from its verified cache.
+        let direct = direct_reader(true)
+            .verified_dynamic_fields_page(bag, None, None)
+            .await
+            .unwrap();
+        assert_eq!(page_ids(direct), vec![entry.id()]);
+    }
+
+    /// One-off check against production data: the public mainnet archive
+    /// still serves the built-in backfill checkpoint, this binary decodes it,
+    /// and it carries the epoch-463 reconfiguration request's `session_events`
+    /// bag entry at the expected reference — as an object the pusher selects
+    /// as Ika-relevant, bound to the checkpoint's committee-signed artifacts
+    /// digest. (The committee signature itself needs the Sui epoch's committee,
+    /// which only a node's committee chain holds.) Ignored: needs the network,
+    /// and the archive keeps ordinary checkpoints about 30 days.
+    #[tokio::test]
+    #[ignore = "network: downloads mainnet checkpoint 342064089 from the public Sui archive"]
+    async fn mainnet_backfill_checkpoint_carries_the_reconfiguration_bag_entry() {
+        use ika_config::node::{
+            SUI_MAINNET_CHECKPOINT_ARCHIVE_URL, SuiChainIdentifier,
+            builtin_sui_checkpoint_archive_backfill, compiled_in_ika_identity,
+        };
+        use ika_sui_client::archive::SuiCheckpointArchive;
+        use sui_types::transaction::{TransactionDataAPI, TransactionExpiration};
+
+        const SEQ: CheckpointSequenceNumber = 342_064_089;
+        assert_eq!(
+            builtin_sui_checkpoint_archive_backfill(SuiChainIdentifier::Mainnet),
+            &[SEQ]
+        );
+        let entry_id = ObjectID::from_hex_literal(
+            "0x5359578bb4ae585be23731f7743103bab9622935f5f837c72c98bfd261d05ac8",
+        )
+        .unwrap();
+        let bag = ObjectID::from_hex_literal(
+            "0x0c6dbdfb925fcf70d59525e72c9f9c9a0889e2486b263e133713d1db5d4d1108",
+        )
+        .unwrap();
+
+        let archive = SuiCheckpointArchive::new(SUI_MAINNET_CHECKPOINT_ARCHIVE_URL, vec![]);
+        let data = tokio::time::timeout(
+            ARCHIVE_BACKFILL_FETCH_TIMEOUT,
+            archive.fetch_checkpoint_data(SEQ),
+        )
+        .await
+        .expect("archive fetch timed out")
+        .expect("archive fetch failed");
+        let summary = &data.checkpoint_summary;
+        assert_eq!(*summary.sequence_number(), SEQ);
+        println!(
+            "checkpoint {SEQ}: Sui epoch {}, timestamp_ms {}, {} transactions",
+            summary.epoch(),
+            summary.timestamp_ms,
+            data.transactions.len()
+        );
+        let validity = data
+            .transactions
+            .iter()
+            .filter(|tx| {
+                matches!(
+                    tx.transaction.transaction_data().expiration(),
+                    TransactionExpiration::Validity { .. }
+                )
+            })
+            .count();
+        println!("transactions with a `Validity` expiration: {validity}");
+        assert!(validity > 0);
+
+        let entry = data
+            .transactions
+            .iter()
+            .flat_map(|tx| tx.output_objects.iter())
+            .find(|o| o.id() == entry_id)
+            .expect("the bag entry is an output object of the checkpoint");
+        assert_eq!(entry.version(), SequenceNumber::from(1_070_029_079u64));
+        assert_eq!(entry.owner(), &Owner::ObjectOwner(bag.into()));
+        let entry_type = entry.data.try_as_move().unwrap().type_().to_string();
+        println!("bag entry type: {entry_type}");
+        assert!(entry_type.starts_with("0x2::dynamic_field::Field<0x2::object::ID,"));
+        assert!(entry_type.contains("DWalletEncryptionKeyReconfigurationRequestEvent"));
+
+        let identity = compiled_in_ika_identity(SuiChainIdentifier::Mainnet).unwrap();
+        let ika_packages: HashSet<ObjectID> = [
+            identity.ika_package_id,
+            identity.ika_common_package_id,
+            identity.ika_dwallet_2pc_mpc_package_id,
+            identity.ika_dwallet_2pc_mpc_package_id_v2,
+            identity.ika_system_package_id,
+        ]
+        .into();
+        assert!(object_touches_ika(entry, &ika_packages));
+        let ika_objects: Vec<(ObjectID, SequenceNumber, String)> = data
+            .transactions
+            .iter()
+            .flat_map(|tx| tx.output_objects.iter())
+            .filter(|o| object_touches_ika(o, &ika_packages))
+            .map(|o| {
+                (
+                    o.id(),
+                    o.version(),
+                    o.data.try_as_move().unwrap().type_().to_string(),
+                )
+            })
+            .collect();
+        println!(
+            "Ika objects written by the checkpoint ({}):",
+            ika_objects.len()
+        );
+        for (id, version, type_) in &ika_objects {
+            println!("  {id} v{} {type_}", version.value());
+        }
+
+        // The archive verification minus the committee signature: the
+        // artifacts digest the summary commits to is the tree over the blob's
+        // effects, and the bag entry is the attested state in that tree.
+        let tree = ModifiedObjectTree::new(&CheckpointArtifacts::from(&data)).unwrap();
+        let signed = summary.data().checkpoint_artifacts_digest().unwrap();
+        assert_eq!(
+            CheckpointArtifactsDigest::from_artifact_digests(vec![tree.tree_root]).unwrap(),
+            *signed
+        );
+        assert_eq!(
+            tree.get_object_state(entry_id).copied(),
+            Some(entry.compute_object_reference())
+        );
+        // Paired the way `build_entries` pairs them, then bound as the backfill
+        // binds them.
+        let entries = ika_objects
+            .iter()
+            .map(|(id, _, _)| {
+                let object_ref = *tree.get_object_state(*id).unwrap();
+                let object = data
+                    .transactions
+                    .iter()
+                    .flat_map(|tx| tx.output_objects.iter())
+                    .find(|o| o.id() == *id)
+                    .unwrap()
+                    .clone();
+                VerifiedObjectEntry {
+                    object,
+                    checkpoint_seq: SEQ,
+                    proof: tree.get_inclusion_proof(object_ref).unwrap(),
+                    dynamic_field_name_type: String::new(),
+                    dynamic_field_name_bcs: Vec::new(),
+                }
+            })
+            .collect();
+        let bound = bind_objects_to_attested_state(&data, entries)
+            .expect("every Ika object of the checkpoint binds to its attested state");
+        assert!(bound.iter().any(|e| e.object.id() == entry_id));
     }
 }

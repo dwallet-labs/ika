@@ -1195,6 +1195,13 @@ impl IkaNode {
                 .expect("ratchet present on sui-state-direct")
                 .committees()
                 .clone();
+            // Checkpoints whose objects this node never folded and its fullnode
+            // has since pruned: re-folded from the archive at startup, and kept
+            // out of the retain window by the cache built in the connector
+            // stack from the same list.
+            let archive_backfill = config
+                .sui_connector_config
+                .sui_checkpoint_archive_backfill_seqs();
             tokio::spawn(async move {
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
                 // Retry construction instead of giving up for the lifetime of
@@ -1231,7 +1238,7 @@ impl IkaNode {
                     )
                     .await
                     {
-                        Ok(pusher) => break pusher,
+                        Ok(pusher) => break pusher.with_archive_backfill(archive_backfill.clone()),
                         Err(e) => {
                             warn!(
                                 error = ?e,

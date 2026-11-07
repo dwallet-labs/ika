@@ -95,6 +95,23 @@ pub struct OcsMetrics {
     /// committee-verified before folding, `_sum` the total CPU time spent on
     /// it — together they quantify the verify's cost on the fold path.
     pub pusher_fold_verify_seconds: Histogram,
+    /// Archive-backfill progress by outcome. Per attempt: `fetched` (the
+    /// archive answered), `verified` (the blob passed the archive
+    /// verification), `failed` (see `pusher_backfill_failures_total`). Per
+    /// checkpoint, once settled: `folded`, `already_cached` (every current
+    /// object was cached already, including a checkpoint skipped at startup for
+    /// that reason) or `nothing_to_fold` (no Ika object of it is still
+    /// current).
+    pub pusher_backfill_outcomes_total: IntCounterVec, // labels: ["outcome"]
+    /// Failed archive-backfill attempts by reason: `archive_not_found`,
+    /// `archive_fetch`, `archive_timeout`, `missing_committee`,
+    /// `verification` (the archive served a blob that does not verify — logged
+    /// as security-critical, never folded) or `currency_lookup`. Every failure
+    /// is retried with capped backoff.
+    pub pusher_backfill_failures_total: IntCounterVec, // labels: ["reason"]
+    /// Archive-backfill checkpoints not settled yet. Non-zero for long means
+    /// the node still lacks objects it was told it needs.
+    pub pusher_backfill_pending: IntGauge,
 
     /// Latest-checkpoint watermark samples refused by the rate bound, by
     /// consumer (`folder` = the checkpoint folder's per-tick scan bound and
@@ -269,6 +286,26 @@ impl OcsMetrics {
                 "ika_ocs_pusher_fold_verify_seconds",
                 "Latency of the sui-state-direct pusher's pre-fold committee verification (BLS on the summary + artifacts-digest binding); _count is the number of checkpoints committee-verified before folding into the cache",
                 vec![0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5],
+                registry,
+            )
+            .unwrap(),
+            pusher_backfill_outcomes_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_pusher_backfill_outcomes_total",
+                "sui-state-direct archive backfill progress: per attempt fetched/verified/failed, per settled checkpoint folded/already_cached/nothing_to_fold",
+                &["outcome"],
+                registry,
+            )
+            .unwrap(),
+            pusher_backfill_failures_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_pusher_backfill_failures_total",
+                "Failed archive-backfill attempts by reason (archive_not_found, archive_fetch, archive_timeout, missing_committee, verification, currency_lookup); every failure is retried with capped backoff",
+                &["reason"],
+                registry,
+            )
+            .unwrap(),
+            pusher_backfill_pending: register_int_gauge_with_registry!(
+                "ika_ocs_pusher_backfill_pending",
+                "Archive-backfill checkpoints this sui-state-direct node has not settled yet; non-zero for long means it still lacks objects it was told it needs",
                 registry,
             )
             .unwrap(),

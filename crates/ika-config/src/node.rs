@@ -12,7 +12,7 @@ use rand::rngs::OsRng;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::serde_as;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
@@ -798,6 +798,23 @@ pub struct SuiConnectorConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_cache_retention_checkpoints: Option<u64>,
 
+    /// Sui checkpoint sequence numbers a `sui-state-direct` node re-folds from
+    /// the checkpoint archive at startup, in addition to the binary's built-in
+    /// list for this chain ([`builtin_sui_checkpoint_archive_backfill`]). For
+    /// a checkpoint whose Ika objects never entered the verified cache — its
+    /// fold failed and the fullnode has since pruned it — this is the only way
+    /// the node can prove those objects again. The checkpoint goes through the
+    /// same verification as an archive-repaired gap (sequence binding,
+    /// committee signature, artifacts digest over the whole object set), only
+    /// the objects the node's own fullnode still reports at exactly that
+    /// version are folded, and those snapshots are kept out of the cache's
+    /// retain-window pruning for as long as the sequence stays in the list.
+    /// The scan cursor never moves. Ignored on `sui-state-mirrored` nodes,
+    /// which receive the folded objects with their proofs from their direct
+    /// relays. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sui_checkpoint_archive_backfill: Vec<u64>,
+
     /// Only for sui connector notifiers, don't set `notifier_client_key_pair` otherwise.
     /// Path of the file where sui client key (any SuiKeyPair) is stored.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -820,10 +837,43 @@ pub struct SuiConnectorConfig {
 /// perpetual `verified_object_cache` and the in-memory map. Tune per chain.
 pub const DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS: u64 = 432_000;
 
+/// Checkpoints every `sui-state-direct` node of `chain` re-folds from the
+/// checkpoint archive at startup (see
+/// [`SuiConnectorConfig::sui_checkpoint_archive_backfill`]), keyed off the
+/// chain identity the config resolves.
+///
+/// Mainnet `342064089` (2026-11-05) carries the `session_events` bag entry of
+/// the epoch-463 network encryption key reconfiguration request. The same
+/// checkpoint holds an unrelated transaction whose expiration uses a Sui
+/// encoding the then-deployed binary could not decode, so no node folded the
+/// checkpoint before every fullnode pruned it. Without that entry no node can
+/// start the reconfiguration session and the epoch cannot close. The public
+/// archive retains ordinary checkpoints for about 30 days, so this entry can be
+/// removed once mainnet has closed that epoch.
+pub fn builtin_sui_checkpoint_archive_backfill(chain: SuiChainIdentifier) -> &'static [u64] {
+    match chain {
+        SuiChainIdentifier::Mainnet => &[342_064_089],
+        SuiChainIdentifier::Testnet | SuiChainIdentifier::Devnet | SuiChainIdentifier::Custom => {
+            &[]
+        }
+    }
+}
+
 impl SuiConnectorConfig {
     pub fn verified_cache_retention_checkpoints(&self) -> u64 {
         self.verified_cache_retention_checkpoints
             .unwrap_or(DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS)
+    }
+
+    /// The checkpoints to backfill from the archive: the built-in list for
+    /// `sui_chain_identifier` merged with the operator's
+    /// `sui_checkpoint_archive_backfill`, deduplicated and ascending.
+    pub fn sui_checkpoint_archive_backfill_seqs(&self) -> BTreeSet<u64> {
+        builtin_sui_checkpoint_archive_backfill(self.sui_chain_identifier)
+            .iter()
+            .chain(&self.sui_checkpoint_archive_backfill)
+            .copied()
+            .collect()
     }
 
     /// Resolve the runtime ika on-chain identity (packages + objects), keyed
@@ -1586,6 +1636,7 @@ mod tests {
             ika_system_object_id: ObjectID::ZERO,
             ika_dwallet_coordinator_object_id: ObjectID::ZERO,
             verified_cache_retention_checkpoints: None,
+            sui_checkpoint_archive_backfill: vec![],
             notifier_client_key_pair: None,
             sui_ika_system_module_last_processed_event_id_override: None,
         }
@@ -2147,6 +2198,68 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
                 "{chain}: must not guess an archive"
             );
         }
+    }
+
+    /// The archive backfill list is the chain's built-in list merged with the
+    /// operator's, deduplicated and ascending; only mainnet carries a built-in
+    /// entry.
+    #[test]
+    fn archive_backfill_merges_the_builtin_list_with_the_config() {
+        let mut mainnet = config_for_chain(SuiChainIdentifier::Mainnet);
+        assert_eq!(
+            mainnet.sui_checkpoint_archive_backfill_seqs(),
+            BTreeSet::from([342_064_089])
+        );
+        mainnet.sui_checkpoint_archive_backfill = vec![7, 342_064_089, 3];
+        assert_eq!(
+            mainnet.sui_checkpoint_archive_backfill_seqs(),
+            BTreeSet::from([3, 7, 342_064_089])
+        );
+        for chain in [
+            SuiChainIdentifier::Testnet,
+            SuiChainIdentifier::Devnet,
+            SuiChainIdentifier::Custom,
+        ] {
+            let mut cfg = config_for_chain(chain);
+            assert!(
+                cfg.sui_checkpoint_archive_backfill_seqs().is_empty(),
+                "{chain}"
+            );
+            cfg.sui_checkpoint_archive_backfill = vec![5];
+            assert_eq!(
+                cfg.sui_checkpoint_archive_backfill_seqs(),
+                BTreeSet::from([5])
+            );
+        }
+    }
+
+    /// Existing configs carry no `sui-checkpoint-archive-backfill` key and must
+    /// keep parsing; an empty list is not written back, so a config produced by
+    /// this binary stays readable by a binary that predates the field.
+    #[test]
+    fn archive_backfill_config_is_backward_compatible() {
+        let yaml = r#"
+sui-data-source:
+  kind: sui-state-direct
+  url: "http://unused:9000"
+sui-chain-identifier: mainnet
+"#;
+        let cfg: SuiConnectorConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.sui_checkpoint_archive_backfill.is_empty());
+        let serialized = serde_yaml::to_string(&cfg).unwrap();
+        assert!(
+            !serialized.contains("sui-checkpoint-archive-backfill"),
+            "an empty list must not serialize: {serialized}"
+        );
+
+        let with_list: SuiConnectorConfig = serde_yaml::from_str(&format!(
+            "{yaml}sui-checkpoint-archive-backfill: [100, 200]\n"
+        ))
+        .unwrap();
+        assert_eq!(with_list.sui_checkpoint_archive_backfill, vec![100, 200]);
+        let round_trip: SuiConnectorConfig =
+            serde_yaml::from_str(&serde_yaml::to_string(&with_list).unwrap()).unwrap();
+        assert_eq!(round_trip.sui_checkpoint_archive_backfill, vec![100, 200]);
     }
 
     /// A validator on the gRPC path with no anchor has no MPC event source —

@@ -32,6 +32,7 @@
 //! wrapping the same `LocalProofProvider`, so its local consumer and
 //! remote `sui-state-mirrored` peers see the same view.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use anemo::PeerId;
@@ -205,9 +206,21 @@ pub async fn build_sui_connector_stack(
     // column on boot and writes through every absorb. The direct proof
     // provider also reuses a snapshot when Sui still returns the exact same
     // object but has pruned the checkpoint needed to rebuild its proof.
+    //
+    // On a direct node the snapshots of the archive-backfill checkpoints are
+    // pinned against the retain window: those checkpoints are typically far
+    // older than the window, so the next sweep would drop exactly what the
+    // pusher backfills. Pinned here, before the pusher's first absorb runs a
+    // sweep, so a restart keeps the pinned snapshots it persisted.
+    let archive_backfill = cfg.sui_checkpoint_archive_backfill_seqs();
+    let pinned_checkpoints = match cfg.sui_data_source {
+        SuiDataSource::SuiStateDirect { .. } => archive_backfill.clone(),
+        SuiDataSource::SuiStateMirrored { .. } => BTreeSet::new(),
+    };
     let state_cache: SharedVerifiedStateCache = Arc::new(
         VerifiedStateCache::open(perpetual.clone())?
-            .with_retain_window(Some(cfg.verified_cache_retention_checkpoints())),
+            .with_retain_window(Some(cfg.verified_cache_retention_checkpoints()))
+            .with_pinned_checkpoints(pinned_checkpoints),
     );
 
     // 1. Build the *raw* transport used by the committee ratchet (and,
@@ -251,6 +264,14 @@ pub async fn build_sui_connector_stack(
             headers,
         } => {
             let net = network.clone().ok_or(SetupError::MirroredWithoutNetwork)?;
+            if !archive_backfill.is_empty() {
+                info!(
+                    ?archive_backfill,
+                    "skipping the archive backfill on this sui-state-mirrored node: it runs on \
+                     sui-state-direct nodes, whose relays serve the backfilled objects with \
+                     their proofs"
+                );
+            }
             let mut peer_ids = Vec::with_capacity(cfg.sui_state_mirror_peers.len());
             for entry in &cfg.sui_state_mirror_peers {
                 peer_ids.push(parse_peer_entry(entry)?);
@@ -816,6 +837,7 @@ mod tests {
             ika_system_object_id: ObjectID::random(),
             ika_dwallet_coordinator_object_id: ObjectID::random(),
             verified_cache_retention_checkpoints: None,
+            sui_checkpoint_archive_backfill: vec![],
             notifier_client_key_pair: None,
             sui_ika_system_module_last_processed_event_id_override: None,
         }

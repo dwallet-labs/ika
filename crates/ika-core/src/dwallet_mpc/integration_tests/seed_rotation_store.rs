@@ -330,6 +330,7 @@ fn config_and_validator_record(
             ika_system_object_id: sui_types::base_types::ObjectID::ZERO,
             ika_dwallet_coordinator_object_id: sui_types::base_types::ObjectID::ZERO,
             verified_cache_retention_checkpoints: None,
+            sui_checkpoint_archive_backfill: vec![],
             notifier_client_key_pair: None,
             sui_ika_system_module_last_processed_event_id_override: None,
         },
