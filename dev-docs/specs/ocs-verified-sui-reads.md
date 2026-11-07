@@ -744,6 +744,35 @@ the next poll while a bad signature halts the fold loudly
 and folded in order, a cache hit is the object's current state up to the
 poll lag, and safely skips re-running the proof.
 
+**Each folded object is the attested object.** The artifacts digest covers
+the checkpoint's effects — per written id, the `(id, version, digest)`
+reference of its last write in the checkpoint — not the object contents the
+source sends alongside them. So once the committee checks pass,
+`build_entries` folds, for each Ika id, the output object whose
+`compute_object_reference()` equals the reference the verified tree attests
+for that id (`attested_output`). The reference includes the object digest,
+so this binds the bytes as well as the version; it is the fold-time
+counterpart of the reader building the proof target from the object it
+holds. Every fold path runs it: the scan, the pending-gap repair from the
+fullnode or the archive, and the archive backfill. Output objects are indexed
+by id once per checkpoint and an id's outputs are tried last write first, so
+an honest checkpoint hashes one object per Ika id.
+
+An honest checkpoint always has the match: a live attested reference is an
+object write of the id's last writing transaction, and a transaction's output
+objects are exactly the objects of its object writes. An id whose last write
+in the checkpoint deleted or wrapped it has no object to fold and is skipped —
+folding its earlier write would cache a state the checkpoint does not end in.
+A live reference with no matching output means the source served contents the
+committee did not attest (an intermediate version in place of the final one,
+or altered bytes), and the checkpoint is refused like a failed committee
+check: logged at `error!` (`security_critical`), nothing of it folded, and
+retried under the path's usual rule — the scan holds its cursor, a pending
+gap stays pending until its deadline, the backfill backs off.
+`ika_ocs_pusher_fold_verify_seconds` times the committee checks and this
+binding together, and records a sample only for a checkpoint that passed
+both.
+
 The head scan fetches up to eight full checkpoints concurrently, using the
 same Sui transport and node-wide rate-limit gate as before. Results are
 buffered and folded in sequence order: a later checkpoint may finish its RPC
@@ -1068,12 +1097,10 @@ list for the chain (`builtin_sui_checkpoint_archive_backfill` — mainnet
 - Verification is the archive-gap verification unchanged
   (`verify_archive_checkpoint`: sequence binding, committee BLS, artifacts
   digest over the whole object set), then the fold-time verification inside
-  `build_entries`, then one more binding the other fold paths lack: each
-  folded object must be the output object whose reference equals the
-  committee-attested reference for its id
-  (`bind_objects_to_attested_state`; see *Residuals*). A blob failing any of
-  them is refused at `error!` (`security_critical`) and retried, never
-  folded. Verifying an old checkpoint needs its Sui epoch's committee, which
+  `build_entries`, which includes binding each folded object to the
+  committee-attested reference for its id (*Each folded object is the
+  attested object*, above). A blob failing any of them is refused at
+  `error!` (`security_critical`) and retried, never folded. Verifying an old checkpoint needs its Sui epoch's committee, which
   the committee store derives from the persisted end-of-epoch summary of the
   epoch before; a missing committee is its own failure reason, and the log
   says whether the ratchet has not reached that epoch yet or the chain has a
@@ -1277,9 +1304,13 @@ because the bytes came from a peer's disk rather than its fullnode.
    only from the node's own authoritative Sui access, never from peers.
    The direct-side folder enforces this at fold time
    (`verify_before_fold`): the committee BLS on the summary plus the
-   artifacts-digest binding run before `absorb_entries`, so a direct
-   node's own fullnode is not in its trust boundary — serving forged state
-   is refused, not cached.
+   artifacts-digest binding run before `absorb_entries`, and every folded
+   object is the output object whose reference equals the one the verified
+   tree attests for its id (`attested_output`), so a cached object is
+   exactly the object its cached proof proves. A direct node's own fullnode
+   — or the archive — is not in its trust boundary: serving forged state,
+   including altered contents or an intermediate version under genuine
+   effects, is refused, not cached.
 9. On mirrored/peer-only nodes a verified read additionally passes a
    committee-attested **currency** gate: an authentic-but-superseded object
    is rejected — a read anchored before the object's latest folded
@@ -1467,21 +1498,6 @@ because the bytes came from a peer's disk rather than its fullnode.
   Harmless only because `children_of` has no production caller today —
   every reference is inside `mod tests`. Whoever wires the first real
   caller has to reconcile them first.
-- **The scan and gap-repair folds do not bind object bytes to the attested
-  reference.** `build_entries` proves the reference the checkpoint's effects
-  attest for each Ika id, but pairs that proof with the FIRST output object
-  carrying the id and never compares the two; the artifacts digest covers the
-  effects, not the object bytes. Two consequences on a direct node, whose
-  cache-first reads serve the cached object without re-checking its proof:
-  an object written by several transactions of one checkpoint is cached at an
-  intermediate version until its next fold, and a source that serves genuine
-  summary and effects with altered object bytes (the node's own fullnode, or
-  the archive on gap repair) gets those bytes cached. Peers are not exposed:
-  the mirror serves a snapshot only on an exact current-reference match, and
-  a mirrored reader re-verifies every inclusion proof against the object it
-  receives. Only the archive backfill binds them
-  (`bind_objects_to_attested_state`); the same binding on the scan and
-  gap-repair folds is still open.
 - **The end-of-publish retention floor is not coupled to a lagging
   peer.** `eop_retention_floor()` clamps to the direct node's OWN oldest
   persisted committee summary; nothing couples it to any peer's ratchet
