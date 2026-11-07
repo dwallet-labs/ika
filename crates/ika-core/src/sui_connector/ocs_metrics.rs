@@ -89,11 +89,13 @@ pub struct OcsMetrics {
     /// rode the checkpoint (e.g. a session_events bag entry) never enters the
     /// cache, which can wedge an epoch close. Alert on any increase.
     pub pusher_gap_dropped_total: IntCounter,
-    /// Latency of the pre-fold committee verification the pusher runs before
-    /// folding a checkpoint into the local cache (committee BLS on the summary +
-    /// artifacts-digest binding). `_count` is the number of checkpoints
-    /// committee-verified before folding, `_sum` the total CPU time spent on
-    /// it — together they quantify the verify's cost on the fold path.
+    /// Latency of the pre-fold verification the pusher runs before folding a
+    /// checkpoint into the local cache (committee BLS on the summary +
+    /// artifacts-digest binding + binding each folded object to the reference
+    /// the checkpoint attests for it). Recorded only when all of it passes:
+    /// `_count` is the number of checkpoints verified before folding, `_sum`
+    /// the total CPU time spent on it — together they quantify the verify's
+    /// cost on the fold path.
     pub pusher_fold_verify_seconds: Histogram,
     /// Archive-backfill progress by outcome. Per attempt: `fetched` (the
     /// archive answered), `verified` (the blob passed the archive
@@ -284,7 +286,7 @@ impl OcsMetrics {
             .unwrap(),
             pusher_fold_verify_seconds: register_histogram_with_registry!(
                 "ika_ocs_pusher_fold_verify_seconds",
-                "Latency of the sui-state-direct pusher's pre-fold committee verification (BLS on the summary + artifacts-digest binding); _count is the number of checkpoints committee-verified before folding into the cache",
+                "Latency of the sui-state-direct pusher's pre-fold verification (BLS on the summary + artifacts-digest binding + binding each folded object to its attested reference), recorded only when it passes; _count is the number of checkpoints verified before folding into the cache",
                 vec![0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5],
                 registry,
             )
