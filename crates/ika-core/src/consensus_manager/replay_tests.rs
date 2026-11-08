@@ -29,8 +29,13 @@ use crate::authority::authority_per_epoch_store::{
 };
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
 use crate::authority::round_transport::round_transport;
-use crate::consensus_handler::{ConsensusCommitSink, ConsensusHandler, MysticetiConsensusHandler};
-use crate::consensus_manager::ConsensusManagerMetrics;
+use crate::consensus_handler::{
+    CommitOrigin, ConsensusCommitSink, ConsensusHandler, MysticetiConsensusHandler,
+};
+use crate::consensus_manager::{
+    CONSENSUS_METRICS_PREFIX, ConsensusManagerMetrics, PEER_ACCEPTED_ROUND_METRIC,
+    highest_peer_accepted_round,
+};
 use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
 use crate::dwallet_checkpoints::DWalletCheckpointService;
 use crate::epoch::epoch_metrics::EpochMetrics;
@@ -156,6 +161,14 @@ impl Fixture {
     }
 
     async fn start(&self, consumer: CommitConsumerArgs) -> ConsensusAuthority {
+        self.start_with_registry(consumer, Registry::new()).await
+    }
+
+    async fn start_with_registry(
+        &self,
+        consumer: CommitConsumerArgs,
+        registry: Registry,
+    ) -> ConsensusAuthority {
         ConsensusAuthority::start(
             NetworkType::Tonic,
             0,
@@ -168,7 +181,7 @@ impl Fixture {
             Arc::new(AcceptEmptyTransactions),
             None,
             consumer,
-            Registry::new(),
+            registry,
             1,
             None,
         )
@@ -223,12 +236,12 @@ fn test_handler_with_sink(
 
 #[derive(Default)]
 struct CountingCommitSink {
-    rounds: Mutex<Vec<u64>>,
+    rounds: Mutex<Vec<(u64, CommitOrigin)>>,
 }
 
 impl ConsensusCommitSink for CountingCommitSink {
-    fn commit_received(&self, leader_round: u64) {
-        self.rounds.lock().unwrap().push(leader_round);
+    fn commit_received(&self, leader_round: u64, origin: CommitOrigin) {
+        self.rounds.lock().unwrap().push((leader_round, origin));
     }
 }
 
@@ -262,7 +275,16 @@ async fn consensus_owned_replay_matches_the_live_handler_and_reports_every_round
             .sub_dag_index,
         7
     );
-    assert_eq!(sink.rounds.lock().unwrap().len(), 7);
+    let reported = sink.rounds.lock().unwrap().clone();
+    assert_eq!(reported.len(), 7);
+    assert!(
+        reported
+            .iter()
+            .all(|(_, origin)| *origin == CommitOrigin::Replayed),
+        "every commit at or below the replay target is history re-read from this node's own \
+         store, and must reach the liveness watchdog as such: replayed commits arming it is what \
+         exited every node one bound after its replay during a network-wide halt. reported={reported:?}"
+    );
     let mut received_rounds = Vec::new();
     while let Ok(round) = rounds.try_recv() {
         received_rounds.push(round.round);
@@ -274,7 +296,7 @@ async fn consensus_owned_replay_matches_the_live_handler_and_reports_every_round
     let live_epoch = test_epoch_store(live_dir.path());
     let mut live_handler = test_handler(live_epoch.clone(), &fixture.context);
     for commit in fixture.commits.iter().cloned() {
-        live_handler.report_commit_received(&commit);
+        live_handler.report_commit_received(&commit, CommitOrigin::Live);
         live_handler.handle_consensus_commit(commit).await;
     }
     let replayed = epoch.derived_state_snapshot();
@@ -422,4 +444,82 @@ async fn replay_metrics_follow_acknowledgements_without_new_commits() {
         assert_eq!(monitor.progress().highest_committed_index, 0);
     }
     handler.abort().await;
+}
+
+#[test]
+fn commit_origin_splits_at_the_replay_target() {
+    assert_eq!(CommitOrigin::classify(1, Some(7)), CommitOrigin::Replayed);
+    assert_eq!(CommitOrigin::classify(7, Some(7)), CommitOrigin::Replayed);
+    assert_eq!(CommitOrigin::classify(8, Some(7)), CommitOrigin::Live);
+    assert_eq!(
+        CommitOrigin::classify(1, Some(0)),
+        CommitOrigin::Live,
+        "an empty store has nothing to replay, so the first commit is live"
+    );
+    assert_eq!(
+        CommitOrigin::classify(1_000, None),
+        CommitOrigin::Replayed,
+        "before consensus reports its target, replay readiness is unknown, not complete"
+    );
+}
+
+#[test]
+fn the_peer_round_is_the_highest_quorum_accepted_round_of_any_authority() {
+    let registry = Registry::new_custom(Some(CONSENSUS_METRICS_PREFIX.to_string()), None).unwrap();
+    assert_eq!(highest_peer_accepted_round(&registry.gather()), None);
+
+    let rounds = prometheus::register_int_gauge_vec_with_registry!(
+        PEER_ACCEPTED_ROUND_METRIC,
+        "test stand-in for consensus-core's gauge",
+        &["authority"],
+        registry,
+    )
+    .unwrap();
+    assert_eq!(
+        highest_peer_accepted_round(&registry.gather()),
+        None,
+        "a gauge vec with no children is absent from a gather: not probed yet, not round 0"
+    );
+    rounds.with_label_values(&["a"]).set(40);
+    rounds.with_label_values(&["b"]).set(42);
+    rounds.with_label_values(&["c"]).set(0);
+    assert_eq!(highest_peer_accepted_round(&registry.gather()), Some(42));
+}
+
+/// Pins the upstream metric the commit-liveness watchdog reads peer progress
+/// from against a REAL consensus authority, started the way production starts
+/// it: under the same registry prefix. The reader goes through the registry
+/// because consensus-core keeps its round tracker crate-private, so nothing
+/// but this test notices if a Sui bump renames or drops the gauge — and a
+/// reader that finds nothing makes the watchdog hold forever, which would
+/// quietly retire it for the isolation it exists to catch.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_round_prober_publishes_the_peer_round_the_watchdog_reads() {
+    let fixture = Fixture::new(0);
+    let registry = Registry::new_custom(Some(CONSENSUS_METRICS_PREFIX.to_string()), None).unwrap();
+    let (consumer, _receiver) = CommitConsumerArgs::new_with_full_replay();
+    let authority = timeout(
+        Duration::from_secs(30),
+        fixture.start_with_registry(consumer, registry.clone()),
+    )
+    .await
+    .unwrap();
+    let peer_round = timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(round) = highest_peer_accepted_round(&registry.gather()) {
+                return round;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    authority.stop().await;
+    assert!(
+        peer_round.is_ok(),
+        "consensus-core's round prober published no {CONSENSUS_METRICS_PREFIX}_\
+         round_tracker_low_accepted_quorum_round within 30s of startup. If a Sui bump renamed \
+         or removed it, repoint ConsensusManager::peer_accepted_round at its replacement — \
+         until then the commit-liveness watchdog reads every stall as network-wide and never \
+         exits an isolated validator"
+    );
 }

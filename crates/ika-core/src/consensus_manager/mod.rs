@@ -20,6 +20,7 @@ use ika_types::error::IkaResult;
 use ika_types::messages_consensus::{ConsensusPosition, ConsensusTransaction};
 use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use mysten_metrics::{RegistryID, RegistryService};
+use prometheus::proto::MetricFamily;
 use prometheus::{IntGauge, Registry, register_int_gauge_with_registry};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -100,6 +101,19 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
     )
 }
 
+/// The prefix consensus-core's metrics are exported under. See the comment
+/// where the registry is created for why it must not start with `ika`. That
+/// call keeps the prefix as a literal, matching this, so it reads the way
+/// `scripts/check-metric-names.sh` expects a vendored prefix to be written.
+const CONSENSUS_METRICS_PREFIX: &str = "consensus_ika";
+
+/// consensus-core's per-authority gauge vec of the round a quorum of the
+/// committee has accepted from that authority, as its round prober last
+/// measured it. Read by [`ConsensusManager::peer_accepted_round`]; the name
+/// is pinned against the real consensus-core registry by a test, so a Sui
+/// bump that renames it fails CI instead of silently blinding the reader.
+const PEER_ACCEPTED_ROUND_METRIC: &str = "round_tracker_low_accepted_quorum_round";
+
 /// Used by Ika validator to start consensus protocol for each epoch.
 pub struct ConsensusManager {
     consensus_config: ConsensusConfig,
@@ -109,6 +123,11 @@ pub struct ConsensusManager {
     metrics: Arc<ConsensusManagerMetrics>,
     registry_service: RegistryService,
     authority: ArcSwapOption<(ConsensusAuthority, RegistryID)>,
+    /// The running consensus instance's own metrics registry. Held so that
+    /// [`Self::peer_accepted_round`] can read the round prober's view of the
+    /// committee: consensus-core keeps that state crate-private and its
+    /// registry is the only place it is exposed.
+    consensus_registry: ArcSwapOption<Registry>,
 
     // Use a shared lazy Mysticeti client so we can update the internal Mysticeti
     // client that gets created for every new epoch.
@@ -144,6 +163,7 @@ impl ConsensusManager {
             metrics,
             registry_service: registry_service.clone(),
             authority: ArcSwapOption::empty(),
+            consensus_registry: ArcSwapOption::empty(),
             client,
             consensus_client,
             consensus_handler: Mutex::new(None),
@@ -315,6 +335,8 @@ impl ConsensusManager {
         .await;
         let client = authority.transaction_client();
         let registry_id = self.registry_service.add(registry.clone());
+        self.consensus_registry
+            .store(Some(Arc::new(registry.clone())));
 
         let registered_authority = Arc::new((authority, registry_id));
         self.authority.swap(Some(registered_authority.clone()));
@@ -359,6 +381,10 @@ impl ConsensusManager {
         // Stop consensus submissions.
         self.client.clear();
 
+        // The outgoing instance's rounds mean nothing to the next one, which
+        // starts its round count afresh.
+        self.consensus_registry.store(None);
+
         // swap with empty to ensure there is no other reference to authority and we can safely do Arc unwrap
         let r = self.authority.swap(None).unwrap();
         let Ok((authority, registry_id)) = Arc::try_unwrap(r) else {
@@ -393,6 +419,30 @@ impl ConsensusManager {
         matches!(*running, Running::True(_, _))
     }
 
+    /// The highest round that a quorum of the committee has accepted from any
+    /// authority, as consensus-core's round prober last measured it; `None`
+    /// while consensus is not running or before the prober's first probe.
+    ///
+    /// This is evidence of PEER progress that does not depend on this node
+    /// receiving peers' blocks: the prober asks every peer for its latest
+    /// accepted rounds over a request of its own, every few seconds, so the
+    /// value keeps climbing on a node whose block subscriptions are gone as
+    /// long as peers answer — and it stands still when the whole committee
+    /// does, because no authority can advance a round without a quorum of
+    /// the round before it. It is NOT a measure of this node's own progress:
+    /// a node catching up from far behind reads the network's round here.
+    ///
+    /// Read through the registry because consensus-core keeps its round
+    /// tracker crate-private and `ConsensusAuthority` exposes no accessor for
+    /// it; `CommitConsumerMonitor`, the one progress handle it does expose,
+    /// reports only this node's own committed head. The cost is a `gather()`
+    /// of the consensus registry per call, so call it at a poll cadence, not
+    /// on a hot path.
+    pub fn peer_accepted_round(&self) -> Option<u64> {
+        let registry = self.consensus_registry.load_full()?;
+        highest_peer_accepted_round(&registry.gather())
+    }
+
     pub fn replay_waiter(&self) -> ReplayWaiter {
         let consumer_monitor_receiver = self.consumer_monitor_sender.subscribe();
         ReplayWaiter::new(consumer_monitor_receiver)
@@ -407,6 +457,21 @@ impl ConsensusManager {
         store_path.push(format!("{}", epoch));
         store_path
     }
+}
+
+/// The largest per-authority value of [`PEER_ACCEPTED_ROUND_METRIC`] in a
+/// gather of the consensus registry; `None` when the family is absent, which
+/// it is until the round prober has completed its first probe.
+fn highest_peer_accepted_round(families: &[MetricFamily]) -> Option<u64> {
+    let name = format!("{CONSENSUS_METRICS_PREFIX}_{PEER_ACCEPTED_ROUND_METRIC}");
+    families
+        .iter()
+        .filter(|family| family.name() == name)
+        .flat_map(|family| family.get_metric())
+        .map(|metric| metric.get_gauge().value())
+        .filter(|round| round.is_finite() && *round >= 0.0)
+        .map(|round| round as u64)
+        .max()
 }
 
 /// A ConsensusClient that can be updated internally at any time. This usually happening during epoch

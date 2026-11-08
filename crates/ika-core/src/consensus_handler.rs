@@ -25,7 +25,7 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use consensus_config::Committee as ConsensusCommittee;
-use consensus_core::CommitConsumerMonitor;
+use consensus_core::{CommitConsumerMonitor, CommitIndex};
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
 use ika_types::digests::ConsensusCommitDigest;
@@ -75,8 +75,38 @@ use tracing::{debug, error, info, instrument, trace_span, warn};
 ///
 /// Consumers must be cheap and non-blocking: this runs on the commit path,
 /// once per commit, at sub-second cadence.
+///
+/// Every commit is reported, replayed and live alike, tagged with its
+/// [`CommitOrigin`]. The watchdog counts only live ones: a commit re-read
+/// from this node's own store says nothing about whether it is still
+/// connected to its peers.
 pub trait ConsensusCommitSink: Send + Sync {
-    fn commit_received(&self, leader_round: u64);
+    fn commit_received(&self, leader_round: u64, origin: CommitOrigin);
+}
+
+/// Where a commit handed to [`ConsensusCommitSink`] came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitOrigin {
+    /// Re-read from this node's own consensus store by the boot replay, at
+    /// or below the replay target consensus-core discovered at startup.
+    Replayed,
+    /// Past the replay target: committed live, or fetched from peers by
+    /// commit sync. Either way it reached this node over the network.
+    Live,
+}
+
+impl CommitOrigin {
+    /// Classifies a commit against consensus-core's startup replay target.
+    /// An undiscovered target (`None`) reads as replay: until consensus
+    /// reports the target, replay readiness is unknown, not complete. With
+    /// full replay consensus sets the target before it sends the first
+    /// replayed commit, so this is a fail-safe, not a path taken in practice.
+    pub(crate) fn classify(commit_index: CommitIndex, replay_target: Option<CommitIndex>) -> Self {
+        match replay_target {
+            Some(target) if commit_index > target => Self::Live,
+            _ => Self::Replayed,
+        }
+    }
 }
 
 pub struct ConsensusHandlerInitializer {
@@ -225,9 +255,15 @@ impl<C> ConsensusHandler<C> {
     ///
     /// Called by every path that receives a commit — the live loop and the
     /// boot replay alike — before the fold, so that a fold waiting on the MPC
-    /// drain never reads as consensus silence. Boot replay reports too, which
-    /// is what arms the watchdog on a node whose whole start is replay.
-    pub(crate) fn report_commit_received(&self, consensus_commit: &impl ConsensusCommitAPI) {
+    /// drain never reads as consensus silence. Replayed commits are reported
+    /// as [`CommitOrigin::Replayed`] and do not arm the watchdog: a node
+    /// whose replay ends while consensus is halted network-wide must not be
+    /// put on a clock it cannot satisfy.
+    pub(crate) fn report_commit_received(
+        &self,
+        consensus_commit: &impl ConsensusCommitAPI,
+        origin: CommitOrigin,
+    ) {
         let round = consensus_commit.leader_round();
         // Also the catch-up gate's view of how far there is to go. Recorded
         // here, on arrival, because the fold's own position cannot answer it:
@@ -235,7 +271,7 @@ impl<C> ConsensusHandler<C> {
         // the drain.
         self.epoch_store.record_observed_consensus_head_round(round);
         if let Some(sink) = &self.commit_sink {
-            sink.commit_received(round);
+            sink.commit_received(round, origin);
         }
     }
 }
@@ -490,7 +526,9 @@ impl MysticetiConsensusHandler {
                 // Report ARRIVAL, before the fold — the fold can block on the
                 // drain for longer than the watchdog's bound, and a node that
                 // killed itself for that would replay into the same burst.
-                consensus_handler.report_commit_received(&consensus_commit);
+                let origin =
+                    CommitOrigin::classify(commit_index, commit_consumer_monitor.replay_target());
+                consensus_handler.report_commit_received(&consensus_commit, origin);
                 consensus_handler
                     .handle_consensus_commit(consensus_commit)
                     .await;
