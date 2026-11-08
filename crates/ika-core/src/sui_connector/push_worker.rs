@@ -4689,9 +4689,8 @@ mod tests {
         use sui_types::transaction::{TransactionDataAPI, TransactionExpiration};
 
         const SEQ: CheckpointSequenceNumber = 342_064_089;
-        assert_eq!(
-            builtin_sui_checkpoint_archive_backfill(SuiChainIdentifier::Mainnet),
-            &[SEQ]
+        assert!(
+            builtin_sui_checkpoint_archive_backfill(SuiChainIdentifier::Mainnet).contains(&SEQ)
         );
         let entry_id = ObjectID::from_hex_literal(
             "0x5359578bb4ae585be23731f7743103bab9622935f5f837c72c98bfd261d05ac8",

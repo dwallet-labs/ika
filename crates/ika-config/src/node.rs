@@ -850,9 +850,17 @@ pub const DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS: u64 = 432_000;
 /// start the reconfiguration session and the epoch cannot close. The public
 /// archive retains ordinary checkpoints for about 30 days, so this entry can be
 /// removed once mainnet has closed that epoch.
+///
+/// Mainnet `342064086` (2026-11-05) carries the last write of the Ika System
+/// object before that stall (a notifier epoch-switch step). A direct node
+/// verifies the System inner against it before consensus starts (#2138).
+/// The stuck epoch outlived both the fullnodes' retention and the verified
+/// cache's, so the transaction is gone everywhere but the archive, and
+/// without this entry a direct node hangs at startup with
+/// `verified_system_inner still failing`. Same removal condition.
 pub fn builtin_sui_checkpoint_archive_backfill(chain: SuiChainIdentifier) -> &'static [u64] {
     match chain {
-        SuiChainIdentifier::Mainnet => &[342_064_089],
+        SuiChainIdentifier::Mainnet => &[342_064_086, 342_064_089],
         SuiChainIdentifier::Testnet | SuiChainIdentifier::Devnet | SuiChainIdentifier::Custom => {
             &[]
         }
@@ -2208,12 +2216,14 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
         let mut mainnet = config_for_chain(SuiChainIdentifier::Mainnet);
         assert_eq!(
             mainnet.sui_checkpoint_archive_backfill_seqs(),
-            BTreeSet::from([342_064_089])
+            BTreeSet::from([342_064_086, 342_064_089])
         );
-        mainnet.sui_checkpoint_archive_backfill = vec![7, 342_064_089, 3];
+        // Operators who added 342064086 by hand on v1.4.2 keep a valid
+        // config: the duplicate folds away.
+        mainnet.sui_checkpoint_archive_backfill = vec![7, 342_064_089, 342_064_086, 3];
         assert_eq!(
             mainnet.sui_checkpoint_archive_backfill_seqs(),
-            BTreeSet::from([3, 7, 342_064_089])
+            BTreeSet::from([3, 7, 342_064_086, 342_064_089])
         );
         for chain in [
             SuiChainIdentifier::Testnet,
