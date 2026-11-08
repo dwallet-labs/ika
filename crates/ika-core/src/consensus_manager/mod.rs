@@ -102,7 +102,9 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
 }
 
 /// The prefix consensus-core's metrics are exported under. See the comment
-/// where the registry is created for why it must not start with `ika`.
+/// where the registry is created for why it must not start with `ika`. That
+/// call keeps the prefix as a literal, matching this, so it reads the way
+/// `scripts/check-metric-names.sh` expects a vendored prefix to be written.
 const CONSENSUS_METRICS_PREFIX: &str = "consensus_ika";
 
 /// consensus-core's per-authority gauge vec of the round a quorum of the
@@ -262,8 +264,7 @@ impl ConsensusManager {
         // sui's own `consensus_*` namespace, which is safe in a way this
         // arrangement was not: sui will never register a metric named
         // `ika_<something>`. Enforced by scripts/check-metric-names.sh.
-        let registry =
-            Registry::new_custom(Some(CONSENSUS_METRICS_PREFIX.to_string()), None).unwrap();
+        let registry = Registry::new_custom(Some("consensus_ika".to_string()), None).unwrap();
 
         let consensus_handler = consensus_handler_initializer.new_consensus_handler();
         let chain = epoch_store.get_chain_identifier().chain();

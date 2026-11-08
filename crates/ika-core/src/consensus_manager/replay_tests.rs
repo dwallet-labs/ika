@@ -33,7 +33,8 @@ use crate::consensus_handler::{
     CommitOrigin, ConsensusCommitSink, ConsensusHandler, MysticetiConsensusHandler,
 };
 use crate::consensus_manager::{
-    CONSENSUS_METRICS_PREFIX, ConsensusManagerMetrics, highest_peer_accepted_round,
+    CONSENSUS_METRICS_PREFIX, ConsensusManagerMetrics, PEER_ACCEPTED_ROUND_METRIC,
+    highest_peer_accepted_round,
 };
 use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
 use crate::dwallet_checkpoints::DWalletCheckpointService;
@@ -468,7 +469,7 @@ fn the_peer_round_is_the_highest_quorum_accepted_round_of_any_authority() {
     assert_eq!(highest_peer_accepted_round(&registry.gather()), None);
 
     let rounds = prometheus::register_int_gauge_vec_with_registry!(
-        "round_tracker_low_accepted_quorum_round",
+        PEER_ACCEPTED_ROUND_METRIC,
         "test stand-in for consensus-core's gauge",
         &["authority"],
         registry,
