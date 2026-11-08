@@ -29,7 +29,13 @@ On every startup:
    The same `ConsensusHandler` loop processes historical and live commits.
 4. The handler reports arrival to the liveness watchdog before folding, and
    acknowledges the commit through `set_highest_handled_commit` only after
-   the fold completes. Consensus waits for those acknowledgements between
+   the fold completes. Each report carries a `CommitOrigin`: a commit at or
+   below the replay target (or before the target is known) is `Replayed`,
+   anything past it `Live`. Only live commits arm or feed the watchdog — a
+   replayed one proves nothing about the node's connection to its peers, and
+   arming on replay is what exited every replayed node one bound after its
+   replay during the 2026-11-08 mainnet halt (`commit_liveness_watchdog`
+   module docs). Consensus waits for those acknowledgements between
    recovery batches of 250 commits. This bounds queued finalized replay data
    across both the finalizer and output channels; scheduler yields alone do
    not provide this bound.

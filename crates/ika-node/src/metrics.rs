@@ -135,18 +135,21 @@ pub struct ValidatorTelemetryMetrics {
     /// alerting is `handoff_prepare_waiting` + `handoff_prepare_retries_total`.
     pub handoff_prepare_duration_seconds: Histogram,
 
-    /// Seconds since this process last finished processing a consensus
-    /// commit, while the commit-liveness watchdog is armed and running;
-    /// `-1` while it is unarmed (no commit processed yet this process) or
-    /// held (consensus torn down for reconfiguration, or the watchdog
-    /// disabled). A healthy validator reads single-digit seconds. Sustained
-    /// growth is the #1864 isolation signature — subscriptions gone in both
-    /// directions with the process otherwise healthy — and the watchdog
-    /// exits the node once it passes the bound. This is the in-node twin of
-    /// the fleet-side staleness alert on
+    /// Seconds since this process last received a live consensus commit,
+    /// while the commit-liveness watchdog is armed and running; `-1` while it
+    /// is unarmed (no live commit yet this process — the boot replay does
+    /// not count) or held (consensus torn down for reconfiguration, or the
+    /// watchdog disabled); `-2` while it is held because no peer is
+    /// advancing either, which is a network-wide halt rather than this
+    /// node's isolation. A healthy validator reads single-digit seconds.
+    /// Sustained growth is the #1864 isolation signature — subscriptions
+    /// gone in both directions with the process otherwise healthy — and the
+    /// watchdog exits the node once it passes the bound. This is the in-node
+    /// twin of the fleet-side staleness alert on
     /// `ika_consensus_last_committed_timestamp_seconds`, measured on the
-    /// LOCAL clock instead of the consensus clock, so a validator replaying
-    /// a backlog of old commits reads healthy here while it makes progress.
+    /// LOCAL clock instead of the consensus clock, so a validator catching
+    /// up on a backlog of old commits reads healthy here while it makes
+    /// progress.
     pub consensus_commit_silence_seconds: IntGauge,
 }
 
@@ -228,9 +231,9 @@ impl ValidatorTelemetryMetrics {
             .unwrap(),
             consensus_commit_silence_seconds: register_int_gauge_with_registry!(
                 "ika_consensus_commit_silence_seconds",
-                "Seconds since this process last finished processing a consensus commit; -1 \
-                 while the commit-liveness watchdog is unarmed, held for reconfiguration, or \
-                 disabled",
+                "Seconds since this process last received a live consensus commit; -1 while the \
+                 commit-liveness watchdog is unarmed, held for reconfiguration, or disabled; -2 \
+                 while held because no peer is advancing either (network-wide halt)",
                 registry,
             )
             .unwrap(),

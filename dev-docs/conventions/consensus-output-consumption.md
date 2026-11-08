@@ -139,7 +139,7 @@ file.
 
 | sink | fed | why |
 |---|---|---|
-| `ConsensusCommitSink::commit_received` (ika's liveness watchdog) | **arrival**, before the fold | a fold waiting on a consumer is busy, not isolated (rule 4) |
+| `ConsensusCommitSink::commit_received` (ika's liveness watchdog) | **arrival**, before the fold, tagged `Replayed` or `Live` against the replay target | a fold waiting on a consumer is busy, not isolated (rule 4); a replayed commit is not evidence of a live connection, so the watchdog counts only live ones |
 | `CommitConsumerMonitor::set_highest_handled_commit` (consensus-core) | **after the fold** | it is a memory guard: `commit_syncer` pauses fetch scheduling when `highest_handled_index + threshold < range_end` (`commit_syncer.rs:238`, reading `commit_consumer_monitor.highest_handled_commit()` at `:205`; threshold = `commit_sync_batch_size` × `commit_sync_batches_ahead` = 100 × 32 = 3,200 at `consensus/config/src/parameters.rs:203`/`:220`). Reporting it early would remove the backpressure that bounds sync-fed backlog. |
 
 They will look confusable to the next reader, which is why both call sites say
