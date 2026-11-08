@@ -1389,9 +1389,10 @@ impl IkaNode {
         // Armed by the first LIVE commit this process handles (not by the
         // boot replay), and from then on it exits the node if commits stop
         // for longer than its bound outside a reconfiguration while its peers
-        // keep advancing. Validator mode only: a fullnode or notifier has
-        // no consensus subscriptions to lose. See `commit_liveness_watchdog`
-        // for why the #2016 reconfiguration watchdog cannot cover this.
+        // keep advancing or none of them answers it. Validator mode only: a
+        // fullnode or notifier has no consensus subscriptions to lose. See
+        // `commit_liveness_watchdog` for why the #2016 reconfiguration
+        // watchdog cannot cover this.
         let commit_liveness = if let Some(validator_metrics) = &validator_metrics {
             commit_liveness_watchdog::CommitLivenessWatchdog::spawn(
                 validator_metrics
@@ -2500,14 +2501,15 @@ impl IkaNode {
         // and VSS caches before even the first replayed round is consumed.
         dwallet_mpc_service.prepare_epoch().await?;
 
-        // The watchdog's evidence that peers are advancing without us comes
-        // from this manager's round prober. Weak, because the manager's
-        // handler already holds the watchdog as its commit sink, and a node
-        // that leaves the committee drops the manager.
+        // The watchdog's evidence about its peers (advancing without us, not
+        // answering us, or halted) comes from this manager's consensus
+        // instance. Weak, because the manager's handler already holds the
+        // watchdog as its commit sink, and a node that leaves the committee
+        // drops the manager.
         if let Some(watchdog) = &commit_liveness {
             let consensus_manager = Arc::downgrade(&consensus_manager);
             watchdog.watch_peers(Box::new(move || {
-                consensus_manager.upgrade()?.peer_accepted_round()
+                consensus_manager.upgrade()?.peer_progress()
             }));
         }
 
