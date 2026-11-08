@@ -1081,7 +1081,9 @@ reconfiguration request, without which the epoch cannot close.
 A direct node therefore re-folds a list of checkpoints from the archive at
 startup (`IkaCheckpointPusher::with_archive_backfill`): the binary's built-in
 list for the chain (`builtin_sui_checkpoint_archive_backfill` — mainnet
-`[342064089]`) merged with the operator's
+`[342064086, 342064089]`; the first holds the System object's last write
+before the stall, which the pre-consensus System read needs) merged with the
+operator's
 `sui-checkpoint-archive-backfill` config list. Rules:
 
 - The scan cursor never moves. A listed seq above the cursor is left to the

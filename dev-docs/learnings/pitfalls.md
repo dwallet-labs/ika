@@ -16,6 +16,19 @@ rule, not the instance.
   → Rule: wall-clock-fed inputs run once per service ITERATION, never
   inside the per-consensus-round drain; identifiers and votes derive
   only from consensus-ordered data.
+- **Moving work earlier in boot changes what the replay drain does.**
+  #2138 adopted the network key before the boot replay so startup could
+  prepare it. The replay drain's internal-presign top-up had been a
+  silent early return during replay (no key yet); now it minted. It
+  seeded each pool from the persisted fill high-water (the previous
+  process's tip) while the replay was at the epoch's first round, so
+  every restarted mainnet validator minted ~85k sessions the committee
+  would not reach for hours. Re-checking them stalled the MPC loop for
+  an hour per iteration, parking the consensus fold (epoch 463, v1.4.3).
+  → Rule: any state a per-round drain consults must be right for a
+  replay that starts at round one. When a change moves setup in front of
+  the replay, re-read every drain step that reads that setup, and test
+  the restart with the setup done before the replay.
 - **Checkpoint contents cannot be gated on locally-synced chain state**
   (it forks checkpoints across validators). Gate what each validator
   *submits to consensus* instead — per-validator divergence there is
