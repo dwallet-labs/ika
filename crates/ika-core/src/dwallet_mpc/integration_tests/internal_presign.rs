@@ -2070,6 +2070,192 @@ async fn test_mid_epoch_restart_resumes_internal_presign_ordinals_from_pool_high
     );
 }
 
+/// Regression test for the v1.4.2 boot-replay wedge (mainnet epoch 463).
+///
+/// #2138 adopts the network key BEFORE the boot replay, so the replay drain's
+/// per-round top-up was no longer an early return. The replay starts at the
+/// epoch's first round, but a pool's ordinal counter seeds on first touch
+/// from the persisted fill high-water: where the PREVIOUS process stopped.
+/// A top-up during the replay therefore seeded the counter at the epoch tip
+/// while the replay was still at the epoch's start, and every later top-up
+/// minted ordinals the committee would not reach for hours. The fast-forward
+/// only ever moves a counter that is BEHIND, so nothing corrected it. On
+/// mainnet that left ~85k internal presigns Active per restarted validator,
+/// and re-checking them every iteration stalled the drain for an hour at a
+/// time, parking the consensus fold.
+///
+/// Flow:
+/// 1. Live committee fills the EdDSA pool; capture the persisted high-water H.
+/// 2. Restart validator 0, empty its EdDSA pool so a top-up would fire, and
+///    adopt and install the network key BEFORE the replay, as
+///    `prepare_epoch` does in production.
+/// 3. Drain the recorded rounds through the boot-replay path: nothing may be
+///    minted and no counter may be seeded.
+/// 4. Live rounds: the first top-up seeds past H (#1952 still holds).
+#[tokio::test]
+#[cfg(test)]
+async fn test_boot_replay_does_not_mint_internal_presigns_with_a_pre_adopted_key() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(4);
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
+        committee.clone(),
+        seeds.clone(),
+        bundles.clone(),
+    );
+    let mut test_state = IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    };
+
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    let (curve, algorithm) = (DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA);
+    let counter_network_key_id = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .internal_presign_network_key_id(&network_key_id)
+        .expect("the DKG'd key must have a resolvable NetworkKeyId");
+    let counter_key = (counter_network_key_id, curve, algorithm);
+
+    // === Phase 1: live fills establish the persisted high-water ===
+    let mut high_water = None;
+    for _ in 0..60 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        let (instantiated, completed) =
+            presign_batch_counters(&test_state, 0, network_key_id, curve, algorithm);
+        high_water = test_state.epoch_stores[0]
+            .max_filled_presign_pool_slot(algorithm, network_key_id)
+            .expect("max_filled_presign_pool_slot");
+        if high_water.is_some() && instantiated > 0 && instantiated == completed {
+            break;
+        }
+    }
+    let high_water = high_water.expect("EdDSA fills should land within the phase 1 budget");
+
+    let network_key_data = test_state.dwallet_mpc_services[1]
+        .dwallet_mpc_manager()
+        .adopted_network_key_data
+        .get(&network_key_id)
+        .expect("peers must have adopted the network key")
+        .clone();
+
+    // === Phase 2: restart, empty the pool, adopt the key before the replay ===
+    restart_validator_zero(&mut test_state, &seeds, &bundles).await;
+    // An empty pool is below both top-up thresholds, so any replayed round
+    // that reached the top-up would mint.
+    while test_state.epoch_stores[0]
+        .pop_presign_for_testing(algorithm, network_key_id)
+        .expect("pop_presign_for_testing")
+        .is_some()
+    {}
+
+    let overlay = Arc::new(HashMap::from([(network_key_id, network_key_data)]));
+    let _ = test_state.sui_data_senders[0]
+        .network_keys_sender
+        .send(overlay.clone());
+    // `prepare_epoch`'s effect in production: the key is adopted and
+    // installed before the replay's first round is drained. Driven through
+    // the manager directly, because a service iteration would drain the
+    // replayed rounds on the live path.
+    const MAX_INSTALL_ATTEMPTS: usize = 600;
+    let mut install_attempts = 0usize;
+    loop {
+        let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager_mut();
+        manager.adopt_cert_verified_keys(&overlay);
+        manager.instantiate_adopted_network_keys();
+        manager.poll_pending_network_key_instantiations().await;
+        if manager
+            .network_keys
+            .get_network_encryption_key_public_data(&network_key_id)
+            .is_ok()
+        {
+            break;
+        }
+        install_attempts += 1;
+        assert!(
+            install_attempts < MAX_INSTALL_ATTEMPTS,
+            "the network key was not installed before the replay"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .adopted_network_key_data
+            .contains_key(&network_key_id),
+        "precondition: the key is adopted before the replay, as after #2138"
+    );
+
+    // === Phase 3: the boot replay ===
+    test_state.dwallet_mpc_services[0]
+        .drain_as_boot_replay_for_testing()
+        .await;
+    assert_eq!(
+        test_state.dwallet_mpc_services[0].last_read_consensus_round(),
+        test_state.dwallet_mpc_services[1].last_read_consensus_round(),
+        "the replay must catch the restarted validator up to its peers"
+    );
+    {
+        let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
+        assert!(
+            manager.next_internal_presign_sequence_number.is_empty(),
+            "the boot replay seeded internal-presign ordinal counters ({:?}); seeding from the \
+             persisted high-water while the replay is still behind it mints far ahead of the \
+             committee",
+            manager.next_internal_presign_sequence_number,
+        );
+        assert!(
+            locally_minted_pool_ordinals(
+                manager,
+                curve,
+                algorithm,
+                network_key_id,
+                counter_network_key_id
+            )
+            .is_empty(),
+            "the boot replay must reconstruct history, never mint"
+        );
+    }
+
+    // === Phase 4: the first live top-up seeds past the high-water ===
+    let mut seeded = None;
+    for _ in 0..20 {
+        run_one_round_delivering_messages(&mut test_state).await;
+        seeded = test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .next_internal_presign_sequence_number
+            .get(&counter_key)
+            .copied();
+        if seeded.is_some() {
+            break;
+        }
+    }
+    let seeded = seeded.expect("the empty pool must be topped up once the drain is live");
+    assert!(
+        seeded > high_water,
+        "the live top-up must resume past the persisted high-water {high_water}, got {seeded}"
+    );
+}
+
 /// Reads one pool's `(next mint ordinal, consensus completion frontier)` on
 /// one validator. Both are `None` until that validator has, respectively,
 /// minted for the pool and seen one of its completions in the consensus

@@ -159,6 +159,14 @@ pub struct DWalletMPCService {
     /// too and so cannot express "park once you are live" without knowing how
     /// deep the replay was.
     rounds_consumed_since_replay: u64,
+    /// `true` only while [`Self::drain_while_replaying`] is draining the boot
+    /// replay's rounds. The drain skips internal-presign top-ups while it is
+    /// set; see the top-up call in [`Self::drain_consensus_rounds`] for why.
+    ///
+    /// A separate flag rather than `!drain_released_by_replay`: services built
+    /// for tests never run the boot replay, so their drain is live from the
+    /// first round and must keep topping up.
+    boot_replay_in_progress: bool,
     /// Whether this epoch's MPC protocol runs at all (#2119).
     ///
     /// `false` when the `E-1 -> E` handoff certificate deals this validator's
@@ -370,6 +378,7 @@ impl DWalletMPCService {
             number_of_consensus_rounds: 0,
             drain_released_by_replay: false,
             rounds_consumed_since_replay: 0,
+            boot_replay_in_progress: false,
             mpc_active,
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
@@ -504,6 +513,7 @@ impl DWalletMPCService {
             number_of_consensus_rounds: 0,
             drain_released_by_replay: false,
             rounds_consumed_since_replay: 0,
+            boot_replay_in_progress: false,
             network_is_idle: false,
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
@@ -844,17 +854,31 @@ impl DWalletMPCService {
     async fn drain_while_replaying(&mut self, replay_waiter: ReplayWaiter) {
         let replay_complete = replay_waiter.wait_for_replay();
         tokio::pin!(replay_complete);
+        self.boot_replay_in_progress = true;
         loop {
             tokio::select! {
                 // Biased so a finished replay is observed before another
                 // sleep, rather than after a further interval of it.
                 biased;
-                () = &mut replay_complete => return,
+                () = &mut replay_complete => break,
                 () = tokio::time::sleep(Duration::from_millis(READ_INTERVAL_MS)) => {
                     self.drain_consensus_rounds().await;
                 }
             }
         }
+        self.boot_replay_in_progress = false;
+    }
+
+    /// Drains whatever is queued on the transport as the boot replay's drain
+    /// does, then returns to the live mode. Lets tests that feed a restarted
+    /// service its recorded rounds drive them through the replay-phase path
+    /// without the real `ReplayWaiter` handshake.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) async fn drain_as_boot_replay_for_testing(&mut self) {
+        self.boot_replay_in_progress = true;
+        self.drain_consensus_rounds().await;
+        self.boot_replay_in_progress = false;
     }
 
     /// Called before consensus starts, including its durable-history replay.
@@ -1924,12 +1948,34 @@ impl DWalletMPCService {
             // key, and no round means no adoption).
 
             // 3. Instantiate internal presign sessions (now uses agreed values).
-            self.dwallet_mpc_manager
-                .instantiate_internal_presign_sessions(
-                    consensus_round,
-                    self.number_of_consensus_rounds,
-                    self.network_is_idle,
-                );
+            //
+            // Not while the boot replay is running. The replay starts at the
+            // epoch's first round, but a pool's ordinal counter seeds on first
+            // touch from the persisted fill high-water, which is where the
+            // PREVIOUS process stopped, near the epoch tip (#1952). A top-up
+            // during the replay therefore seeds the counter far ahead of the
+            // round being replayed, and the fast-forward only moves a counter
+            // that is behind, so nothing pulls it back. Every later top-up
+            // then mints ordinals the committee will not reach for hours: on
+            // mainnet that left ~85k internal presigns Active on every
+            // restarted validator, and re-checking them each iteration stalled
+            // the drain for an hour at a time, which parked the consensus fold
+            // behind it.
+            //
+            // Until v1.4.2 the replay never minted, because nothing was
+            // adopted before the first live iteration; #2138 moved adoption in
+            // front of the replay. Skipping here restores that. The replay's
+            // completions still record each pool's completed frontier, and the
+            // first live top-up seeds from it and the high-water together,
+            // both of which are then at the tip.
+            if !self.boot_replay_in_progress {
+                self.dwallet_mpc_manager
+                    .instantiate_internal_presign_sessions(
+                        consensus_round,
+                        self.number_of_consensus_rounds,
+                        self.network_is_idle,
+                    );
+            }
 
             // 4. Handle MPC messages.
             self.dwallet_mpc_manager
