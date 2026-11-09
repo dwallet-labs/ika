@@ -1079,12 +1079,13 @@ it relays to. On mainnet that entry was the epoch's network encryption key
 reconfiguration request, without which the epoch cannot close.
 
 A direct node therefore re-folds a list of checkpoints from the archive at
-startup (`IkaCheckpointPusher::with_archive_backfill`): the binary's built-in
-list for the chain (`builtin_sui_checkpoint_archive_backfill` — mainnet
-`[342064086, 342064089]`; the first holds the System object's last write
-before the stall, which the pre-consensus System read needs) merged with the
-operator's
-`sui-checkpoint-archive-backfill` config list. Rules:
+startup (`IkaCheckpointPusher::with_archive_backfill`): the operator's
+`sui-checkpoint-archive-backfill` config list. (v1.4.2–v1.4.4 also carried a
+built-in mainnet list, `[342064086, 342064089]`, for the epoch-463 stall; the
+second is the checkpoint above, the first held the System object's last write
+before the stall, which the pre-consensus System read needs. It was removed
+once every Ika object either checkpoint wrote had been superseded or deleted
+on chain, which made the backfill a no-op.) Rules:
 
 - The scan cursor never moves. A listed seq above the cursor is left to the
   scan; a listed seq with any snapshot already in the cache is skipped
@@ -1124,11 +1125,10 @@ server, where it passes the peer's own committee, inclusion, membership and
 currency checks — an anchor this old is below any changeset index window,
 so currency reads `Unknown` and accepts).
 
-The public archive keeps ordinary checkpoints about 30 days, so a built-in
-entry must be removed by a later release once it has done its job; a node
-that never backfilled the entry and boots after the archive expired it
-keeps retrying at the 10-minute cap and reports
-`ika_ocs_pusher_backfill_pending` > 0.
+The public archive keeps ordinary checkpoints about 30 days, so an entry
+must be removed from the config once it has done its job; a node that never
+backfilled the entry and boots after the archive expired it keeps retrying
+at the 10-minute cap and reports `ika_ocs_pusher_backfill_pending` > 0.
 
 The two **singleton anchors** — the `System` and `DWalletCoordinator`
 inner objects (and their versioned-child inners) — are served from the
@@ -1230,9 +1230,8 @@ snapshot whose source checkpoint is in it.
 - **Restarts**: nothing pin-specific is persisted. The set is re-applied from
   configuration when the cache is built — before the pusher's first absorb,
   which is what runs the first sweep after a boot — and it matches persisted
-  snapshots by their stored source checkpoint. A seq leaving the list (removed
-  from the config, or from the built-in list by a later binary) releases its
-  snapshots to the next sweep.
+  snapshots by their stored source checkpoint. A seq removed from the config
+  releases its snapshots to the next sweep.
 - **Deletion**: the cache has no tombstones, so a pinned object deleted or
   wrapped on chain keeps its snapshot until its seq leaves the list —
   bounded by the Ika objects of the listed checkpoints. It is not served as

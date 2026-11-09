@@ -799,8 +799,7 @@ pub struct SuiConnectorConfig {
     pub verified_cache_retention_checkpoints: Option<u64>,
 
     /// Sui checkpoint sequence numbers a `sui-state-direct` node re-folds from
-    /// the checkpoint archive at startup, in addition to the binary's built-in
-    /// list for this chain ([`builtin_sui_checkpoint_archive_backfill`]). For
+    /// the checkpoint archive at startup. For
     /// a checkpoint whose Ika objects never entered the verified cache — its
     /// fold failed and the fullnode has since pruned it — this is the only way
     /// the node can prove those objects again. The checkpoint goes through the
@@ -837,49 +836,17 @@ pub struct SuiConnectorConfig {
 /// perpetual `verified_object_cache` and the in-memory map. Tune per chain.
 pub const DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS: u64 = 432_000;
 
-/// Checkpoints every `sui-state-direct` node of `chain` re-folds from the
-/// checkpoint archive at startup (see
-/// [`SuiConnectorConfig::sui_checkpoint_archive_backfill`]), keyed off the
-/// chain identity the config resolves.
-///
-/// Mainnet `342064089` (2026-11-05) carries the `session_events` bag entry of
-/// the epoch-463 network encryption key reconfiguration request. The same
-/// checkpoint holds an unrelated transaction whose expiration uses a Sui
-/// encoding the then-deployed binary could not decode, so no node folded the
-/// checkpoint before every fullnode pruned it. Without that entry no node can
-/// start the reconfiguration session and the epoch cannot close. The public
-/// archive retains ordinary checkpoints for about 30 days, so this entry can be
-/// removed once mainnet has closed that epoch.
-///
-/// Mainnet `342064086` (2026-11-05) carries the last write of the Ika System
-/// object before that stall (a notifier epoch-switch step). A direct node
-/// verifies the System inner against it before consensus starts (#2138).
-/// The stuck epoch outlived both the fullnodes' retention and the verified
-/// cache's, so the transaction is gone everywhere but the archive, and
-/// without this entry a direct node hangs at startup with
-/// `verified_system_inner still failing`. Same removal condition.
-pub fn builtin_sui_checkpoint_archive_backfill(chain: SuiChainIdentifier) -> &'static [u64] {
-    match chain {
-        SuiChainIdentifier::Mainnet => &[342_064_086, 342_064_089],
-        SuiChainIdentifier::Testnet | SuiChainIdentifier::Devnet | SuiChainIdentifier::Custom => {
-            &[]
-        }
-    }
-}
-
 impl SuiConnectorConfig {
     pub fn verified_cache_retention_checkpoints(&self) -> u64 {
         self.verified_cache_retention_checkpoints
             .unwrap_or(DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS)
     }
 
-    /// The checkpoints to backfill from the archive: the built-in list for
-    /// `sui_chain_identifier` merged with the operator's
+    /// The checkpoints to backfill from the archive: the operator's
     /// `sui_checkpoint_archive_backfill`, deduplicated and ascending.
     pub fn sui_checkpoint_archive_backfill_seqs(&self) -> BTreeSet<u64> {
-        builtin_sui_checkpoint_archive_backfill(self.sui_chain_identifier)
+        self.sui_checkpoint_archive_backfill
             .iter()
-            .chain(&self.sui_checkpoint_archive_backfill)
             .copied()
             .collect()
     }
@@ -2208,24 +2175,12 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
         }
     }
 
-    /// The archive backfill list is the chain's built-in list merged with the
-    /// operator's, deduplicated and ascending; only mainnet carries a built-in
-    /// entry.
+    /// The archive backfill list is the operator's config list, deduplicated
+    /// and ascending, and empty by default on every chain.
     #[test]
-    fn archive_backfill_merges_the_builtin_list_with_the_config() {
-        let mut mainnet = config_for_chain(SuiChainIdentifier::Mainnet);
-        assert_eq!(
-            mainnet.sui_checkpoint_archive_backfill_seqs(),
-            BTreeSet::from([342_064_086, 342_064_089])
-        );
-        // Operators who added 342064086 by hand on v1.4.2 keep a valid
-        // config: the duplicate folds away.
-        mainnet.sui_checkpoint_archive_backfill = vec![7, 342_064_089, 342_064_086, 3];
-        assert_eq!(
-            mainnet.sui_checkpoint_archive_backfill_seqs(),
-            BTreeSet::from([3, 7, 342_064_086, 342_064_089])
-        );
+    fn archive_backfill_is_the_config_list() {
         for chain in [
+            SuiChainIdentifier::Mainnet,
             SuiChainIdentifier::Testnet,
             SuiChainIdentifier::Devnet,
             SuiChainIdentifier::Custom,
@@ -2235,10 +2190,11 @@ ika-system-object-id: "0x2222222222222222222222222222222222222222222222222222222
                 cfg.sui_checkpoint_archive_backfill_seqs().is_empty(),
                 "{chain}"
             );
-            cfg.sui_checkpoint_archive_backfill = vec![5];
+            cfg.sui_checkpoint_archive_backfill = vec![7, 5, 7, 3];
             assert_eq!(
                 cfg.sui_checkpoint_archive_backfill_seqs(),
-                BTreeSet::from([5])
+                BTreeSet::from([3, 5, 7]),
+                "{chain}"
             );
         }
     }
