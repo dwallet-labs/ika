@@ -18,7 +18,7 @@
 //! the collection `size` it reads from verified parent state.
 
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1101,7 +1101,7 @@ impl OcsVerifiedReader {
             .map_err(|e| ReaderError::Decode(format!("DWalletCoordinator: {e}")))?;
 
         match outer.version {
-            1 | 2 => {
+            v if SINGLETON_ANCHOR_INNER_VERSIONS.contains(&v) => {
                 let child_id = derive_versioned_child_id(coordinator_id, outer.version)?;
                 let child_obj = self.verified_anchor_object(child_id).await?;
                 let child_bcs = move_object_contents(&child_obj.object)?;
@@ -1136,7 +1136,7 @@ impl OcsVerifiedReader {
             bcs::from_bytes(outer_bcs).map_err(|e| ReaderError::Decode(format!("System: {e}")))?;
 
         match outer.version {
-            1 | 2 => {
+            v if SINGLETON_ANCHOR_INNER_VERSIONS.contains(&v) => {
                 let child_id = derive_versioned_child_id(system_id, outer.version)?;
                 let child_obj = self.verified_anchor_object(child_id).await?;
                 let child_bcs = move_object_contents(&child_obj.object)?;
@@ -1368,6 +1368,38 @@ fn move_object_contents(object: &Object) -> Result<&[u8], ReaderError> {
 /// Derive the dynamic-field child id for a `Field<u64, V>` whose name is
 /// `version`. Used to walk from a versioned outer wrapper (e.g.
 /// `DWalletCoordinator`) into its inner versioned data.
+/// The `version` values of the `System` / `DWalletCoordinator` outer objects
+/// whose inner this binary decodes: the version dispatch of
+/// [`OcsVerifiedReader::verified_system_inner`] and
+/// [`OcsVerifiedReader::verified_dwallet_coordinator_inner`] accepts exactly
+/// these, and [`singleton_anchor_ids`] pins the inner of each against the
+/// cache's retain window. This is the `1 | 2` arm the chain-mirror layout
+/// docs describe: both versions share one inner layout today (see
+/// `dev-docs/conventions/chain-mirror-layout.md`). A version whose inner has
+/// another layout needs its own arm, and must still be listed here.
+pub const SINGLETON_ANCHOR_INNER_VERSIONS: [u64; 2] = [1, 2];
+
+/// Every object id behind the two singleton anchors: the `System` and
+/// `DWalletCoordinator` objects, and the versioned-child inner of each for
+/// every version in [`SINGLETON_ANCHOR_INNER_VERSIONS`]. The inner ids derive
+/// deterministically from `(outer id, version)`, so the set is the same at
+/// every boot and already contains the inner a `migrate()` moves to. A direct
+/// node pins these ids in its verified cache (see
+/// `VerifiedStateCache::with_pinned_objects`).
+pub fn singleton_anchor_ids(system_id: ObjectID, coordinator_id: ObjectID) -> BTreeSet<ObjectID> {
+    [system_id, coordinator_id]
+        .into_iter()
+        .flat_map(|outer| {
+            let inners = SINGLETON_ANCHOR_INNER_VERSIONS
+                .iter()
+                .filter_map(move |version| {
+                    ika_sui_client::transport::derive_versioned_child_id(outer, *version).ok()
+                });
+            std::iter::once(outer).chain(inners)
+        })
+        .collect()
+}
+
 fn derive_versioned_child_id(parent: ObjectID, version: u64) -> Result<ObjectID, ReaderError> {
     ika_sui_client::transport::derive_versioned_child_id(parent, version)
         .map_err(ReaderError::Decode)
@@ -3730,5 +3762,25 @@ mod tests {
         reader
             .record_high_water(id, SequenceNumber::from(3u64))
             .expect("after forgetting, the previously-rejected v3 must be accepted");
+    }
+
+    /// The anchor-id set is the two outers plus the inner of every version
+    /// the dispatch decodes, each derived as the reader derives it — so it is
+    /// identical at every boot and already holds the inner a `migrate()` to
+    /// the other decodable version moves to.
+    #[test]
+    fn singleton_anchor_ids_cover_the_outers_and_every_decodable_inner() {
+        let system = ObjectID::from_single_byte(0x5A);
+        let coordinator = ObjectID::from_single_byte(0xC0);
+        let ids = singleton_anchor_ids(system, coordinator);
+        let mut expected = BTreeSet::from([system, coordinator]);
+        for outer in [system, coordinator] {
+            for version in SINGLETON_ANCHOR_INNER_VERSIONS {
+                expected.insert(derive_versioned_child_id(outer, version).unwrap());
+            }
+        }
+        assert_eq!(ids, expected);
+        assert_eq!(ids.len(), 2 + 2 * SINGLETON_ANCHOR_INNER_VERSIONS.len());
+        assert_eq!(ids, singleton_anchor_ids(system, coordinator));
     }
 }

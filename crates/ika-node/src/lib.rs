@@ -1198,7 +1198,8 @@ impl IkaNode {
             // Checkpoints whose objects this node never folded and its fullnode
             // has since pruned: re-folded from the archive at startup, and kept
             // out of the retain window by the cache built in the connector
-            // stack from the same list.
+            // stack from the same list. The pusher adds the lost checkpoints it
+            // recorded itself (persisted; the connector stack pins those too).
             let archive_backfill = config
                 .sui_connector_config
                 .sui_checkpoint_archive_backfill_seqs();

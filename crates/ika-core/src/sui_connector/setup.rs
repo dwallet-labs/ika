@@ -51,6 +51,7 @@ use ika_sui_client::genesis::{compiled_in_chain_identifier, load_and_verify_sui_
 use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::rate_limit::RateLimitGate;
 use ika_sui_client::transport::{SuiTransport, TransportError};
+use sui_types::base_types::ObjectID;
 use tracing::{info, warn};
 use typed_store::TypedStoreError;
 
@@ -61,8 +62,9 @@ use crate::sui_connector::fallback_transport::FallbackTransport;
 use crate::sui_connector::ocs_currency::ChangesetIndex;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::ocs_verifier::{OcsError, OcsVerifyingClient};
+use crate::sui_connector::push_worker::load_lost_checkpoints;
 use crate::sui_connector::retained_transport::RetainedFullnodeTransport;
-use crate::sui_connector::verified_reader::OcsVerifiedReader;
+use crate::sui_connector::verified_reader::{OcsVerifiedReader, singleton_anchor_ids};
 use crate::sui_connector::verified_state_cache::{SharedVerifiedStateCache, VerifiedStateCache};
 use parking_lot::RwLock;
 use std::time::Duration;
@@ -207,20 +209,46 @@ pub async fn build_sui_connector_stack(
     // provider also reuses a snapshot when Sui still returns the exact same
     // object but has pruned the checkpoint needed to rebuild its proof.
     //
-    // On a direct node the snapshots of the archive-backfill checkpoints are
-    // pinned against the retain window: those checkpoints are typically far
-    // older than the window, so the next sweep would drop exactly what the
-    // pusher backfills. Pinned here, before the pusher's first absorb runs a
-    // sweep, so a restart keeps the pinned snapshots it persisted.
+    // On a direct node two kinds of snapshot are pinned against the retain
+    // window, both here, before the first absorb (the pusher's, or a reader's
+    // shadow write) runs the first sweep after a boot:
+    //
+    // - the snapshots of the archive-backfill checkpoints: the operator's list
+    //   and every lost checkpoint the pusher recorded in the perpetual tables.
+    //   Those checkpoints are typically far older than the window, so the next
+    //   sweep would drop exactly what the pusher backfills;
+    // - the current snapshot of each singleton anchor (`System`,
+    //   `DWalletCoordinator` and their versioned inners), whatever its age: the
+    //   `System` inner goes unwritten for as long as an epoch stalls, and the
+    //   pre-consensus `System` read needs it. The ids derive from the
+    //   configured object ids, so every boot pins the same set.
     let archive_backfill = cfg.sui_checkpoint_archive_backfill_seqs();
-    let pinned_checkpoints = match cfg.sui_data_source {
-        SuiDataSource::SuiStateDirect { .. } => archive_backfill.clone(),
-        SuiDataSource::SuiStateMirrored { .. } => BTreeSet::new(),
+    let (pinned_checkpoints, pinned_objects) = match cfg.sui_data_source {
+        SuiDataSource::SuiStateDirect { .. } => {
+            let mut pinned = archive_backfill.clone();
+            pinned.extend(load_lost_checkpoints(&perpetual).into_keys());
+            let anchors = [
+                cfg.ika_system_object_id,
+                cfg.ika_dwallet_coordinator_object_id,
+            ];
+            let anchor_ids = if anchors.contains(&ObjectID::ZERO) {
+                warn!(
+                    "the Ika System / DWalletCoordinator object ids are not resolved; the \
+                     singleton anchors are not pinned against the verified cache's retain window"
+                );
+                BTreeSet::new()
+            } else {
+                singleton_anchor_ids(anchors[0], anchors[1])
+            };
+            (pinned, anchor_ids)
+        }
+        SuiDataSource::SuiStateMirrored { .. } => (BTreeSet::new(), BTreeSet::new()),
     };
     let state_cache: SharedVerifiedStateCache = Arc::new(
         VerifiedStateCache::open(perpetual.clone())?
             .with_retain_window(Some(cfg.verified_cache_retention_checkpoints()))
-            .with_pinned_checkpoints(pinned_checkpoints),
+            .with_pinned_checkpoints(pinned_checkpoints)
+            .with_pinned_objects(pinned_objects),
     );
 
     // 1. Build the *raw* transport used by the committee ratchet (and,

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use super::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use typed_store::traits::Map;
 
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+use crate::sui_connector::push_worker::LostCheckpoint;
 use crate::sui_connector::verified_state_cache::VerifiedSnapshot;
 use dwallet_mpc_types::dwallet_mpc::NetworkKeyId;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
@@ -149,6 +150,22 @@ pub struct AuthorityPerpetualTables {
     /// cache head, restored on load so the staleness tripwire isn't tricked
     /// into treating a freshly-rehydrated cache as stale.
     pub(crate) verified_object_cache_head: DBMap<(), SuiCheckpointSequenceNumber>,
+
+    /// Sui checkpoints the sui-state-direct pusher gave up on (a pending gap
+    /// dropped at its retry deadline, or sacrificed by a far-behind
+    /// fast-forward), keyed by sequence number. Each is re-folded from the
+    /// checkpoint archive and its snapshots pinned against the verified
+    /// cache's retain window — across restarts, which is why it is persisted.
+    /// A record is removed once it has settled and no snapshot from it is left
+    /// in the cache, or when the archive has stopped holding it (see
+    /// `push_worker::LostCheckpoint`). Bounded by the pusher's cap.
+    ///
+    /// Added after v1.4.4. A previous binary opens the database unchanged:
+    /// typed_store opens every column family it finds on disk, with default
+    /// options for the ones it does not declare, and nothing in an older
+    /// binary reads or writes this one. The value layout is part of that
+    /// contract: change it through a new column family, never in place.
+    pub(crate) sui_pusher_lost_checkpoints: DBMap<SuiCheckpointSequenceNumber, LostCheckpoint>,
 }
 
 impl AuthorityPerpetualTables {
@@ -693,6 +710,32 @@ impl AuthorityPerpetualTables {
         Ok(())
     }
 
+    /// Every recorded lost checkpoint (see `sui_pusher_lost_checkpoints`).
+    /// Returns the raw `TypedStoreError` so the caller decides how to degrade.
+    pub fn load_sui_pusher_lost_checkpoints(
+        &self,
+    ) -> Result<BTreeMap<SuiCheckpointSequenceNumber, LostCheckpoint>, TypedStoreError> {
+        self.sui_pusher_lost_checkpoints.safe_iter().collect()
+    }
+
+    pub fn put_sui_pusher_lost_checkpoint(
+        &self,
+        seq: SuiCheckpointSequenceNumber,
+        record: LostCheckpoint,
+    ) -> IkaResult {
+        let mut wb = self.sui_pusher_lost_checkpoints.batch();
+        wb.insert_batch(&self.sui_pusher_lost_checkpoints, [(seq, record)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn delete_sui_pusher_lost_checkpoint(&self, seq: SuiCheckpointSequenceNumber) -> IkaResult {
+        let mut wb = self.sui_pusher_lost_checkpoints.batch();
+        wb.delete_batch(&self.sui_pusher_lost_checkpoints, [seq])?;
+        wb.write()?;
+        Ok(())
+    }
+
     /// Reset the direct-node verified-cache cursors so the node boots cold after
     /// the persisted cache fails to deserialize — a Sui version upgrade changed
     /// the on-disk BCS layout of `Object` / `CertifiedCheckpointSummary`. Only the
@@ -991,5 +1034,113 @@ mod tests {
         tables
             .probe_head_committee_readable()
             .expect("valid committee state is readable");
+    }
+
+    /// Opens the perpetual database the way a binary that predates
+    /// `sui_pusher_lost_checkpoints` does: typed_store's `open_cf_opts` with
+    /// that binary's column-family list, every family of this one except the
+    /// new table (the generated `open_tables_read_write` makes exactly this
+    /// call, from the struct's fields).
+    fn open_as_previous_release(
+        path: &Path,
+    ) -> Result<Arc<typed_store::rocks::Database>, TypedStoreError> {
+        let options = typed_store::rocks::default_db_options().options;
+        let families: Vec<(String, Options)> = AuthorityPerpetualTablesReadOnly::describe_tables()
+            .into_keys()
+            .filter(|name| name != "sui_pusher_lost_checkpoints")
+            .map(|name| (name, options.clone()))
+            .collect();
+        let families: Vec<(&str, Options)> = families
+            .iter()
+            .map(|(name, options)| (name.as_str(), options.clone()))
+            .collect();
+        typed_store::rocks::open_cf_opts(path, None, MetricConf::new("perpetual"), &families)
+    }
+
+    fn pusher_cursor_of(db: &Arc<typed_store::rocks::Database>) -> DBMap<(), u64> {
+        DBMap::reopen(
+            db,
+            Some("sui_pusher_last_seq"),
+            &typed_store::rocks::ReadWriteOptions::default(),
+            false,
+        )
+        .unwrap()
+    }
+
+    /// Upgrade, rollback, roll forward. A database a previous release wrote
+    /// opens under this binary (which adds `sui_pusher_lost_checkpoints`); once
+    /// this binary has written the new table, the previous release still opens
+    /// the database read-write — typed_store opens a family it does not
+    /// declare with default options — and its own tables work; and rolling
+    /// forward again finds the records it left untouched.
+    #[tokio::test]
+    async fn a_previous_release_opens_the_database_with_the_lost_checkpoint_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = AuthorityPerpetualTables::path(dir.path());
+
+        // Written by the previous release: no lost-checkpoint table yet.
+        {
+            let db = open_as_previous_release(&path).unwrap();
+            let cursor = pusher_cursor_of(&db);
+            let mut wb = cursor.batch();
+            wb.insert_batch(&cursor, [((), 100u64)]).unwrap();
+            wb.write().unwrap();
+        }
+
+        // Upgrade: this binary opens it and records a lost checkpoint.
+        {
+            let tables = AuthorityPerpetualTables::open(dir.path(), None);
+            assert_eq!(tables.get_sui_pusher_last_seq().unwrap(), Some(100));
+            assert!(
+                tables
+                    .load_sui_pusher_lost_checkpoints()
+                    .unwrap()
+                    .is_empty()
+            );
+            tables
+                .put_sui_pusher_lost_checkpoint(42, LostCheckpoint::Settled)
+                .unwrap();
+            tables.put_sui_pusher_last_seq(200).unwrap();
+        }
+
+        // Rollback: the previous release opens the database and keeps working.
+        {
+            let db = open_as_previous_release(&path)
+                .expect("a previous release must open a database this binary wrote");
+            let cursor = pusher_cursor_of(&db);
+            assert_eq!(cursor.get(&()).unwrap(), Some(200));
+            let mut wb = cursor.batch();
+            wb.insert_batch(&cursor, [((), 300u64)]).unwrap();
+            wb.write().unwrap();
+        }
+
+        // Roll forward: the records survived the rollback.
+        let tables = AuthorityPerpetualTables::open(dir.path(), None);
+        assert_eq!(tables.get_sui_pusher_last_seq().unwrap(), Some(300));
+        assert_eq!(
+            tables.load_sui_pusher_lost_checkpoints().unwrap(),
+            BTreeMap::from([(42, LostCheckpoint::Settled)])
+        );
+    }
+
+    #[tokio::test]
+    async fn lost_checkpoint_records_round_trip() {
+        let (_dir, tables) = open_tables();
+        let pending = LostCheckpoint::Pending {
+            archive_not_found_since: Some(1_700_000_000),
+        };
+        tables.put_sui_pusher_lost_checkpoint(7, pending).unwrap();
+        tables
+            .put_sui_pusher_lost_checkpoint(9, LostCheckpoint::Settled)
+            .unwrap();
+        assert_eq!(
+            tables.load_sui_pusher_lost_checkpoints().unwrap(),
+            BTreeMap::from([(7, pending), (9, LostCheckpoint::Settled)])
+        );
+        tables.delete_sui_pusher_lost_checkpoint(7).unwrap();
+        assert_eq!(
+            tables.load_sui_pusher_lost_checkpoints().unwrap(),
+            BTreeMap::from([(9, LostCheckpoint::Settled)])
+        );
     }
 }
