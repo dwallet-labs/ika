@@ -70,6 +70,64 @@ fn verified_read_retry_backoff(attempts: u32) -> Duration {
     Duration::from_secs((1u64 << attempts.saturating_sub(1).min(5)).min(30))
 }
 
+/// How one chunk of the protocol pricing step ended.
+#[derive(PartialEq, Eq, Debug)]
+enum PricingSubmission {
+    /// Our `calculate_pricing_votes` transaction executed.
+    Submitted,
+    /// A submission failed, and a fresh coordinator read showed the pricing
+    /// votes closed. The chain closes them only when the calculation
+    /// completes, so another transaction already finished the step. A
+    /// restarted notifier hits this case: its predecessor's last transaction
+    /// consumed the votes, and every resubmission aborts with
+    /// `EPricingCalculationVotesHasNotBeenStarted`.
+    VotesClosed,
+}
+
+/// Submits one chunk of the pricing step, retrying failures with the same
+/// backoff and time limit as `retry_with_max_elapsed_time!`.
+///
+/// After every failed submission, it reads whether the pricing votes are
+/// still open. When they are closed, it stops and returns
+/// [`PricingSubmission::VotesClosed`]. When they are open, or the read
+/// fails, it retries as before, and it returns the submission error once
+/// `max_elapsed_time` has passed.
+async fn submit_pricing_until_votes_close<
+    Submit,
+    SubmitFuture,
+    SubmitOutput,
+    ReadVotes,
+    ReadFuture,
+>(
+    submit: Submit,
+    votes_still_open: ReadVotes,
+    max_elapsed_time: Duration,
+) -> anyhow::Result<PricingSubmission>
+where
+    Submit: Fn() -> SubmitFuture,
+    SubmitFuture: Future<Output = anyhow::Result<SubmitOutput>>,
+    ReadVotes: Fn() -> ReadFuture,
+    ReadFuture: Future<Output = anyhow::Result<bool>>,
+{
+    let attempt = || async {
+        let Err(submit_error) = submit().await else {
+            return Ok(PricingSubmission::Submitted);
+        };
+        match votes_still_open().await {
+            Ok(false) => Ok(PricingSubmission::VotesClosed),
+            Ok(true) => Err(submit_error),
+            Err(read_error) => {
+                warn!(
+                    error = ?read_error,
+                    "failed to read whether the pricing votes are still open; retrying the submission"
+                );
+                Err(submit_error)
+            }
+        }
+    };
+    retry_with_max_elapsed_time!(attempt(), max_elapsed_time)?
+}
+
 pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
     dwallet_coordinator_object_sender:
@@ -263,6 +321,18 @@ where
             .map_err(|e| anyhow::anyhow!("get_dwallet_coordinator_inner: {e}"))
     }
 
+    /// Reads the coordinator once and reports whether its protocol pricing
+    /// votes are still open. This is the same field the pricing step checks
+    /// before it starts.
+    async fn pricing_votes_still_open(&self) -> anyhow::Result<bool> {
+        let (_, dwallet_coordinator_inner) = self.try_get_dwallet_coordinator_inner().await?;
+        let DWalletCoordinatorInner::V1(coordinator_inner) = dwallet_coordinator_inner;
+        Ok(coordinator_inner
+            .pricing_and_fee_management
+            .calculation_votes
+            .is_some())
+    }
+
     /// Checks whether `process_mid_epoch`, `lock_last_active_session_sequence_number`, or
     /// `request_advance_epoch` can be called, and calls them if so.
     ///
@@ -412,21 +482,34 @@ where
             let default_pricing_keys_chunked =
                 filtered_default_pricing_keys.chunks(5).collect_vec();
             for default_pricing_keys_chunk in default_pricing_keys_chunked {
-                let result = retry_with_max_elapsed_time!(
-                    Self::calculate_protocols_pricing(
-                        &self.sui_client,
-                        ika_dwallet_2pc_mpc_package_id,
-                        sui_notifier,
-                        self.notifier_tx_lock.clone(),
-                        default_pricing_keys_chunk
-                    ),
-                    Duration::from_secs(ONE_HOUR_IN_SECONDS)
-                );
-                if result.is_err() {
-                    panic!(
-                        "failed to calculate protocols' pricing for over an hour: {:?}",
-                        result.err()
-                    );
+                let result = submit_pricing_until_votes_close(
+                    || {
+                        Self::calculate_protocols_pricing(
+                            &self.sui_client,
+                            ika_dwallet_2pc_mpc_package_id,
+                            sui_notifier,
+                            self.notifier_tx_lock.clone(),
+                            default_pricing_keys_chunk,
+                        )
+                    },
+                    || self.pricing_votes_still_open(),
+                    Duration::from_secs(ONE_HOUR_IN_SECONDS),
+                )
+                .await;
+                match result {
+                    Ok(PricingSubmission::Submitted) => {}
+                    Ok(PricingSubmission::VotesClosed) => {
+                        info!(
+                            "protocol pricing votes are already closed on chain; \
+                             another transaction finished the calculation"
+                        );
+                        break;
+                    }
+                    Err(error) => {
+                        panic!(
+                            "failed to calculate protocols' pricing for over an hour: {error:?}"
+                        );
+                    }
                 }
             }
             info!("Successfully calculated protocols pricing");
@@ -1337,6 +1420,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn verified_read_backoff_doubles_then_caps_at_30s() {
@@ -1348,5 +1432,90 @@ mod tests {
         // 1<<5 == 32, capped to 30, and stays capped for all higher attempts.
         assert_eq!(verified_read_retry_backoff(6), Duration::from_secs(30));
         assert_eq!(verified_read_retry_backoff(1000), Duration::from_secs(30));
+    }
+
+    /// The chain's answer when `calculate_pricing_votes` runs after the votes
+    /// were consumed.
+    fn votes_not_started_abort() -> anyhow::Error {
+        anyhow::anyhow!(
+            "MoveAbort in pricing_and_fee_manager::calculate_pricing_votes: \
+             EPricingCalculationVotesHasNotBeenStarted (2)"
+        )
+    }
+
+    /// A restarted notifier resubmits pricing whose votes its predecessor
+    /// already consumed. The submission aborts, the re-read shows the votes
+    /// closed, and the step stops after that one submission.
+    #[tokio::test]
+    async fn pricing_stops_without_retry_when_votes_closed_after_abort() {
+        let submissions = AtomicUsize::new(0);
+        let reads = AtomicUsize::new(0);
+
+        let result = submit_pricing_until_votes_close(
+            || async {
+                submissions.fetch_add(1, Ordering::SeqCst);
+                Err::<(), _>(votes_not_started_abort())
+            },
+            || async {
+                reads.fetch_add(1, Ordering::SeqCst);
+                Ok(false)
+            },
+            Duration::from_secs(ONE_HOUR_IN_SECONDS),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), PricingSubmission::VotesClosed);
+        assert_eq!(submissions.load(Ordering::SeqCst), 1);
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+    }
+
+    /// While the votes stay open, a failed submission is retried as before,
+    /// and the step finishes once a submission executes.
+    #[tokio::test]
+    async fn pricing_retries_while_votes_stay_open() {
+        let submissions = AtomicUsize::new(0);
+        let reads = AtomicUsize::new(0);
+
+        let result = submit_pricing_until_votes_close(
+            || async {
+                if submissions.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err(votes_not_started_abort())
+                } else {
+                    Ok(())
+                }
+            },
+            || async {
+                reads.fetch_add(1, Ordering::SeqCst);
+                Ok(true)
+            },
+            Duration::from_secs(ONE_HOUR_IN_SECONDS),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), PricingSubmission::Submitted);
+        assert_eq!(submissions.load(Ordering::SeqCst), 2);
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+    }
+
+    /// A failure that persists while the votes stay open still ends in the
+    /// submission error once the time limit passes, so the caller's panic
+    /// for a genuine persistent failure is kept. A failed read counts as
+    /// "still open".
+    #[tokio::test]
+    async fn pricing_returns_error_when_failure_persists_past_time_limit() {
+        let submissions = AtomicUsize::new(0);
+
+        let result = submit_pricing_until_votes_close(
+            || async {
+                submissions.fetch_add(1, Ordering::SeqCst);
+                Err::<(), _>(anyhow::anyhow!("sui rpc unreachable"))
+            },
+            || async { Err(anyhow::anyhow!("coordinator read failed")) },
+            Duration::from_secs(1),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().to_string(), "sui rpc unreachable");
+        assert!(submissions.load(Ordering::SeqCst) > 1);
     }
 }
