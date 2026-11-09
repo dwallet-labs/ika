@@ -43,8 +43,7 @@
 //! re-applied from configuration when the cache is built, before the first
 //! absorb and therefore before the first sweep, and it matches the persisted
 //! snapshots by their stored source checkpoint. Removing a sequence from the
-//! list (a later binary dropping it from the built-in list, or an operator from
-//! the config) releases its snapshots to the next sweep.
+//! operator's config list releases its snapshots to the next sweep.
 //!
 //! Deletion. Without tombstones, an object deleted or wrapped on chain keeps its
 //! last snapshot; a pinned one keeps it until its sequence leaves the list. The
