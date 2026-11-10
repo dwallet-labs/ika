@@ -31,6 +31,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures::{StreamExt, stream};
@@ -53,7 +54,9 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
-use crate::sui_connector::committee_store::{CommitteeStore, CommitteeTransition};
+use crate::sui_connector::committee_store::{
+    CommitteeStore, CommitteeTransition, SummaryVerifyError,
+};
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use crate::sui_connector::watermark_guard::WatermarkGuard;
@@ -275,6 +278,12 @@ pub struct IkaCheckpointPusher {
     /// cap — the same transition latch as [`Self::stall_warned`]; the counter
     /// carries the volume.
     lost_overflow_warned: bool,
+    /// The Sui epoch (plus one; 0 = none yet) whose committee wait was last
+    /// logged ([`Self::log_committee_wait`]). A wait repeats on every retry
+    /// until the committee installs, and an installed committee never goes
+    /// missing again, so one line per epoch is the whole story. Atomic because
+    /// the fold path that logs it takes `&self`.
+    committee_wait_logged: AtomicU64,
 }
 
 /// Retry state of one scanned-but-unfetchable checkpoint.
@@ -447,6 +456,7 @@ impl IkaCheckpointPusher {
             operator_backfill: BTreeSet::new(),
             lost_checkpoints_collected_at: Instant::now(),
             lost_overflow_warned: false,
+            committee_wait_logged: AtomicU64::new(0),
         })
     }
 
@@ -1320,11 +1330,14 @@ impl IkaCheckpointPusher {
         match fetched {
             Ok(data) => {
                 if let Err(e) = self.verify_archive_checkpoint(seq, &data) {
-                    warn!(
-                        seq,
-                        error = %e,
-                        "archive served a checkpoint that failed verification — refusing it"
-                    );
+                    match awaited_committee_epoch(&e) {
+                        Some(epoch) => self.log_committee_wait(seq, epoch),
+                        None => warn!(
+                            seq,
+                            error = %e,
+                            "archive served a checkpoint that failed verification — refusing it"
+                        ),
+                    }
                     return false;
                 }
                 match self.fold_checkpoint(seq, &data) {
@@ -1845,14 +1858,20 @@ impl IkaCheckpointPusher {
         let objects_with_proofs = match verified {
             Ok(objects_with_proofs) => objects_with_proofs,
             Err(e) => {
-                error!(
-                    security_critical = true,
-                    seq = checkpoint_seq,
-                    epoch = summary.epoch(),
-                    error = %e,
-                    "refusing to fold a checkpoint that failed committee verification — \
-                     own fullnode served state that does not verify against the committee"
-                );
+                // A committee that is not installed yet is a wait, not a
+                // verification failure: nothing was checked, and the caller
+                // retries. Everything else is the security event.
+                match awaited_committee_epoch(&e) {
+                    Some(epoch) => self.log_committee_wait(checkpoint_seq, epoch),
+                    None => error!(
+                        security_critical = true,
+                        seq = checkpoint_seq,
+                        epoch = summary.epoch(),
+                        error = %e,
+                        "refusing to fold a checkpoint that failed committee verification — \
+                         own fullnode served state that does not verify against the committee"
+                    ),
+                }
                 return Err(e);
             }
         };
@@ -1865,6 +1884,39 @@ impl IkaCheckpointPusher {
             .observe(started.elapsed().as_secs_f64());
 
         Ok(Some((summary.clone(), objects_with_proofs)))
+    }
+
+    /// Log that the checkpoint at `seq` waits for the committee of its Sui
+    /// `epoch`: it cannot be verified, and so is not folded, until that
+    /// committee is installed (follower lag at a Sui epoch boundary, or a
+    /// restart near one), and it is retried. Not a verification failure —
+    /// nothing was checked — so not `security_critical`. Once per epoch (see
+    /// `committee_wait_logged`). A committee missing below the committee head
+    /// is a hole in the persisted chain rather than a wait, and warns.
+    fn log_committee_wait(&self, seq: CheckpointSequenceNumber, epoch: u64) {
+        let latch = epoch.saturating_add(1);
+        if self.committee_wait_logged.swap(latch, Ordering::Relaxed) == latch {
+            return;
+        }
+        let committee_head = self.committees.head_epoch();
+        if epoch > committee_head {
+            info!(
+                seq,
+                epoch,
+                committee_head,
+                "checkpoint waits for its Sui epoch's committee to be installed — not folded \
+                 yet, will retry (logged once per epoch)"
+            );
+        } else {
+            warn!(
+                seq,
+                epoch,
+                committee_head,
+                "no committee for the checkpoint's Sui epoch although the committee head is past \
+                 it: the persisted committee chain has a hole — not folded, will retry (logged \
+                 once per epoch)"
+            );
+        }
     }
 
     /// Verify a checkpoint against its committee BEFORE its objects are folded
@@ -1884,8 +1936,10 @@ impl IkaCheckpointPusher {
     ///      its attested reference separately ([`attested_output`]).
     ///
     /// A failure means the fullnode served state that does not verify against
-    /// the committee: the caller refuses to fold it (propagating the error, so
-    /// the cursor stays put and a transient missing-committee self-heals on the
+    /// the committee — except a committee that is not installed yet
+    /// ([`awaited_committee_epoch`]), where nothing could be checked: the
+    /// caller refuses to fold it either way (propagating the error, so the
+    /// cursor stays put and a transient missing-committee self-heals on the
     /// next poll) rather than caching unverified state.
     fn verify_before_fold(
         &self,
@@ -1895,9 +1949,7 @@ impl IkaCheckpointPusher {
     ) -> anyhow::Result<()> {
         self.committees
             .verify_summary(summary.clone())
-            .map_err(|e| {
-                anyhow::anyhow!("checkpoint summary failed committee verification: {e}")
-            })?;
+            .map_err(|e| anyhow::Error::new(SummaryRejected(e)))?;
         if folding_objects {
             let signed = summary.data().checkpoint_artifacts_digest().map_err(|e| {
                 anyhow::anyhow!("summary carries no checkpoint-artifacts digest: {e}")
@@ -1968,6 +2020,27 @@ fn attested_output<'a>(attested: ObjectRef, outputs: &[&'a Object]) -> anyhow::R
                  {attested:?}: the source served object contents the committee did not attest"
             )
         })
+}
+
+/// A checkpoint summary `verify_before_fold` rejected, carried typed through
+/// `anyhow` so a caller can tell a committee that is not installed yet — a
+/// wait — from a summary that does not verify ([`awaited_committee_epoch`]).
+/// Displays exactly as the untyped error did.
+#[derive(Debug, thiserror::Error)]
+#[error("checkpoint summary failed committee verification: {0}")]
+struct SummaryRejected(SummaryVerifyError);
+
+/// The Sui epoch whose committee `error` is waiting for, when that is all it
+/// is: the summary could not be checked because the committee of its epoch is
+/// not in the committee store — a temporary state at every Sui epoch boundary
+/// while a gap is pending. `None` for every genuine verification failure: a
+/// bad signature, an artifacts-digest mismatch, or object contents that are
+/// not the attested ones.
+fn awaited_committee_epoch(error: &anyhow::Error) -> Option<u64> {
+    match error.downcast_ref::<SummaryRejected>() {
+        Some(SummaryRejected(SummaryVerifyError::MissingCommittee(epoch))) => Some(*epoch),
+        _ => None,
+    }
 }
 
 fn unix_seconds_now() -> u64 {
@@ -5823,6 +5896,73 @@ mod tests {
         assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
         assert_eq!(fx.metrics.pusher_lost_checkpoints_overflow_total.get(), 1);
         assert!(recorded(&fx).is_empty());
+    }
+
+    /// A checkpoint whose Sui epoch's committee is not installed yet is a wait,
+    /// not a verification failure: no security-critical error, and one info
+    /// line per epoch however often the retry hits it. A checkpoint that does
+    /// not verify — here, signed by another committee — is still refused at
+    /// `ERROR` with `security_critical`, on every attempt.
+    #[tokio::test]
+    async fn a_missing_committee_is_logged_as_a_wait_not_a_security_failure() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let next_committee =
+            Committee::new(1, fx.committee.voting_rights.iter().cloned().collect());
+        pusher.transport = fullnode_at_cursor(
+            &fx,
+            HashMap::from([
+                (
+                    42,
+                    checkpoint_writing(&next_committee, &fx.keys, 42, &[slice::from_ref(&entry)]),
+                ),
+                (43, unfoldable_checkpoint(43, &bag_entry(&pusher, 0xE2, 7))),
+            ]),
+            &[],
+        );
+        gap_seen(&mut pusher, 42, Duration::ZERO);
+        gap_seen(&mut pusher, 43, Duration::ZERO);
+
+        let (logs, _guard) = CapturedLogs::start();
+        for _ in 0..2 {
+            pusher.advance().await.unwrap();
+        }
+        assert_eq!(
+            pusher.pending_gaps.keys().copied().collect::<Vec<_>>(),
+            vec![42, 43],
+            "neither folds"
+        );
+        let text = logs.text();
+        let security: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("security_critical=true"))
+            .collect();
+        assert_eq!(
+            security.len(),
+            2,
+            "the bad signature, once per attempt: {text}"
+        );
+        for line in &security {
+            assert!(line.contains("ERROR"), "{line}");
+            assert!(line.contains("seq=43"), "only the bad signature: {line}");
+            assert!(line.contains("refusing to fold a checkpoint"), "{line}");
+        }
+        let waits: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("waits for its Sui epoch's committee"))
+            .collect();
+        assert_eq!(waits.len(), 1, "once per epoch: {text}");
+        assert!(waits[0].contains("INFO"), "{}", waits[0]);
+        assert!(waits[0].contains("seq=42"), "{}", waits[0]);
+        assert!(waits[0].contains("epoch=1"), "{}", waits[0]);
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.contains("ERROR") && line.contains("seq=42")),
+            "{text}"
+        );
     }
 
     // ---- folded objects are the attested ones ----
