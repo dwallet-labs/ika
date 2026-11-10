@@ -153,8 +153,8 @@ pub struct AuthorityPerpetualTables {
 
     /// Sui checkpoints the sui-state-direct pusher gave up on (a pending gap
     /// dropped at its retry deadline, or sacrificed by a far-behind
-    /// fast-forward), keyed by sequence number — and pending gaps the fullnode
-    /// served but the node failed to fold, recorded on the first failure so a
+    /// fast-forward), keyed by sequence number — and pending gaps that exist but
+    /// the node failed to decode or fold, recorded on the first failure so a
     /// restart before the deadline does not lose them. Each is re-folded from
     /// the checkpoint archive and its snapshots pinned against the verified
     /// cache's retain window — across restarts, which is why it is persisted.
