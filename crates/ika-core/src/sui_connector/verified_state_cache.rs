@@ -49,10 +49,10 @@
 //! checkpoint as it records it ([`VerifiedStateCache::pin_checkpoint`]) and
 //! unpins it once its record is collected
 //! ([`VerifiedStateCache::unpin_checkpoint`]) — when no snapshot from it is left,
-//! so nothing is released — or deleted because the gap it recorded on a fold
-//! failure was repaired before its deadline, whose snapshots then age with the
-//! window like any the scan folds. Removing a sequence from the operator's
-//! config list releases its snapshots to the next sweep.
+//! so nothing is released — or deleted because the gap it recorded on a decode
+//! or fold failure was repaired before its deadline, whose snapshots then age
+//! with the window like any the scan folds. Removing a sequence from the
+//! operator's config list releases its snapshots to the next sweep.
 //!
 //! Deletion. Without tombstones, an object deleted or wrapped on chain keeps its
 //! last snapshot; a pinned one keeps it while its sequence stays pinned. The
@@ -212,9 +212,9 @@ impl VerifiedStateCache {
 
     /// Release `seq` to the sweep. The pusher calls it once no snapshot from
     /// `seq` is left in the cache, so it releases nothing current — or when a
-    /// pending gap it recorded on a fold failure is repaired before its
-    /// deadline: those snapshots are as fresh as the scan's and age with the
-    /// window like them.
+    /// pending gap it recorded on a decode or fold failure is repaired before
+    /// its deadline: those snapshots are as fresh as the scan's and age with
+    /// the window like them.
     pub fn unpin_checkpoint(&self, seq: CheckpointSequenceNumber) {
         self.pinned_checkpoints.write().remove(&seq);
     }
