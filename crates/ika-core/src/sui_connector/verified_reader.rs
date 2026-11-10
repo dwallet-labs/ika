@@ -49,6 +49,7 @@ use crate::sui_connector::changeset_receiver::SharedChangesetIndex;
 use crate::sui_connector::committee_store::{CommitteeStore, SummaryVerifyError};
 use crate::sui_connector::ocs_currency::CurrencyVerdict;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
+use crate::sui_connector::peer_checkpoint_lookup::PeerCheckpointRecovery;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use crate::sui_connector::watermark_guard::WatermarkGuard;
 use ika_network::proof_provider::VerifiedObjectEntry;
@@ -291,6 +292,11 @@ pub struct OcsVerifiedReader {
     /// per genesis. Set via [`Self::with_expected_identity`].
     expected_system_package: Option<ObjectID>,
     expected_coordinator_package: Option<ObjectID>,
+    /// Direct nodes with an archive: told about every object this reader
+    /// could not prove, so it can ask direct peers which checkpoint proves it
+    /// (see `peer_checkpoint_lookup`). Set via
+    /// [`Self::with_peer_checkpoint_recovery`].
+    peer_checkpoint_recovery: Option<Arc<PeerCheckpointRecovery>>,
 }
 
 impl OcsVerifiedReader {
@@ -320,6 +326,28 @@ impl OcsVerifiedReader {
             changeset_index: None,
             expected_system_package: None,
             expected_coordinator_package: None,
+            peer_checkpoint_recovery: None,
+        }
+    }
+
+    /// Report the objects this direct reader cannot prove to `recovery`.
+    pub fn with_peer_checkpoint_recovery(
+        mut self,
+        recovery: Option<Arc<PeerCheckpointRecovery>>,
+    ) -> Self {
+        self.peer_checkpoint_recovery = recovery;
+        self
+    }
+
+    /// A direct read failed for good: the provider answered `NotFound` after
+    /// `recover_pruned_proof` found no snapshot at the fullnode's reference. A
+    /// no-op on a mirrored node (`cache_first` is off there) and without a
+    /// recovery wired; never blocks.
+    fn note_unprovable(&self, id: ObjectID) {
+        if self.cache_first
+            && let Some(recovery) = &self.peer_checkpoint_recovery
+        {
+            recovery.note_unprovable(id);
         }
     }
 
@@ -440,6 +468,11 @@ impl OcsVerifiedReader {
             // verified, monotonic) anchor when the pusher is behind — strictly
             // better than the alternative, which is the executor wedging forever.
             Err(TransportError::NotFound(reason)) if self.cache_first => {
+                // Reported even when a cached snapshot serves below: it may be
+                // an older version than the fullnode's (an anchor whose newer
+                // write the pusher never folded, #1736). The recovery checks
+                // the exact reference before asking anyone.
+                self.note_unprovable(id);
                 if let Some(hit) = self.cache_fallback(id) {
                     self.metrics
                         .cache_read_total
@@ -596,11 +629,14 @@ impl OcsVerifiedReader {
             HashMap::new();
         let mut out = Vec::with_capacity(ids.len());
         for (id, slot) in ids.iter().zip(resp.results) {
-            let entry = slot.ok_or_else(|| {
-                ReaderError::Transport(TransportError::NotFound(format!(
+            let Some(entry) = slot else {
+                // On a direct node the slot is empty when the provider could
+                // not prove the object (see `note_unprovable`).
+                self.note_unprovable(*id);
+                return Err(ReaderError::Transport(TransportError::NotFound(format!(
                     "object {id} missing from batch response"
-                )))
-            })?;
+                ))));
+            };
             if entry.object.id() != *id {
                 let entry_result: Result<(), ReaderError> =
                     Err(ReaderError::InvalidProof(format!(

@@ -325,7 +325,7 @@ fn reconcile_preference_order(order: &mut Vec<PeerId>, connected: Vec<PeerId>) {
 /// always attaches a message (carried on the wire in the `status-message`
 /// header), so header presence is what separates "the peer answered: the data
 /// does not exist" from "the peer has no such service".
-fn is_service_unimplemented(status: &anemo::rpc::Status) -> bool {
+pub(crate) fn is_service_unimplemented(status: &anemo::rpc::Status) -> bool {
     status.status() == anemo::types::response::StatusCode::NotFound
         && !status
             .headers()
@@ -892,6 +892,15 @@ mod tests {
             _: Request<VerifiedDynamicFieldsPageRequest>,
         ) -> Result<anemo::Response<VerifiedDynamicFieldsPageResponse>, anemo::rpc::Status>
         {
+            Err(anemo::rpc::Status::internal("unused"))
+        }
+        async fn object_checkpoint_lookup(
+            &self,
+            _: Request<crate::sui_state_mirror::ObjectCheckpointLookupRequest>,
+        ) -> Result<
+            anemo::Response<crate::sui_state_mirror::ObjectCheckpointLookupResponse>,
+            anemo::rpc::Status,
+        > {
             Err(anemo::rpc::Status::internal("unused"))
         }
     }

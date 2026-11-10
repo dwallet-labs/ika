@@ -48,14 +48,18 @@ use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
 };
 use sui_types::object::Object;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::sui_connector::committee_store::{CommitteeStore, CommitteeTransition};
 use crate::sui_connector::ocs_metrics::OcsMetrics;
+use crate::sui_connector::peer_checkpoint_lookup::PeerBackfillRequest;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use crate::sui_connector::watermark_guard::WatermarkGuard;
+
+mod peer_backfill;
 
 /// Bound both outstanding RPCs and fetched checkpoints awaiting their turn
 /// to fold. Overlap fullnode latency without buffering an entire catch-up span.
@@ -270,6 +274,14 @@ pub struct IkaCheckpointPusher {
     /// cap — the same transition latch as [`Self::stall_warned`]; the counter
     /// carries the volume.
     lost_overflow_warned: bool,
+    /// Checkpoints a direct peer named as the one proving an object this node
+    /// cannot prove (`peer_checkpoint_lookup`). Each is recorded and backfilled
+    /// exactly like a lost checkpoint — the peer supplied only the number.
+    /// `None` when the lookup is off.
+    peer_backfill_requests: Option<mpsc::Receiver<PeerBackfillRequest>>,
+    /// Requesters waiting for a seq's backfill to settle; dropped (which wakes
+    /// them) when it does.
+    peer_backfill_waiters: BTreeMap<CheckpointSequenceNumber, Vec<oneshot::Sender<()>>>,
 }
 
 /// Retry state of one scanned-but-unfetchable checkpoint.
@@ -442,6 +454,8 @@ impl IkaCheckpointPusher {
             operator_backfill: BTreeSet::new(),
             lost_checkpoints_collected_at: Instant::now(),
             lost_overflow_warned: false,
+            peer_backfill_requests: None,
+            peer_backfill_waiters: BTreeMap::new(),
         })
     }
 
@@ -787,6 +801,7 @@ impl IkaCheckpointPusher {
             .set(self.archive_backfill.len() as i64);
         self.record_backfill_settled(BackfillSettled::Abandoned);
         self.forget_lost_checkpoint(seq);
+        self.peer_backfill_waiters.remove(&seq);
         warn!(
             seq,
             give_up_after = ?ARCHIVE_NOT_FOUND_GIVE_UP_AFTER,
@@ -812,6 +827,7 @@ impl IkaCheckpointPusher {
     }
 
     async fn advance(&mut self) -> anyhow::Result<()> {
+        self.take_peer_backfill_requests();
         // Needs no watermark and never blocks on the archive (the fetch runs in
         // its own task), so it runs ahead of everything that can end the tick.
         self.drive_archive_backfill().await;
@@ -1435,6 +1451,7 @@ impl IkaCheckpointPusher {
             "archive backfill settled"
         );
         self.settle_lost_checkpoint(seq, settled);
+        self.peer_backfill_waiters.remove(&seq);
     }
 
     /// Verify a backfill checkpoint served by the archive and fold its Ika

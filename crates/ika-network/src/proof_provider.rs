@@ -97,6 +97,11 @@ pub struct ProofProviderMetrics {
     pub serve_request_by_peer_total: IntCounterVec, // labels: ["op", "peer"]
     /// Serving-side handler latency, by op.
     pub serve_latency_seconds: HistogramVec, // labels: ["op"]
+    /// Direct-to-direct `object_checkpoint_lookup` answers served, by result:
+    /// `named` (a verified snapshot at exactly the asked reference) or
+    /// `unknown`. Requests over the per-requester rate are refused before the
+    /// handler and appear only in the inbound network metrics.
+    pub serve_object_checkpoint_lookup_total: IntCounterVec, // labels: ["result"]
 
     // -- Dynamic-field walk (both roles) --
     /// Children scanned in `verified_dynamic_fields_page` (across all pages).
@@ -211,6 +216,13 @@ impl ProofProviderMetrics {
                 vec![
                     0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
                 ],
+                registry,
+            )
+            .unwrap(),
+            serve_object_checkpoint_lookup_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_serve_object_checkpoint_lookup_total",
+                "Direct-to-direct object_checkpoint_lookup answers served, by result (named | unknown)",
+                &["result"],
                 registry,
             )
             .unwrap(),

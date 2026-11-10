@@ -86,11 +86,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ika_network::proof_provider::{ProofSnapshotCache, VerifiedObjectEntry};
+use ika_network::sui_state_mirror::ObjectCheckpointLocator;
 use ika_types::error::IkaResult;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sui_light_client::proof::ocs::OCSInclusionProof;
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::{Object, Owner};
 use tracing::{info, warn};
@@ -320,6 +321,18 @@ impl VerifiedStateCache {
 
     pub fn get(&self, id: ObjectID) -> Option<VerifiedSnapshot> {
         self.objects.read().get(&id).cloned()
+    }
+
+    /// The source checkpoint of the snapshot of `object_ref.0`, if the cache
+    /// holds it at exactly `object_ref` — the checkpoint whose committee-signed
+    /// artifacts attest that reference. A point lookup: one map read, and the
+    /// object digest only when the version matches. Nothing is cloned.
+    pub fn checkpoint_of(&self, object_ref: ObjectRef) -> Option<CheckpointSequenceNumber> {
+        let objects = self.objects.read();
+        let snapshot = objects.get(&object_ref.0)?;
+        (snapshot.object.version() == object_ref.1
+            && snapshot.object.compute_object_reference() == object_ref)
+            .then_some(snapshot.source_checkpoint_seq)
     }
 
     /// Snapshot of the current children of `parent_id`. Order is
@@ -638,6 +651,20 @@ impl VerifiedStateCache {
 impl Default for VerifiedStateCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Serves the direct-to-direct `object_checkpoint_lookup` (see
+/// `peer_checkpoint_lookup`): the checkpoint of this node's verified snapshot at
+/// exactly the asked reference. That covers every snapshot this cache keeps —
+/// the scan's, and the ones the archive backfill restored for a lost
+/// checkpoint or an operator-listed one, which stay pinned past the retain
+/// window. A lost-checkpoint record itself holds only a sequence number, no
+/// object reference, so a checkpoint whose backfill has not folded yet
+/// answers nothing about its objects.
+impl ObjectCheckpointLocator for VerifiedStateCache {
+    fn checkpoint_proving(&self, object_ref: ObjectRef) -> Option<CheckpointSequenceNumber> {
+        self.checkpoint_of(object_ref)
     }
 }
 
