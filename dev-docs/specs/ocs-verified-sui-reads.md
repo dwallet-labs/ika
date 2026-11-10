@@ -1148,7 +1148,9 @@ A direct node therefore re-folds checkpoints from the archive
   archive timeout, so it surfaces as a timeout.
 - **The operator's `sui-checkpoint-archive-backfill` config list**, for a
   checkpoint the node lost without recording it (an older binary, a pending
-  gap the fullnode never served that was lost to a restart). (v1.4.2–v1.4.4
+  gap the fullnode never served that was lost to a restart) and that no
+  connected direct peer can name for it (see *Asking direct peers* below).
+  (v1.4.2–v1.4.4
   carried a built-in mainnet list, `[342064086, 342064089]`, for the
   epoch-463 stall; the second is the checkpoint above, the first held the
   System object's last write before the stall — see *The singleton anchors
