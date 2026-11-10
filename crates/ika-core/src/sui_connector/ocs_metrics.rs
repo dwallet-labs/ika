@@ -119,8 +119,10 @@ pub struct OcsMetrics {
     /// Lost checkpoints this node has recorded and still tracks: checkpoints
     /// the pusher gave up on (a gap dropped at its retry deadline or by a
     /// far-behind fast-forward), pending their archive backfill or folded and
-    /// pinned while a snapshot from them is still current. Persisted across
-    /// restarts; bounded by the record cap.
+    /// pinned while a snapshot from them is still current — plus pending gaps
+    /// that have failed to fold, recorded on the first failure and deleted if
+    /// the gap is repaired before its deadline. Persisted across restarts;
+    /// bounded by the record cap.
     pub pusher_lost_checkpoints: IntGauge,
     /// Lost checkpoints NOT recorded because the record was at its cap: each
     /// is a cache gap the archive backfill will not repair. Alert on any
@@ -325,7 +327,7 @@ impl OcsMetrics {
             .unwrap(),
             pusher_lost_checkpoints: register_int_gauge_with_registry!(
                 "ika_ocs_pusher_lost_checkpoints",
-                "Checkpoints the sui-state-direct pusher gave up on that this node has recorded and still tracks (pending their archive backfill, or folded and pinned while still current); persisted across restarts",
+                "Checkpoints the sui-state-direct pusher gave up on that this node has recorded and still tracks (pending their archive backfill, or folded and pinned while still current), plus pending gaps that have failed to fold (recorded on the first failure, deleted if repaired before the deadline); persisted across restarts",
                 registry,
             )
             .unwrap(),

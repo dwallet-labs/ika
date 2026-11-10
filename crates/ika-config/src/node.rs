@@ -803,8 +803,9 @@ pub struct SuiConnectorConfig {
     /// never entered the verified cache — its fold failed, or it was never
     /// fetched, and the fullnode has since pruned it. The node records and
     /// backfills every checkpoint its pusher gives up on by itself, across
-    /// restarts; this list is for one it lost without recording (an older
-    /// binary, or a pending gap lost to a restart). The checkpoint goes through the
+    /// restarts, and records a gap that fails to fold on its first failure;
+    /// this list is for one it lost without recording (an older binary, or a
+    /// pending gap the fullnode never served, lost to a restart). The checkpoint goes through the
     /// same verification as an archive-repaired gap (sequence binding,
     /// committee signature, artifacts digest over the whole object set), only
     /// the objects the node's own fullnode still reports at exactly that

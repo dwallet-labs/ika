@@ -1068,9 +1068,12 @@ across restarts. The end-of-epoch retained store is written only after the
 fold's committee verification passes (`fold_checkpoint` verifies before
 `persist_end_of_epoch`), so no source — fullnode or archive — can
 overwrite a genuine retained entry with an unverified blob.
-Pending gaps themselves are in-memory only — a restart inside a gap's
-retry window loses it, and the on-chain uncompleted-session re-pull is
-the backstop.
+Pending gaps themselves are in-memory only, and the scan cursor is already
+persisted past them — a restart inside a gap's retry window loses it, and
+the on-chain uncompleted-session re-pull is the backstop. The exception is a
+gap the fullnode serves but the node fails to fold: its lost-checkpoint
+record is written on the *first* fold failure (next paragraph), so a restart
+before the deadline backfills it instead of losing it.
 
 **Archive backfill (checkpoints lost for good).** A checkpoint can also be
 lost after its fetch succeeded: the fold failed (on mainnet, checkpoint
@@ -1100,10 +1103,29 @@ A direct node therefore re-folds checkpoints from the archive
   fast-forward jumps over is *not* recorded: it was never fetched, it is
   unbounded, and sacrificing it is that path's purpose. Nothing is recorded
   on a node with no archive, which could never re-fold it.
+- **Recorded on the first fold failure.** A pending gap the fullnode serves
+  but the node cannot fold is recorded and pinned on its *first* fold
+  failure, not at the deadline: the gap is held only in memory behind a
+  persisted cursor, and operators restart and upgrade nodes exactly while
+  such a failure is live. The record is *not* scheduled in that process —
+  the live gap retry stays the only path for the seq, so nothing races it.
+  The deadline schedules it as above; a restart before the deadline leaves
+  the record for the next boot, which pins and schedules it like any other. A gap repaired before its
+  deadline — a later fullnode fold, or an archive repair — deletes the
+  record and releases the pin (unless the operator's list pins the seq): it
+  folded as gaps always have, and the singleton anchors are pinned by id
+  anyway, so a transient failure (`MissingCommittee` at every Sui epoch
+  boundary) leaves nothing behind. Below the cap only: at the cap the early
+  record is skipped quietly and the deadline counts the overflow if the gap
+  is lost. A gap the fullnode never serves keeps the deadline-only record —
+  including one this binary cannot decode: decoding happens inside the
+  full-checkpoint fetch, so such a checkpoint fails the fetch
+  (`TransportError::Encoding`), not the fold.
 - **The operator's `sui-checkpoint-archive-backfill` config list**, for a
   checkpoint the node lost without recording it (an older binary, a pending
-  gap lost to a restart). (v1.4.2–v1.4.4 carried a built-in mainnet list,
-  `[342064086, 342064089]`, for the epoch-463 stall; the second is the
+  gap the fullnode never served that was lost to a restart). (v1.4.2–v1.4.4
+  carried a built-in mainnet list, `[342064086, 342064089]`, for the
+  epoch-463 stall; the second is the
   checkpoint above, the first held the System object's last write before the
   stall — see *The singleton anchors are never swept*. Both shapes now heal
   without a list.)
@@ -1160,7 +1182,9 @@ already cached at a newer checkpoint), and otherwise by a collection pass
 been superseded by a newer version. It is never deleted on the fold alone —
 the next boot would not pin it, and the first sweep would drop exactly what
 was recovered — and a `Pending` record is never collected, however few
-snapshots it has, since it has not folded yet. At boot, a `Settled` record
+snapshots it has, since it has not folded yet — except a record written on
+a gap's first fold failure, which is deleted when that gap is repaired before
+its deadline (above). At boot, a `Settled` record
 with no snapshot left goes back to `Pending` and is backfilled again rather
 than collected: the boot cannot tell a superseded snapshot from one a binary
 without the pin (a rollback) evicted; the backfill folds the latter again
@@ -1298,9 +1322,11 @@ in it.
   the config releases its snapshots to the next sweep.
 - **Runtime**: the pusher pins a checkpoint the moment it records it
   (`pin_checkpoint`), before its backfill can fold anything, and unpins it
-  when it deletes the record (`unpin_checkpoint`) — only once no snapshot
-  from it is left, so the unpin releases nothing current (an operator-listed
-  seq stays pinned).
+  when it deletes the record (`unpin_checkpoint`) — once no snapshot from it
+  is left, so the unpin releases nothing current, or when the gap it was
+  recorded for on a fold failure is repaired before its deadline, whose
+  snapshots are as fresh as the scan's and age with the window like them (an
+  operator-listed seq stays pinned either way).
 - **Deletion**: the cache has no tombstones, so a pinned object deleted or
   wrapped on chain keeps its snapshot while its seq stays pinned — bounded
   by the Ika objects of the pinned checkpoints. It is not served as
@@ -1641,7 +1667,8 @@ The archive backfill exports `ika_ocs_pusher_backfill_outcomes_total{outcome}`
 alert target: non-zero for long means the node still lacks objects it
 needs. The lost-checkpoint record exports the gauge
 `ika_ocs_pusher_lost_checkpoints` (records held: pending, or settled and
-still pinned) and `ika_ocs_pusher_lost_checkpoints_overflow_total`; alert on
+still pinned — including a gap still retried live that has failed to fold)
+and `ika_ocs_pusher_lost_checkpoints_overflow_total`; alert on
 any increase of the overflow counter or of `{outcome="abandoned"}` — each is
 a cache gap the backfill will not repair. Any `verification` failure means the archive served a blob that
 does not verify and is also logged as security-critical. A dynamic-field child
