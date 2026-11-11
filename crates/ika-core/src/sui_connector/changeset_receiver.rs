@@ -11,11 +11,11 @@
 //! verify), so the relay is fully untrusted.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use ika_network::sui_state_mirror::{ChangesetEntry, SuiMirrorTransport};
 use ika_sui_client::transport::TransportError;
@@ -28,6 +28,29 @@ use crate::sui_connector::ocs_metrics::OcsMetrics;
 /// Shared, mutable changeset index — written only by the receiver, read by the
 /// read path's currency check.
 pub type SharedChangesetIndex = Arc<RwLock<ChangesetIndex>>;
+
+/// How long the changeset frontier may go without advancing before the
+/// receiver asks every relay for the next checkpoint instead of only the one
+/// it prefers. Sui makes checkpoints continuously and a healthy receiver
+/// advances on every poll, so half a minute without an advance means the
+/// preferred relay has nothing newer: it is frozen or behind. Otherwise such a
+/// relay is indistinguishable from being caught up, and in automatic peer mode
+/// the first relay that answers keeps being preferred.
+const SEEK_SUCCESSOR_AFTER: Duration = Duration::from_secs(30);
+/// While the frontier stays stalled, how often every relay is asked again.
+const SEEK_SUCCESSOR_INTERVAL: Duration = Duration::from_secs(30);
+/// How long the frontier may go without advancing before the receiver reports
+/// this node's view of Sui as frozen. The log text says "5 minutes"; keep it in
+/// step.
+const UPSTREAM_FROZEN_AFTER: Duration = Duration::from_secs(5 * 60);
+
+/// Unix seconds now, for the `*_timestamp_seconds` gauges.
+fn unix_now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
 
 /// Source of changeset pages. Abstracts the relay RPC so the receiver is
 /// unit-testable; implemented by [`SuiMirrorTransport`].
@@ -71,6 +94,11 @@ impl ChangesetSource for SuiMirrorTransport {
 /// the contiguous frontier (0 = empty page or already folded by concurrent
 /// gossip). A non-contiguous page is an explicit error, never caught-up.
 ///
+/// `seek_successor` asks every serving relay for the next checkpoint, as a
+/// known gap does: a relay with nothing newer is passed over (and demoted)
+/// rather than taken as caught up. When none has anything newer, that is the
+/// answer, not a failure: the page is empty.
+///
 /// BLS verification runs *outside* the index lock so the read path's currency
 /// queries aren't blocked on it; only the fold takes a brief write lock.
 pub async fn pump_changesets(
@@ -79,6 +107,7 @@ pub async fn pump_changesets(
     committees: &CommitteeStore,
     page_limit: u32,
     bootstrap_from: CheckpointSequenceNumber,
+    seek_successor: bool,
 ) -> Result<usize, ChangesetError> {
     let (head, highest_seen) = {
         let index = index.read();
@@ -86,10 +115,21 @@ pub async fn pump_changesets(
     };
     let known_gap = highest_seen > head;
     let from_seq = head.map(|seq| seq + 1).unwrap_or(bootstrap_from);
-    let page = source
-        .changeset_page(from_seq, page_limit, head.is_some(), known_gap)
+    let page = match source
+        .changeset_page(
+            from_seq,
+            page_limit,
+            head.is_some(),
+            known_gap || seek_successor,
+        )
         .await
-        .map_err(|e| ChangesetError::Internal(e.to_string()))?;
+    {
+        Ok(page) => page,
+        // Every serving relay was asked for `from_seq` and none had it: none
+        // is ahead of this node.
+        Err(TransportError::NotFound(_)) if seek_successor && !known_gap => Vec::new(),
+        Err(e) => return Err(ChangesetError::Internal(e.to_string())),
+    };
 
     if page.is_empty()
         && let Some(received) = highest_seen.filter(|_| known_gap)
@@ -145,6 +185,29 @@ pub struct ChangesetReceiver {
     bootstrap_from: CheckpointSequenceNumber,
     poll_interval: Duration,
     metrics: Arc<OcsMetrics>,
+    /// When the tick-failure warn last fired (it is rate limited).
+    last_warning: Option<Instant>,
+    /// Whether the relays are still serving this node new checkpoints.
+    frontier: FrontierWatch,
+}
+
+/// Whether the changeset frontier is still advancing. A relay whose own
+/// fullnode is dead or stuck answers with empty pages, which read exactly like
+/// being caught up, so only time tells: Sui makes checkpoints continuously,
+/// and a frontier that has not moved for [`SEEK_SUCCESSOR_AFTER`] means the
+/// preferred relay has nothing newer.
+struct FrontierWatch {
+    /// When the frontier last advanced; the receiver's start until it first
+    /// does. Tokio's clock, so tests drive it with paused time.
+    advanced_at: tokio::time::Instant,
+    /// When every relay was last asked for the next checkpoint, in the current
+    /// stall.
+    last_seek: Option<tokio::time::Instant>,
+    /// The latest failed pull's error, cleared by a pull that succeeds.
+    last_error: Option<String>,
+    /// Whether the frozen error has fired for the current stall: a transition
+    /// latch, so a stall that lasts logs once and once more when it ends.
+    frozen_reported: bool,
 }
 
 impl ChangesetReceiver {
@@ -157,6 +220,9 @@ impl ChangesetReceiver {
         poll_interval: Duration,
         metrics: Arc<OcsMetrics>,
     ) -> Self {
+        metrics
+            .changeset_upstream_last_advance_timestamp_seconds
+            .set(unix_now_secs());
         Self {
             index,
             source,
@@ -165,53 +231,150 @@ impl ChangesetReceiver {
             bootstrap_from,
             poll_interval,
             metrics,
+            last_warning: None,
+            frontier: FrontierWatch {
+                advanced_at: tokio::time::Instant::now(),
+                last_seek: None,
+                last_error: None,
+                frozen_reported: false,
+            },
         }
     }
 
-    pub async fn run(self) {
+    pub async fn run(mut self) {
         info!(
             poll_interval_ms = self.poll_interval.as_millis() as u64,
             bootstrap_from = self.bootstrap_from,
             "ChangesetReceiver starting"
         );
         let mut tick = tokio::time::interval(self.poll_interval);
-        let mut last_warning: Option<Instant> = None;
         loop {
             tick.tick().await;
-            // Drain: keep pulling within a tick until caught up (no further
-            // advance) or an error, so a node that's behind catches up promptly
-            // instead of one page per interval.
-            loop {
-                match pump_changesets(
-                    &self.index,
-                    self.source.as_ref(),
-                    &self.committees,
-                    self.page_limit,
-                    self.bootstrap_from,
-                )
-                .await
-                {
-                    Ok(0) => break,
-                    Ok(advanced) => {
-                        debug!(advanced, "ChangesetReceiver folded changesets");
+            self.tick().await;
+        }
+    }
+
+    /// One poll. Drain: keep pulling until caught up (no further advance) or
+    /// an error, so a node that's behind catches up promptly instead of one
+    /// page per interval. Once the frontier has stalled for
+    /// [`SEEK_SUCCESSOR_AFTER`], the first pull of a tick asks every relay for
+    /// the next checkpoint, at most every [`SEEK_SUCCESSOR_INTERVAL`].
+    async fn tick(&mut self) {
+        let now = tokio::time::Instant::now();
+        let mut seek =
+            now.saturating_duration_since(self.frontier.advanced_at) >= SEEK_SUCCESSOR_AFTER
+                && self.frontier.last_seek.is_none_or(|last| {
+                    now.saturating_duration_since(last) >= SEEK_SUCCESSOR_INTERVAL
+                });
+        if seek {
+            self.frontier.last_seek = Some(now);
+            debug!(
+                contiguous_head = ?self.index.read().highest_contiguous_seq(),
+                "changeset frontier has stalled; asking every relay for the next checkpoint"
+            );
+        }
+        let mut advanced_total = 0;
+        loop {
+            match pump_changesets(
+                &self.index,
+                self.source.as_ref(),
+                &self.committees,
+                self.page_limit,
+                self.bootstrap_from,
+                seek,
+            )
+            .await
+            {
+                Ok(advanced) => {
+                    self.frontier.last_error = None;
+                    if seek {
+                        self.count_seek(if advanced > 0 { "advanced" } else { "none" });
+                        seek = false;
                     }
-                    Err(e) => {
-                        match &e {
-                            ChangesetError::Gap { .. } => self.metrics.changeset_gap_total.inc(),
-                            ChangesetError::Internal(_) => {
-                                self.metrics.changeset_fetch_failures_total.inc()
-                            }
-                            _ => {}
-                        }
-                        if last_warning.is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
-                        {
-                            last_warning = Some(Instant::now());
-                            warn!(error = ?e, "ChangesetReceiver tick failed; will retry");
-                        }
+                    if advanced == 0 {
                         break;
                     }
+                    advanced_total += advanced;
+                    debug!(advanced, "ChangesetReceiver folded changesets");
+                }
+                Err(e) => {
+                    if seek {
+                        self.count_seek("failed");
+                    }
+                    match &e {
+                        ChangesetError::Gap { .. } => self.metrics.changeset_gap_total.inc(),
+                        ChangesetError::Internal(_) => {
+                            self.metrics.changeset_fetch_failures_total.inc()
+                        }
+                        _ => {}
+                    }
+                    if self
+                        .last_warning
+                        .is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
+                    {
+                        self.last_warning = Some(Instant::now());
+                        warn!(error = ?e, "ChangesetReceiver tick failed; will retry");
+                    }
+                    self.frontier.last_error = Some(e.to_string());
+                    break;
                 }
             }
+        }
+        self.note_frontier(advanced_total > 0);
+    }
+
+    fn count_seek(&self, outcome: &str) {
+        self.metrics
+            .changeset_successor_seeks_total
+            .with_label_values(&[outcome])
+            .inc();
+    }
+
+    /// Record whether this tick advanced the frontier, and report a frozen
+    /// upstream on the transition past [`UPSTREAM_FROZEN_AFTER`] without an
+    /// advance, and once more when the frontier advances again.
+    fn note_frontier(&mut self, advanced: bool) {
+        let now = tokio::time::Instant::now();
+        let previous_advance = self.frontier.advanced_at;
+        if advanced {
+            self.frontier.advanced_at = now;
+            self.frontier.last_seek = None;
+            self.metrics
+                .changeset_upstream_last_advance_timestamp_seconds
+                .set(unix_now_secs());
+        }
+        let frozen_for = now.saturating_duration_since(self.frontier.advanced_at);
+        let frozen = frozen_for >= UPSTREAM_FROZEN_AFTER;
+        if frozen == self.frontier.frozen_reported {
+            return;
+        }
+        self.frontier.frozen_reported = frozen;
+        let contiguous_head = self
+            .index
+            .read()
+            .highest_contiguous_seq()
+            .map_or_else(|| "none yet".to_owned(), |seq| seq.to_string());
+        if frozen {
+            error!(
+                %contiguous_head,
+                frozen_secs = frozen_for.as_secs(),
+                last_relay_error = self.frontier.last_error.as_deref().unwrap_or(
+                    "none: the relays answer, but none has a newer checkpoint"
+                ),
+                "no Sui state relay is advancing: no relay has served this node a Sui \
+                 checkpoint past its changeset frontier for over 5 minutes, so this node's \
+                 view of Sui is frozen. Every reachable relay is asked for the next checkpoint \
+                 every 30 seconds. Check this node's p2p connectivity to sui-state-direct \
+                 validators, and the sui-state-mirror-peers list if one is set \
+                 (logged once until a relay serves a newer checkpoint)"
+            );
+        } else {
+            info!(
+                %contiguous_head,
+                was_frozen_secs = now.saturating_duration_since(previous_advance).as_secs(),
+                "a Sui state relay is serving new checkpoints again; this node's view of Sui \
+                 is moving"
+            );
         }
     }
 }
@@ -323,14 +486,14 @@ mod tests {
         let source = VecSource(vec![e10, e11, e12]);
 
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
-        let advanced = pump_changesets(&index, &source, &store, 64, 10)
+        let advanced = pump_changesets(&index, &source, &store, 64, 10, false)
             .await
             .unwrap();
         assert_eq!(advanced, 3);
         assert_eq!(index.read().highest_contiguous_seq(), Some(12));
 
         // Caught up: next pull starts at 13 and finds nothing.
-        let advanced = pump_changesets(&index, &source, &store, 64, 10)
+        let advanced = pump_changesets(&index, &source, &store, 64, 10, false)
             .await
             .unwrap();
         assert_eq!(advanced, 0);
@@ -357,11 +520,19 @@ mod tests {
             [modified(0xA1, 3)].into(),
         );
         let index = Arc::new(RwLock::new(ChangesetIndex::new()));
-        pump_changesets(&index, &VecSource(vec![first]), &store, 64, 10)
+        pump_changesets(&index, &VecSource(vec![first]), &store, 64, 10, false)
             .await
             .unwrap();
         assert_eq!(
-            pump_changesets(&index, &VecSource(vec![later.clone()]), &store, 64, 10).await,
+            pump_changesets(
+                &index,
+                &VecSource(vec![later.clone()]),
+                &store,
+                64,
+                10,
+                false
+            )
+            .await,
             Err(ChangesetError::Gap {
                 expected: 11,
                 received: 12
@@ -370,9 +541,16 @@ mod tests {
         );
         assert_eq!(index.read().highest_contiguous_seq(), Some(10));
         assert_eq!(
-            pump_changesets(&index, &VecSource(vec![missing, later]), &store, 64, 10)
-                .await
-                .unwrap(),
+            pump_changesets(
+                &index,
+                &VecSource(vec![missing, later]),
+                &store,
+                64,
+                10,
+                false
+            )
+            .await
+            .unwrap(),
             2
         );
         assert_eq!(index.read().highest_contiguous_seq(), Some(12));
@@ -385,7 +563,7 @@ mod tests {
         let (entry, _) = signed_entry(&committee, &keys, 30, None, [modified(0xA1, 1)].into());
         let index = Arc::new(RwLock::new(ChangesetIndex::new()));
         assert_eq!(
-            pump_changesets(&index, &VecSource(vec![entry]), &store, 64, 10)
+            pump_changesets(&index, &VecSource(vec![entry]), &store, 64, 10, false)
                 .await
                 .unwrap(),
             1
@@ -410,7 +588,7 @@ mod tests {
         let source = VecSource(vec![e10]);
 
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
-        let result = pump_changesets(&index, &source, &store, 64, 10).await;
+        let result = pump_changesets(&index, &source, &store, 64, 10, false).await;
         assert!(matches!(result, Err(ChangesetError::Unverified(_))));
         assert_eq!(index.read().highest_contiguous_seq(), None);
     }
@@ -439,7 +617,7 @@ mod tests {
         let source = VecSource(vec![forged_entry]);
 
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
-        let result = pump_changesets(&index, &source, &store, 64, 10).await;
+        let result = pump_changesets(&index, &source, &store, 64, 10, false).await;
 
         // Past BLS, the artifacts re-derivation rejects the dropped id.
         assert_eq!(result, Err(ChangesetError::ArtifactsMismatch(10)));
@@ -472,7 +650,7 @@ mod tests {
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
 
         // First pump folds 10, then hits the broken chain at 11.
-        let result = pump_changesets(&index, &source, &store, 64, 10).await;
+        let result = pump_changesets(&index, &source, &store, 64, 10, false).await;
         assert_eq!(result, Err(ChangesetError::BrokenChain { seq: 11 }));
         assert_eq!(
             index.read().highest_contiguous_seq(),
@@ -481,7 +659,7 @@ mod tests {
         );
 
         // Re-pump (now from 11): the persistent fork makes no progress.
-        let result = pump_changesets(&index, &source, &store, 64, 10).await;
+        let result = pump_changesets(&index, &source, &store, 64, 10, false).await;
         assert_eq!(result, Err(ChangesetError::BrokenChain { seq: 11 }));
         assert_eq!(index.read().highest_contiguous_seq(), Some(10));
     }
@@ -513,7 +691,7 @@ mod tests {
         let source = VecSource(vec![e10, e11, e12]);
 
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
-        let result = pump_changesets(&index, &source, &store, 64, 10).await;
+        let result = pump_changesets(&index, &source, &store, 64, 10, false).await;
 
         // The foreign signature at 11 fails the gate; 12 is never folded.
         assert!(matches!(result, Err(ChangesetError::Unverified(_))));
@@ -524,7 +702,7 @@ mod tests {
         );
 
         // A retry resumes from 11 and stalls there again (the fork is persistent).
-        let result = pump_changesets(&index, &source, &store, 64, 10).await;
+        let result = pump_changesets(&index, &source, &store, 64, 10, false).await;
         assert!(matches!(result, Err(ChangesetError::Unverified(_))));
         assert_eq!(index.read().highest_contiguous_seq(), Some(10));
     }
@@ -563,7 +741,7 @@ mod tests {
         let mut total_advanced = 0;
         let mut pumps = 0;
         loop {
-            let advanced = pump_changesets(&index, &source, &store, page_limit, 10)
+            let advanced = pump_changesets(&index, &source, &store, page_limit, 10, false)
                 .await
                 .unwrap();
             if advanced == 0 {
@@ -577,5 +755,375 @@ mod tests {
         assert_eq!(total_advanced, 20);
         assert!(pumps > 1, "the backlog must span more than one page");
         assert_eq!(index.read().highest_contiguous_seq(), Some(29));
+    }
+
+    // ---- a frozen relay ----
+
+    /// The relays as the receiver sees them through the relay client: each
+    /// serves the chain up to its own head, in preference order. A plain pull
+    /// asks the preferred relay alone and takes "nothing newer" as caught up.
+    /// A pull that seeks the successor asks each in turn, demotes a relay with
+    /// nothing newer to the back, and answers `NotFound` when none has
+    /// anything — what `SuiMirrorTransport::changeset_page` does.
+    struct Relays {
+        chain: Vec<ChangesetEntry>,
+        heads: parking_lot::Mutex<Vec<u64>>,
+        unreachable: std::sync::atomic::AtomicBool,
+    }
+
+    impl Relays {
+        fn page(&self, head: u64, from_seq: u64, limit: u32) -> Vec<ChangesetEntry> {
+            self.chain
+                .iter()
+                .filter(|entry| {
+                    let seq = *entry.summary.sequence_number();
+                    seq >= from_seq && seq <= head && seq < from_seq + u64::from(limit)
+                })
+                .cloned()
+                .collect()
+        }
+
+        fn set_heads(&self, heads: &[u64]) {
+            *self.heads.lock() = heads.to_vec();
+        }
+    }
+
+    #[async_trait]
+    impl ChangesetSource for Relays {
+        async fn changeset_page(
+            &self,
+            from_seq: CheckpointSequenceNumber,
+            limit: u32,
+            _require_contiguous: bool,
+            seek_successor: bool,
+        ) -> Result<Vec<ChangesetEntry>, TransportError> {
+            if self.unreachable.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(TransportError::Network(
+                    "changeset_page: all peers failed (last: every relay timed out)".into(),
+                ));
+            }
+            let mut heads = self.heads.lock();
+            if !seek_successor {
+                return Ok(self.page(heads[0], from_seq, limit));
+            }
+            for _ in 0..heads.len() {
+                let page = self.page(heads[0], from_seq, limit);
+                if !page.is_empty() {
+                    return Ok(page);
+                }
+                heads.rotate_left(1);
+            }
+            Err(TransportError::NotFound("changeset page is empty".into()))
+        }
+    }
+
+    const FROZEN: &str = "no Sui state relay is advancing";
+    const RECOVERED: &str = "a Sui state relay is serving new checkpoints again";
+    /// What the last-advance gauge is overwritten with, so a tick that
+    /// rewrites it shows: real stamps are the current Unix time.
+    const STALE_STAMP: i64 = 1;
+
+    struct FrozenRelayFixture {
+        relays: Arc<Relays>,
+        receiver: ChangesetReceiver,
+        index: SharedChangesetIndex,
+        metrics: Arc<OcsMetrics>,
+        started: i64,
+        _dir: tempfile::TempDir,
+    }
+
+    impl FrozenRelayFixture {
+        /// A receiver bootstrapping at 10 over relays at `heads`, in preference
+        /// order, serving one chain from 10 to 120.
+        fn new(heads: &[u64]) -> Self {
+            let (committee, keys) = Committee::new_simple_test_committee();
+            let (dir, store) = committee_store(committee.clone());
+            let mut chain = Vec::new();
+            let mut previous = None;
+            for seq in 10u64..=120 {
+                let (entry, digest) = signed_entry(
+                    &committee,
+                    &keys,
+                    seq,
+                    previous,
+                    [modified(seq as u8, 1)].into(),
+                );
+                chain.push(entry);
+                previous = Some(digest);
+            }
+            let relays = Arc::new(Relays {
+                chain,
+                heads: parking_lot::Mutex::new(heads.to_vec()),
+                unreachable: Default::default(),
+            });
+            let metrics = OcsMetrics::new_for_testing();
+            let index: SharedChangesetIndex = Arc::new(RwLock::new(
+                ChangesetIndex::new().with_metrics(metrics.clone()),
+            ));
+            let started = unix_now_secs();
+            let receiver = ChangesetReceiver::new(
+                index.clone(),
+                relays.clone(),
+                store,
+                64,
+                10,
+                Duration::from_secs(2),
+                metrics.clone(),
+            );
+            Self {
+                relays,
+                receiver,
+                index,
+                metrics,
+                started,
+                _dir: dir,
+            }
+        }
+
+        /// Ticks the receiver at each of `times` (seconds since the fixture
+        /// started, increasing), moving the paused clock to each first.
+        async fn tick_at(
+            &mut self,
+            origin: tokio::time::Instant,
+            times: impl Iterator<Item = u64>,
+        ) {
+            for at in times {
+                let target = origin + Duration::from_secs(at);
+                tokio::time::advance(target.saturating_duration_since(tokio::time::Instant::now()))
+                    .await;
+                self.receiver.tick().await;
+            }
+        }
+
+        fn head(&self) -> Option<u64> {
+            self.index.read().highest_contiguous_seq()
+        }
+
+        fn seeks(&self, outcome: &str) -> u64 {
+            self.metrics
+                .changeset_successor_seeks_total
+                .with_label_values(&[outcome])
+                .get()
+        }
+
+        fn last_advance(&self) -> i64 {
+            self.metrics
+                .changeset_upstream_last_advance_timestamp_seconds
+                .get()
+        }
+
+        fn stale_last_advance(&self) {
+            self.metrics
+                .changeset_upstream_last_advance_timestamp_seconds
+                .set(STALE_STAMP);
+        }
+    }
+
+    /// Everything logged on this thread while the guard lives (the tests run
+    /// on a current-thread runtime). The idle second dispatcher makes
+    /// `tracing` consult every live dispatcher for callsite interest, so a
+    /// parallel test without a subscriber cannot cache these callsites as
+    /// uninteresting.
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<parking_lot::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLogs {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl CapturedLogs {
+        fn start() -> (Self, (tracing::subscriber::DefaultGuard, tracing::Dispatch)) {
+            let idle = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+            let logs = Self::default();
+            let writer = logs.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(move || writer.clone())
+                .finish();
+            (logs, (tracing::subscriber::set_default(subscriber), idle))
+        }
+
+        fn lines_with(&self, needle: &str) -> Vec<String> {
+            String::from_utf8_lossy(&self.0.lock())
+                .lines()
+                .filter(|line| line.contains(needle))
+                .map(str::to_owned)
+                .collect()
+        }
+    }
+
+    fn assert_carries(line: &str, expected: &[&str]) {
+        for expected in expected {
+            assert!(line.contains(expected), "must carry {expected:?}: {line}");
+        }
+    }
+
+    /// The preferred relay stops at 12 while another is at 20. Its empty
+    /// pages read as caught up, so nothing moves until the frontier has
+    /// stalled for 30 seconds; then every relay is asked, the one ahead serves,
+    /// and it is preferred from then on (the stalled one was demoted).
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_preferred_relay_is_passed_over_for_one_that_is_ahead() {
+        let (logs, _guard) = CapturedLogs::start();
+        let origin = tokio::time::Instant::now();
+        let mut fx = FrozenRelayFixture::new(&[12, 20]);
+        fx.tick_at(origin, [0].into_iter()).await;
+        assert_eq!(fx.head(), Some(12));
+
+        fx.tick_at(origin, (2..=28).step_by(2)).await;
+        assert_eq!(fx.head(), Some(12), "only the preferred relay is asked");
+        assert_eq!(fx.seeks("advanced") + fx.seeks("none"), 0);
+
+        fx.stale_last_advance();
+        fx.tick_at(origin, [30].into_iter()).await;
+        assert_eq!(fx.head(), Some(20), "the relay that is ahead serves");
+        assert_eq!(fx.seeks("advanced"), 1);
+        assert!(
+            fx.last_advance() >= fx.started,
+            "an advance stamps the gauge"
+        );
+        assert_eq!(
+            *fx.relays.heads.lock(),
+            vec![20, 12],
+            "the stalled relay is demoted"
+        );
+
+        fx.relays.set_heads(&[25, 12]);
+        fx.tick_at(origin, [32].into_iter()).await;
+        assert_eq!(
+            fx.head(),
+            Some(25),
+            "the relay ahead is now the preferred one"
+        );
+        assert_eq!(fx.seeks("advanced") + fx.seeks("none"), 1);
+        assert!(logs.lines_with(FROZEN).is_empty());
+        assert!(logs.lines_with(RECOVERED).is_empty());
+    }
+
+    /// No relay has anything past 12. Every relay is asked again every 30
+    /// seconds — a relay with nothing newer is the answer, not a failure — and
+    /// once the frontier has stalled for five minutes one ERROR says so.
+    #[tokio::test(start_paused = true)]
+    async fn when_no_relay_is_ahead_the_freeze_is_reported_once() {
+        let (logs, _guard) = CapturedLogs::start();
+        let origin = tokio::time::Instant::now();
+        let mut fx = FrozenRelayFixture::new(&[12, 12]);
+        fx.tick_at(origin, [0].into_iter()).await;
+        fx.stale_last_advance();
+
+        fx.tick_at(origin, (2..=298).step_by(2)).await;
+        assert!(logs.lines_with(FROZEN).is_empty(), "under the threshold");
+        assert_eq!(fx.seeks("none"), 9, "every 30 s from 30 s on");
+        fx.tick_at(origin, (300..=400).step_by(2)).await;
+
+        assert_eq!(fx.seeks("none"), 13);
+        assert_eq!(fx.seeks("advanced") + fx.seeks("failed"), 0);
+        assert_eq!(fx.metrics.changeset_fetch_failures_total.get(), 0);
+        assert_eq!(fx.last_advance(), STALE_STAMP, "no advance, no stamp");
+        let frozen = logs.lines_with(FROZEN);
+        assert_eq!(frozen.len(), 1, "latched to the transition: {frozen:?}");
+        assert_carries(
+            &frozen[0],
+            &[
+                "ERROR",
+                "contiguous_head=12",
+                "frozen_secs=300",
+                "none has a newer checkpoint",
+            ],
+        );
+    }
+
+    /// A relay moves again: the next ask of every relay finds it, the stall
+    /// ends with one INFO and a fresh stamp, and a later stall is reported
+    /// again.
+    #[tokio::test(start_paused = true)]
+    async fn a_relay_that_moves_again_ends_the_freeze_once() {
+        let (logs, _guard) = CapturedLogs::start();
+        let origin = tokio::time::Instant::now();
+        let mut fx = FrozenRelayFixture::new(&[12, 12]);
+        fx.tick_at(origin, (0..=300).step_by(30)).await;
+        assert_eq!(logs.lines_with(FROZEN).len(), 1);
+
+        fx.relays.set_heads(&[12, 30]);
+        fx.stale_last_advance();
+        fx.tick_at(origin, [330].into_iter()).await;
+        assert_eq!(fx.head(), Some(30));
+        assert!(
+            fx.last_advance() >= fx.started,
+            "the advance stamps the gauge"
+        );
+        let recovered = logs.lines_with(RECOVERED);
+        assert_eq!(recovered.len(), 1, "{recovered:?}");
+        assert_carries(
+            &recovered[0],
+            &["INFO", "contiguous_head=30", "was_frozen_secs=330"],
+        );
+
+        fx.relays.set_heads(&[31, 12]);
+        fx.tick_at(origin, [332].into_iter()).await;
+        assert_eq!(fx.head(), Some(31));
+        assert_eq!(logs.lines_with(RECOVERED).len(), 1, "once per stall");
+
+        fx.tick_at(origin, (362..=632).step_by(30)).await;
+        let frozen = logs.lines_with(FROZEN);
+        assert_eq!(frozen.len(), 2, "the latch re-arms: {frozen:?}");
+        assert_carries(&frozen[1], &["contiguous_head=31", "frozen_secs=300"]);
+    }
+
+    /// Relays that do not answer at all: every pull fails and counts, and the
+    /// freeze is reported with the relay error.
+    #[tokio::test(start_paused = true)]
+    async fn unreachable_relays_are_reported_frozen_with_their_error() {
+        let (logs, _guard) = CapturedLogs::start();
+        let origin = tokio::time::Instant::now();
+        let mut fx = FrozenRelayFixture::new(&[12]);
+        fx.tick_at(origin, [0].into_iter()).await;
+        fx.relays
+            .unreachable
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        fx.tick_at(origin, (30..=300).step_by(30)).await;
+
+        assert_eq!(fx.metrics.changeset_fetch_failures_total.get(), 10);
+        assert_eq!(fx.seeks("failed"), 10);
+        let frozen = logs.lines_with(FROZEN);
+        assert_eq!(frozen.len(), 1, "{frozen:?}");
+        assert_carries(
+            &frozen[0],
+            &["ERROR", "frozen_secs=300", "every relay timed out"],
+        );
+    }
+
+    /// A frontier that advances on every poll never asks every relay and never
+    /// reports a freeze, and every advance stamps the gauge.
+    #[tokio::test(start_paused = true)]
+    async fn an_advancing_frontier_never_seeks_nor_reports() {
+        let (logs, _guard) = CapturedLogs::start();
+        let origin = tokio::time::Instant::now();
+        let mut fx = FrozenRelayFixture::new(&[12]);
+        fx.tick_at(origin, [0].into_iter()).await;
+        for (step, at) in (25..=600).step_by(25).enumerate() {
+            fx.relays.set_heads(&[13 + step as u64]);
+            fx.stale_last_advance();
+            fx.tick_at(origin, [at].into_iter()).await;
+            assert!(
+                fx.last_advance() >= fx.started,
+                "every advance stamps the gauge"
+            );
+        }
+
+        assert_eq!(fx.head(), Some(36));
+        assert_eq!(
+            fx.seeks("advanced") + fx.seeks("none") + fx.seeks("failed"),
+            0
+        );
+        assert!(logs.lines_with(FROZEN).is_empty());
+        assert!(logs.lines_with(RECOVERED).is_empty());
     }
 }

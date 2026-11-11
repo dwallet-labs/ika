@@ -473,6 +473,27 @@ missing checkpoint, or weakens `previous_digest`, BLS or artifacts binding.
 If every available relay has pruned the successor, recovery requires a relay
 that retains it; this change does not manufacture missing verified history.
 
+**A frozen relay.** A relay whose own fullnode is dead or stuck serves empty
+pages, which read exactly like being caught up. In automatic peer mode the
+first relay that answers keeps being preferred, so one frozen relay at the
+front froze the whole node, and every gauge read healthy. Sui makes
+checkpoints continuously, so the receiver measures the frontier against time
+instead. Once it has not advanced for 30 s, the receiver asks every relay for
+the next checkpoint, at most every 30 s while the stall lasts. This is the
+same pass a known gap uses: a relay with nothing newer is demoted and passed
+over, and the first relay that serves the successor wins. The demotion lives
+in the peer order that verified reads and the committee ratchet share, so in
+automatic mode they move to that relay too. Pinned mode visits every
+configured peer in the pass. When no relay has anything newer, that is the
+answer, not a failure (`ika_ocs_changeset_successor_seeks_total{outcome}`).
+Five minutes without an advance logs one `ERROR` with the frontier, the time
+frozen and the last relay error, then one `INFO` when a relay serves a newer
+checkpoint. `ika_ocs_changeset_upstream_last_advance_timestamp_seconds` is
+stamped on every advance and set to the receiver's start until the first
+one, so `time() -` it is the alert signal even on a node whose relays never
+served it. Nothing about verification changes: every entry is still BLS- and
+artifacts-bound and folded only contiguously.
+
 The out-of-order queue retains at most 256 changesets. It counts each drop,
 reports contiguous head, highest verified sequence seen and queue depth,
 and warns at most once a minute per index. Last-progress Unix time changes

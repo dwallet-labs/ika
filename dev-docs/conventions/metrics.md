@@ -435,6 +435,33 @@ gap:
 The pusher also logs one `ERROR` ("Sui fullnode is not advancing") after five
 minutes without an advance, and one `INFO` when the watermark moves again.
 
+## OCS changeset receiver: a frozen relay reads as caught up
+
+On mirrored and peer-only nodes, a relay whose own fullnode is dead or stuck
+serves empty changeset pages, which read exactly like being caught up.
+`ika_ocs_changeset_highest_seen - ika_ocs_changeset_contiguous_head` stays 0,
+so the gap alert never fires. These families cover that case:
+
+- `ika_ocs_changeset_upstream_last_advance_timestamp_seconds` (gauge): Unix
+  time a relay last served this node a checkpoint past its changeset
+  frontier. It is set to the receiver's start until the first advance, and it
+  is 0 on nodes that run no receiver (sui-state-direct), so gate on `> 0`.
+  Unlike `ika_ocs_changeset_last_progress_timestamp_seconds`, which is 0 until
+  the first advance, it ages even when no relay ever served this node, so
+  `time() - ika_ocs_changeset_upstream_last_advance_timestamp_seconds` is how
+  long the node's view of Sui has been frozen.
+- `ika_ocs_changeset_successor_seeks_total{outcome}` (counter, all three
+  outcomes present from the start): once the frontier has stalled for 30 s,
+  the receiver asks every relay for the next checkpoint, at most every 30 s.
+  - `advanced`: a relay served it, and the relays that had nothing newer were
+    demoted.
+  - `none`: no relay had anything newer.
+  - `failed`: the pass failed.
+
+The receiver logs one `ERROR` ("no Sui state relay is advancing") after five
+minutes without an advance, and one `INFO` when a relay serves a newer
+checkpoint again.
+
 ## A process registers only the families it drives
 
 The three `NodeMode`s share one start sequence, and it used to register nearly
@@ -822,6 +849,8 @@ ika_ocs_changeset_gap_total
 ika_ocs_changeset_highest_seen
 ika_ocs_changeset_last_progress_timestamp_seconds
 ika_ocs_changeset_pending_depth
+ika_ocs_changeset_successor_seeks_total
+ika_ocs_changeset_upstream_last_advance_timestamp_seconds
 ika_ocs_committee_head_epoch
 ika_ocs_dynamic_fields_walk_entries_returned_total
 ika_ocs_dynamic_fields_walk_entries_seen_total

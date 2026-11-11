@@ -1049,6 +1049,61 @@ mod tests {
         );
     }
 
+    /// Automatic mode: a relay at the front of the preference order that has
+    /// stopped (its pages are empty) is taken as caught up by a plain poll. A
+    /// poll that seeks the successor passes it over for the relay that has
+    /// the next checkpoint and demotes it, so later plain polls go to the
+    /// relay that is ahead. This is what the changeset receiver relies on once
+    /// its frontier stalls.
+    #[tokio::test]
+    async fn seeking_the_successor_demotes_a_frozen_front_relay_in_automatic_mode() {
+        let frozen = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![changeset_entry(10)],
+            }))
+        });
+        let ahead = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![
+                    changeset_entry(10),
+                    changeset_entry(11),
+                    changeset_entry(12),
+                ],
+            }))
+        });
+        let consumer = build_network(|router| router);
+        consumer.connect(frozen.local_addr()).await.unwrap();
+        let ahead_id = consumer.connect(ahead.local_addr()).await.unwrap();
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+        let peers = SuiMirrorPeers::new(consumer.clone(), vec![], metrics);
+        peers.snapshot();
+        peers.demote(ahead_id);
+        let transport = SuiMirrorTransport::new(peers.clone());
+
+        assert!(
+            transport
+                .changeset_page(11, 64, true, false)
+                .await
+                .unwrap()
+                .entries
+                .is_empty(),
+            "a plain poll takes the frozen front relay's empty page as caught up"
+        );
+        let sought = transport.changeset_page(11, 64, true, true).await.unwrap();
+        assert_eq!(*sought.entries[0].summary.sequence_number(), 11);
+        assert_eq!(
+            peers.snapshot().first(),
+            Some(&ahead_id),
+            "the frozen relay is demoted"
+        );
+        let plain = transport.changeset_page(11, 64, true, false).await.unwrap();
+        assert_eq!(
+            plain.entries.len(),
+            2,
+            "later plain polls go to the relay that is ahead"
+        );
+    }
+
     fn changeset_entry(seq: u64) -> ChangesetEntry {
         let (committee, keys) = Committee::new_simple_test_committee();
         let object_states = BTreeMap::new();
