@@ -465,6 +465,7 @@ impl SuiMirrorProofProvider {
             TransportError::NotFound(_) => "not_found",
             TransportError::Encoding(_) => "encoding",
             TransportError::Network(_) => "network",
+            TransportError::TooLarge(_) => "too_large",
         };
         self.metrics
             .relay_failures_total

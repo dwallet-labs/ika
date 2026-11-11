@@ -7,6 +7,7 @@
 //! - [`crate::grpc::SuiGrpcClient`]: direct gRPC to a Sui fullnode.
 //! - `SuiMirrorTransport` (in `ika-network`): peer-relayed reads via Ika p2p.
 
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -17,11 +18,13 @@ use sui_rpc::proto::sui::rpc::v2::owner::OwnerKind;
 use sui_rpc::proto::sui::rpc::v2::{ChangedObject, CleverError};
 use sui_sdk_types::BalanceChange;
 use sui_types::TypeTag;
-use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+use sui_types::base_types::{
+    ObjectDigest, ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest,
+};
 use sui_types::committee::Committee;
 use sui_types::digests::{ChainIdentifier, CheckpointDigest};
 use sui_types::dynamic_field::{DynamicFieldInfo, derive_dynamic_field_id};
-use sui_types::effects::{TransactionEffects, TransactionEvents};
+use sui_types::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEvents};
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::move_package::UpgradeCap;
@@ -98,7 +101,7 @@ pub struct SubmittedTransaction {
     pub effects: TransactionEffects,
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum TransportError {
     #[error("transport: {0}")]
     Network(String),
@@ -106,6 +109,101 @@ pub enum TransportError {
     NotFound(String),
     #[error("encoding: {0}")]
     Encoding(String),
+    /// The response was larger than the client's decode limit for that call.
+    /// The data exists upstream, but this read cannot receive it whole.
+    #[error("response too large: {0}")]
+    TooLarge(String),
+}
+
+/// The latest written state of each object of a checkpoint, as Sui's
+/// `CheckpointArtifacts` holds it: object id to (version, digest).
+pub type CheckpointObjectStates = BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>;
+
+/// Fold one transaction's effects of checkpoint `seq` into `states`, the
+/// object states of the transactions before it: each written object's
+/// state replaces the earlier one. This is the loop of Sui's
+/// `CheckpointArtifacts::from`, which the caller can finish with
+/// `CheckpointArtifacts::from_object_states(states)`.
+///
+/// Each object's written versions must strictly increase, and only version
+/// 2 effects are accepted. Effects read from a Sui endpoint or a checkpoint
+/// archive are not yet checked against the certified summary here, so a
+/// list that breaks either condition is refused as `Encoding` and fails
+/// only that checkpoint.
+pub fn fold_written_object_states(
+    seq: CheckpointSequenceNumber,
+    states: &mut CheckpointObjectStates,
+    effects: &TransactionEffects,
+) -> Result<(), TransportError> {
+    if matches!(effects, TransactionEffects::V1(_)) {
+        return Err(TransportError::Encoding(format!(
+            "checkpoint {seq}: transaction {} has version 1 effects",
+            effects.transaction_digest()
+        )));
+    }
+    effects
+        .written()
+        .into_iter()
+        .try_for_each(
+            |(id, version, digest)| match states.insert(id, (version, digest)) {
+                Some((previous, _)) if previous >= version => {
+                    Err(TransportError::Encoding(format!(
+                        "checkpoint {seq}: object {id} written at version {version} after \
+                         version {previous}"
+                    )))
+                }
+                _ => Ok(()),
+            },
+        )
+}
+
+/// Refuse checkpoint `seq` as `Encoding` when [`fold_written_object_states`]
+/// refuses any of `effects`, in order. Callers that build the artifacts with
+/// Sui's `CheckpointArtifacts::from` run this first.
+pub fn check_written_versions_increase<'a>(
+    seq: CheckpointSequenceNumber,
+    effects: impl IntoIterator<Item = &'a TransactionEffects>,
+) -> Result<(), TransportError> {
+    effects
+        .into_iter()
+        .try_fold(CheckpointObjectStates::new(), |mut states, effects| {
+            fold_written_object_states(seq, &mut states, effects).map(|()| states)
+        })
+        .map(|_| ())
+}
+
+/// [`check_written_versions_increase`] over every transaction of `data`.
+pub fn check_checkpoint_written_versions_increase(
+    data: &CheckpointData,
+) -> Result<(), TransportError> {
+    check_written_versions_increase(
+        data.checkpoint_summary.sequence_number,
+        data.transactions
+            .iter()
+            .map(|transaction| &transaction.effects),
+    )
+}
+
+/// The object states the transactions of `data` write, folded in order by
+/// [`fold_written_object_states`]: the map Sui's `CheckpointArtifacts::from`
+/// builds, so `CheckpointArtifacts::from_object_states` of it gives the same
+/// artifacts and the same tree. Refused as `Encoding` when the fold refuses
+/// an effects, and with [`crate::grpc::object_state_cap_error`] as soon as it
+/// holds more than `max_states` states, before more memory goes to the map
+/// or to a tree built from it.
+pub fn fold_checkpoint_object_states(
+    data: &CheckpointData,
+    max_states: usize,
+) -> Result<CheckpointObjectStates, TransportError> {
+    let seq = data.checkpoint_summary.sequence_number;
+    let mut states = CheckpointObjectStates::new();
+    for transaction in &data.transactions {
+        fold_written_object_states(seq, &mut states, &transaction.effects)?;
+        if states.len() > max_states {
+            return Err(crate::grpc::object_state_cap_error(seq, max_states));
+        }
+    }
+    Ok(states)
 }
 
 /// Deterministically-derived `Field<u64, _>` child id for `(parent, version)`.
@@ -400,6 +498,11 @@ pub trait SuiWriter: Send + Sync {
 mod tests {
     use super::*;
 
+    use sui_types::effects::{EffectsObjectChange, TransactionEffectsV1};
+    use sui_types::execution_status::ExecutionStatus;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
+
     fn wrapper_tag(inner: TypeTag) -> TypeTag {
         TypeTag::Struct(Box::new(DynamicFieldInfo::dynamic_object_field_wrapper(
             inner,
@@ -499,5 +602,118 @@ mod tests {
             "u64",
             &name_bcs,
         ));
+    }
+
+    /// A checkpoint whose effects write each object at increasing versions
+    /// passes. The same checkpoint with one transaction's effects listed twice
+    /// writes the same versions again and is refused as `Encoding`.
+    #[test]
+    fn effects_that_write_a_version_twice_are_refused() {
+        let mut builder = TestCheckpointBuilder::new(5)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .finish_transaction();
+        let mut data = CheckpointData::from(builder.build_checkpoint());
+        check_checkpoint_written_versions_increase(&data).expect("increasing versions pass");
+
+        data.transactions.push(data.transactions[1].clone());
+        match check_checkpoint_written_versions_increase(&data) {
+            Err(TransportError::Encoding(reason)) => {
+                assert!(reason.contains("checkpoint 5"), "{reason}")
+            }
+            other => panic!("a repeated version must be refused, got {other:?}"),
+        }
+    }
+
+    /// Effects of one transaction that write `object` at `lamport_version`.
+    fn effects_writing(object: &Object, lamport_version: u64) -> TransactionEffects {
+        TransactionEffects::new_from_execution_v2(
+            ExecutionStatus::Success,
+            0,
+            GasCostSummary::default(),
+            vec![],
+            TransactionDigest::random(),
+            SequenceNumber::from_u64(lamport_version),
+            BTreeMap::from([(
+                object.id(),
+                EffectsObjectChange::new(None, Some(object), true, false),
+            )]),
+            None,
+            None,
+            vec![],
+        )
+    }
+
+    /// A later transaction that writes an object at a lower version than an
+    /// earlier one, 8 then 7, is refused as `Encoding`.
+    #[test]
+    fn a_version_written_lower_than_the_one_before_is_refused() {
+        let object = Object::immutable_with_id_for_testing(ObjectID::random());
+        let increasing = [effects_writing(&object, 7), effects_writing(&object, 8)];
+        check_written_versions_increase(5, &increasing).expect("7 then 8 passes");
+        let decreasing = [effects_writing(&object, 8), effects_writing(&object, 7)];
+        assert!(matches!(
+            check_written_versions_increase(5, &decreasing),
+            Err(TransportError::Encoding(_))
+        ));
+    }
+
+    /// The capped fold of a whole checkpoint gives Sui's object states, and
+    /// so Sui's artifacts digest, at a cap of exactly its state count, and is
+    /// refused with the cap error one below it. It refuses a repeated version
+    /// as the uncapped check does.
+    #[test]
+    fn the_checkpoint_fold_gives_sui_s_states_and_refuses_past_its_cap() {
+        let mut builder = TestCheckpointBuilder::new(5)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .create_owned_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .delete_object(2)
+            .create_owned_object(3)
+            .finish_transaction();
+        let mut data = CheckpointData::from(builder.build_checkpoint());
+        let whole = sui_types::messages_checkpoint::CheckpointArtifacts::from(&data);
+        let count = whole.object_states().expect("object states").len();
+        assert!(count >= 3, "the fixture writes several objects");
+
+        let states = fold_checkpoint_object_states(&data, count).expect("at the cap it folds");
+        assert_eq!(&states, whole.object_states().expect("object states"));
+        assert_eq!(
+            sui_types::messages_checkpoint::CheckpointArtifacts::from_object_states(states)
+                .digest()
+                .expect("artifacts digest"),
+            whole.digest().expect("artifacts digest")
+        );
+        match fold_checkpoint_object_states(&data, count - 1) {
+            Err(error) => assert!(crate::grpc::is_object_state_cap_error(&error), "{error}"),
+            Ok(_) => panic!("one state past the cap must be refused"),
+        }
+
+        data.transactions.push(data.transactions[1].clone());
+        assert!(matches!(
+            fold_checkpoint_object_states(&data, usize::MAX),
+            Err(TransportError::Encoding(reason)) if reason.contains("written at version")
+        ));
+    }
+
+    /// Version 1 effects are refused as `Encoding` before their `written()`
+    /// is read.
+    #[test]
+    fn version_one_effects_are_refused() {
+        let mut effects = TransactionEffects::V1(TransactionEffectsV1::default());
+        let digest = TransactionDigest::random();
+        *effects.transaction_digest_mut_for_testing() = digest;
+        match check_written_versions_increase(5, [&effects]) {
+            Err(TransportError::Encoding(reason)) => {
+                assert!(reason.contains(&digest.to_string()), "{reason}")
+            }
+            other => panic!("version 1 effects must be refused, got {other:?}"),
+        }
     }
 }

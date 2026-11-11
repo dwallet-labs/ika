@@ -408,6 +408,33 @@ shift the calibration of the fleet's rate alert, so it is a separate change. A
 spike on `sui_rpc_errors` is "the uplink is unhealthy" in the common case and
 "the uplink answered with something we could not read" in the rest.
 
+## OCS pusher: lag cannot see a frozen fullnode
+
+`ika_ocs_pusher_lag_checkpoints` and `ika_ocs_pusher_stalled` compare the scan
+cursor with the node's own fullnode's watermark. When that fullnode stops
+answering, the tick ends before they are written and they keep their last
+healthy values. When it answers but stops syncing, the lag is measured against
+its frozen watermark and reads about 0. `ika_ocs_pusher_stalled` keeps its
+legacy meaning (lag over 100). Two families on `sui-state-direct` cover the
+gap:
+
+- `ika_ocs_pusher_upstream_last_advance_timestamp_seconds` (gauge): Unix time
+  the watermark last advanced, meaning a probe answered above the previous
+  answer. It is set to the pusher's start until the first advance, and it is 0
+  on nodes that run no pusher, so gate on `> 0`. It is left alone while the
+  probe fails, hangs or repeats a height, so
+  `time() - ika_ocs_pusher_upstream_last_advance_timestamp_seconds` is how long
+  the node's view of Sui has been frozen. A tick held by slow checkpoint
+  fetches ages it too, so alert above the longest healthy tick (cursor
+  no-progress on healthy direct nodes peaks around 300 s).
+- `ika_ocs_pusher_watermark_probe_failures_total` (counter): watermark probes
+  that failed or passed their 60 s deadline, at most one per tick. It is flat
+  when the fullnode answers but has stopped syncing, so it complements the
+  gauge rather than replacing it.
+
+The pusher also logs one `ERROR` ("Sui fullnode is not advancing") after five
+minutes without an advance, and one `INFO` when the watermark moves again.
+
 ## A process registers only the families it drives
 
 The three `NodeMode`s share one start sequence, and it used to register nearly
@@ -827,6 +854,8 @@ ika_ocs_pusher_lost_checkpoints_overflow_total
 ika_ocs_pusher_pushed_total
 ika_ocs_pusher_skipped_irrelevant_total
 ika_ocs_pusher_stalled
+ika_ocs_pusher_upstream_last_advance_timestamp_seconds
+ika_ocs_pusher_watermark_probe_failures_total
 ika_ocs_ratchet_failures_total
 ika_ocs_ratchet_stalled
 ika_ocs_relay_failures_total

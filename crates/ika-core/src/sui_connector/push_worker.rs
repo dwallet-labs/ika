@@ -37,7 +37,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use futures::{StreamExt, stream};
 use ika_network::proof_provider::VerifiedObjectEntry;
 use ika_sui_client::archive::{ArchiveError, CheckpointArchive};
-use ika_sui_client::transport::{SuiTransport, TransportError};
+use ika_sui_client::grpc::{MAX_CHECKPOINT_OBJECT_STATES, is_object_state_cap_error};
+use ika_sui_client::transport::{SuiTransport, TransportError, fold_checkpoint_object_states};
 use ika_types::error::error_chain;
 use ika_types::messages_dwallet_mpc::IkaPackageConfig;
 use serde::{Deserialize, Serialize};
@@ -106,6 +107,18 @@ const ARCHIVE_NOT_FOUND_GIVE_UP_AFTER: Duration = Duration::from_secs(24 * 60 * 
 /// How often settled lost-checkpoint records are checked for collection: one
 /// pass over the cache for all of them.
 const LOST_CHECKPOINT_COLLECT_INTERVAL: Duration = Duration::from_secs(60);
+/// How long the node's own fullnode may go without advancing its checkpoint
+/// watermark before the pusher reports this node's view of Sui as frozen (see
+/// [`UpstreamProgress`]). Sui certifies several checkpoints a second, so a
+/// healthy fullnode never comes near it. A tick held by slow fetches does not
+/// trip it either: the check runs on the probe, which sees the advance that
+/// happened meanwhile. The log text says "5 minutes"; keep it in step.
+const UPSTREAM_FROZEN_AFTER: Duration = Duration::from_secs(5 * 60);
+/// Bound on one watermark probe. The probe is a single small RPC; the bound
+/// sits above the rate-limit gate's longest cooldown (30 s), so a throttled
+/// endpoint is a wait, not a failure. Without it a hung fullnode holds the
+/// tick, and the frozen-upstream check with it, forever.
+const WATERMARK_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The persisted record of one Sui checkpoint the pusher gave up on, or is
 /// about to — in the perpetual `sui_pusher_lost_checkpoints` table, keyed by
@@ -174,6 +187,14 @@ pub fn load_lost_checkpoints(
             );
             BTreeMap::new()
         })
+}
+
+/// Unix seconds now, for the `*_timestamp_seconds` gauges.
+fn unix_now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
 pub struct IkaCheckpointPusher {
@@ -254,6 +275,8 @@ pub struct IkaCheckpointPusher {
     /// Whether the watermark-refusal warn has already fired for the current
     /// stretch. See [`Self::stall_warned`].
     watermark_refusal_warned: bool,
+    /// Whether the node's own fullnode is still advancing.
+    upstream: UpstreamProgress,
     /// Checkpoints still to be re-folded from the archive (see
     /// [`Self::with_archive_backfill`]). Unlike `pending_gaps` these are
     /// checkpoints behind the cursor whose objects the node lost for good —
@@ -284,6 +307,36 @@ pub struct IkaCheckpointPusher {
     /// missing again, so one line per epoch is the whole story. Atomic because
     /// the fold path that logs it takes `&self`.
     committee_wait_logged: AtomicU64,
+    /// The most object states a checkpoint read whole may fold into the tree
+    /// this worker builds from it ([`fold_checkpoint_object_states`]):
+    /// [`MAX_CHECKPOINT_OBJECT_STATES`], the proof provider's part-read cap.
+    /// A fullnode read is under the client's decode limit and stays far below
+    /// it; the bound is for a checkpoint read from the archive, which has no
+    /// size limit — a gap the fullnode answered as too large, or any gap or
+    /// lost checkpoint the archive serves. A field so tests can lower it.
+    max_checkpoint_object_states: usize,
+}
+
+/// Whether the node's own fullnode is still moving. Its watermark advances
+/// several times a second, so one that has not advanced for
+/// [`UPSTREAM_FROZEN_AFTER`] — the probe fails, hangs or keeps answering the
+/// same height — means this node sees no new Sui state at all. The lag gauges
+/// cannot say so: a failed probe ends the tick before they are updated, and an
+/// answering but stuck fullnode is measured against its own watermark.
+struct UpstreamProgress {
+    /// The previous watermark the probe answered in this process. An advance
+    /// is an answer above the PREVIOUS one rather than above the highest ever
+    /// seen, so one inflated answer cannot make a healthy fullnode read frozen.
+    /// The first answer is only a baseline.
+    last_seen: Option<CheckpointSequenceNumber>,
+    /// When the watermark last advanced; the pusher's start until it first
+    /// does. Tokio's clock, so tests drive it with paused time.
+    advanced_at: tokio::time::Instant,
+    /// The latest probe's error, cleared by an answer.
+    last_error: Option<String>,
+    /// Whether the frozen error has fired for the current stretch: the same
+    /// transition latch as `stall_warned`.
+    frozen_reported: bool,
 }
 
 /// Retry state of one scanned-but-unfetchable checkpoint.
@@ -292,6 +345,20 @@ struct PendingGap {
     /// When the archive was last consulted for this gap, so archive fetches
     /// are paced at `ARCHIVE_RETRY_INTERVAL` instead of every 250ms tick.
     last_archive_attempt: Option<Instant>,
+    /// Whether a fullnode read of this checkpoint ever failed as too large.
+    /// Set on the first such answer and never cleared: a checkpoint never
+    /// changes, so the fullnode is not asked for it whole again — each such
+    /// read only makes the fullnode load the whole checkpoint once more. The
+    /// gap goes to the archive, whose read is bounded by
+    /// `max_checkpoint_object_states`, and at its deadline it is recorded
+    /// and dropped like any other gap.
+    observed_too_large: bool,
+    /// Whether the archive served this checkpoint with more object states
+    /// than `max_checkpoint_object_states`. A checkpoint never changes, so
+    /// the archive is not asked for it again during the gap's retry window;
+    /// the gap is recorded at its deadline and the backfill retries it at its
+    /// own pace.
+    archive_over_state_cap: bool,
 }
 
 type ArchiveFetch =
@@ -333,6 +400,12 @@ enum BackfillFailure {
     /// signature or artifacts digest), or an output object of it is not the
     /// object the checkpoint attests for its id.
     Verification,
+    /// The blob writes more object states than
+    /// `max_checkpoint_object_states`, so its tree is not built. Retried at
+    /// the backoff like any failure (an archive may have served a forged
+    /// blob), but not reported as a security event: an honest checkpoint
+    /// that large is refused the same way every time.
+    OverStateCap,
     /// The node's own fullnode could not say whether an object is current.
     CurrencyLookup,
 }
@@ -345,6 +418,7 @@ impl BackfillFailure {
             Self::ArchiveTimeout => "archive_timeout",
             Self::MissingCommittee => "missing_committee",
             Self::Verification => "verification",
+            Self::OverStateCap => "over_state_cap",
             Self::CurrencyLookup => "currency_lookup",
         }
     }
@@ -399,6 +473,7 @@ impl IkaCheckpointPusher {
         ika_packages.insert(packages.ika_system_package_id);
 
         let watermark = WatermarkGuard::new();
+        let mut first_watermark = None;
         let cursor = match perpetual.get_sui_pusher_last_seq()? {
             Some(persisted) => {
                 info!(
@@ -418,6 +493,7 @@ impl IkaCheckpointPusher {
                 // guard's head, and the advance admitted after it is what the
                 // rate bound meters.
                 watermark.admit(cursor);
+                first_watermark = Some(cursor);
                 info!(
                     cursor,
                     "checkpoint pusher first start — initializing at upstream latest"
@@ -428,6 +504,9 @@ impl IkaCheckpointPusher {
         };
         metrics.pusher_cursor_seq.set(cursor as i64);
         metrics.pusher_lag_checkpoints.set(0);
+        metrics
+            .pusher_upstream_last_advance_timestamp_seconds
+            .set(unix_now_secs());
         // Seed the cache's processed head so the reader's staleness tripwire
         // doesn't spuriously fire before the first poll tick advances it.
         cache.note_processed(cursor);
@@ -451,12 +530,19 @@ impl IkaCheckpointPusher {
             pending_fast_forward: None,
             stall_warned: false,
             watermark_refusal_warned: false,
+            upstream: UpstreamProgress {
+                last_seen: first_watermark,
+                advanced_at: tokio::time::Instant::now(),
+                last_error: None,
+                frozen_reported: false,
+            },
             archive_backfill: BTreeMap::new(),
             lost_checkpoints,
             operator_backfill: BTreeSet::new(),
             lost_checkpoints_collected_at: Instant::now(),
             lost_overflow_warned: false,
             committee_wait_logged: AtomicU64::new(0),
+            max_checkpoint_object_states: MAX_CHECKPOINT_OBJECT_STATES,
         })
     }
 
@@ -865,7 +951,11 @@ impl IkaCheckpointPusher {
         // through the fullnode's availability window, so a fullnode pruning at
         // head NotFounds its own latest and aborts this tick — permanently,
         // while the window stays empty. The height watermark survives pruning.
-        let latest_seq = self.transport.get_latest_checkpoint_sequence().await?;
+        // Noted BEFORE a failed probe ends the tick, so a fullnode that stopped
+        // answering is reported like one that stopped advancing.
+        let probe = self.probe_watermark().await;
+        self.note_upstream_watermark(&probe);
+        let latest_seq = probe?;
 
         // Legacy lag flag: a moving cursor can still remain behind upstream.
         // Last-progress time separately identifies a stopped scanner. Lag
@@ -1008,9 +1098,11 @@ impl IkaCheckpointPusher {
             // span the scan did reach, so each is a single known loss like a
             // gap dropped at its deadline: counted toward the drop alarm and
             // recorded (if a decode or fold failure has not already) and
-            // scheduled for the archive backfill. The skipped span itself was
-            // never fetched and is not recorded: it is the fast-forward's
-            // deliberate sacrifice, unbounded in size.
+            // scheduled for the archive backfill — a gap too large to read
+            // whole from the fullnode included: the backfill's read is
+            // bounded by `max_checkpoint_object_states`. The skipped span
+            // itself was never fetched and is not recorded: it is the
+            // fast-forward's deliberate sacrifice, unbounded in size.
             let kept = self.pending_gaps.split_off(&new_cursor.saturating_add(1));
             let sacrificed = std::mem::replace(&mut self.pending_gaps, kept);
             if !sacrificed.is_empty() {
@@ -1052,10 +1144,13 @@ impl IkaCheckpointPusher {
                         error = ?e,
                         "full-checkpoint fetch failed; queued as a pending gap"
                     );
-                    self.pending_gaps.entry(seq).or_insert_with(|| PendingGap {
+                    let gap = self.pending_gaps.entry(seq).or_insert_with(|| PendingGap {
                         first_seen: Instant::now(),
                         last_archive_attempt: None,
+                        observed_too_large: false,
+                        archive_over_state_cap: false,
                     });
+                    gap.observed_too_large |= matches!(e, TransportError::TooLarge(_));
                     matches!(e, TransportError::Encoding(_))
                 }
             };
@@ -1084,6 +1179,82 @@ impl IkaCheckpointPusher {
         // (prune-prone) reach-back for a still-current cached object.
         self.cache.note_processed(self.cursor);
         Ok(())
+    }
+
+    /// The fullnode's checkpoint watermark, failing as `Network` once the
+    /// probe passes [`WATERMARK_PROBE_TIMEOUT`].
+    async fn probe_watermark(&self) -> Result<CheckpointSequenceNumber, TransportError> {
+        tokio::time::timeout(
+            WATERMARK_PROBE_TIMEOUT,
+            self.transport.get_latest_checkpoint_sequence(),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(TransportError::Network(format!(
+                "watermark probe passed its {WATERMARK_PROBE_TIMEOUT:?} deadline"
+            )))
+        })
+    }
+
+    /// Record one watermark probe, and report the node's own fullnode as
+    /// frozen on the transition past [`UPSTREAM_FROZEN_AFTER`] without an
+    /// advance — whether the probe failed or answered — and once more when it
+    /// advances again. Never changes what the tick does with the sample.
+    fn note_upstream_watermark(
+        &mut self,
+        probe: &Result<CheckpointSequenceNumber, TransportError>,
+    ) {
+        let now = tokio::time::Instant::now();
+        let previous_advance = self.upstream.advanced_at;
+        match probe {
+            Ok(seq) => {
+                if self
+                    .upstream
+                    .last_seen
+                    .is_some_and(|previous| *seq > previous)
+                {
+                    self.upstream.advanced_at = now;
+                    self.metrics
+                        .pusher_upstream_last_advance_timestamp_seconds
+                        .set(unix_now_secs());
+                }
+                self.upstream.last_seen = Some(*seq);
+                self.upstream.last_error = None;
+            }
+            Err(e) => {
+                self.metrics.pusher_watermark_probe_failures_total.inc();
+                self.upstream.last_error = Some(e.to_string());
+            }
+        }
+        let frozen_for = now.saturating_duration_since(self.upstream.advanced_at);
+        let frozen = frozen_for >= UPSTREAM_FROZEN_AFTER;
+        let last_seen_watermark = self.upstream.last_seen.map_or_else(
+            || "none since this process started".to_owned(),
+            |seq| seq.to_string(),
+        );
+        match (frozen, self.upstream.frozen_reported) {
+            (true, false) => error!(
+                cursor = self.cursor,
+                %last_seen_watermark,
+                frozen_secs = frozen_for.as_secs(),
+                last_probe_error = self.upstream.last_error.as_deref().unwrap_or(
+                    "none: the fullnode answers, but its latest checkpoint does not move"
+                ),
+                "Sui fullnode is not advancing: its latest checkpoint has not moved for over 5 \
+                 minutes, so this node's view of Sui is frozen — no new Sui checkpoints, Ika \
+                 events or epoch changes reach it until the fullnode recovers. Check that this \
+                 node's Sui fullnode is running, reachable and syncing \
+                 (logged once until it advances again)"
+            ),
+            (false, true) => info!(
+                cursor = self.cursor,
+                %last_seen_watermark,
+                was_frozen_secs = now.saturating_duration_since(previous_advance).as_secs(),
+                "Sui fullnode is advancing again; this node's view of Sui is moving"
+            ),
+            _ => {}
+        }
+        self.upstream.frozen_reported = frozen;
     }
 
     /// Fold one fetched checkpoint: capture the committee transition the
@@ -1134,6 +1305,11 @@ impl IkaCheckpointPusher {
     ///    unconditionally — an emptied or altered object set produces a tree
     ///    root the committee never signed, so "no Ika objects on this
     ///    checkpoint" cannot be forged.
+    ///
+    /// The archive has no size limit, so before the tree is built the blob's
+    /// object states are counted ([`Self::checkpoint_artifacts`]), and a blob
+    /// with more than `max_checkpoint_object_states` is refused with the cap
+    /// error (`is_object_state_cap_error`) instead.
     fn verify_archive_checkpoint(
         &self,
         seq: CheckpointSequenceNumber,
@@ -1146,10 +1322,24 @@ impl IkaCheckpointPusher {
                 summary.sequence_number()
             );
         }
-        let artifacts = CheckpointArtifacts::from(data);
+        let artifacts = self.checkpoint_artifacts(data)?;
         let tree = ModifiedObjectTree::new(&artifacts)
             .map_err(|e| anyhow::anyhow!("ModifiedObjectTree over archive blob: {e}"))?;
         self.verify_before_fold(summary, &tree, true)
+    }
+
+    /// Sui's `CheckpointArtifacts` of `data`, from its object states folded
+    /// with the written-version check and the object-state cap
+    /// ([`fold_checkpoint_object_states`]) — the same artifacts
+    /// `CheckpointArtifacts::from` builds, but a version written twice is
+    /// refused with an error and the fold is bounded. Every tree this worker
+    /// builds goes through it.
+    fn checkpoint_artifacts(
+        &self,
+        data: &CheckpointData,
+    ) -> Result<CheckpointArtifacts, TransportError> {
+        fold_checkpoint_object_states(data, self.max_checkpoint_object_states)
+            .map(CheckpointArtifacts::from_object_states)
     }
 
     /// Retry every pending gap once. A gap that materializes is folded late
@@ -1163,6 +1353,15 @@ impl IkaCheckpointPusher {
     /// (`give_up_on_checkpoint`), which keeps re-folding it, across restarts,
     /// until it folds or the archive expires it; without that it is a
     /// permanent cache gap that can pin an epoch close (issue #2018).
+    ///
+    /// A gap the fullnode answered as too large to read whole
+    /// ([`TransportError::TooLarge`]) is not read from the fullnode again: a
+    /// checkpoint never changes, and each read makes the fullnode load all of
+    /// it. It goes to the archive like a gap the fullnode refuses. The
+    /// archive read has no size limit, so every archive blob, for any gap or
+    /// lost checkpoint, is bounded by `max_checkpoint_object_states` before
+    /// its tree is built; a blob over it is not fetched again for the gap,
+    /// which the deadline then records like any other.
     ///
     /// Fold failures stay pending rather than dropping immediately because
     /// they are not all deterministic: `verify_before_fold` fails with
@@ -1225,15 +1424,35 @@ impl IkaCheckpointPusher {
         let mut archive_attempts_this_tick = 0usize;
         let seqs: Vec<CheckpointSequenceNumber> = self.pending_gaps.keys().copied().collect();
         for seq in seqs.into_iter().take(FULLNODE_ATTEMPTS_PER_TICK) {
-            let Some((first_seen, last_archive_attempt)) = self
-                .pending_gaps
-                .get(&seq)
-                .map(|gap| (gap.first_seen, gap.last_archive_attempt))
+            let Some((
+                first_seen,
+                last_archive_attempt,
+                observed_too_large,
+                archive_over_state_cap,
+            )) = self.pending_gaps.get(&seq).map(|gap| {
+                (
+                    gap.first_seen,
+                    gap.last_archive_attempt,
+                    gap.observed_too_large,
+                    gap.archive_over_state_cap,
+                )
+            })
             else {
                 continue;
             };
             let expired = first_seen.elapsed() > GAP_RETRY_DEADLINE;
-            match self.transport.get_full_checkpoint(seq).await {
+            // A checkpoint the fullnode answered as too large never shrinks:
+            // reading it whole again would only make the fullnode load all of
+            // it once more, every tick. Such a gap goes to the archive.
+            let fetched = if observed_too_large {
+                Err(TransportError::TooLarge(format!(
+                    "checkpoint {seq} was over the decode limit of a whole fullnode read; it is \
+                     not read whole from the fullnode again"
+                )))
+            } else {
+                self.transport.get_full_checkpoint(seq).await
+            };
+            match fetched {
                 Ok(data) => match self.fold_checkpoint(seq, &data) {
                     Ok(()) => {
                         info!(seq, "late-materialized checkpoint folded — gap repaired");
@@ -1261,7 +1480,18 @@ impl IkaCheckpointPusher {
                     }
                 },
                 Err(fullnode_error) => {
+                    if matches!(fullnode_error, TransportError::TooLarge(_))
+                        && let Some(gap) = self.pending_gaps.get_mut(&seq)
+                    {
+                        gap.observed_too_large = true;
+                    }
+                    // The archive read has no size limit, so it is bounded by
+                    // the object-state cap instead (`verify_archive_checkpoint`).
+                    // A blob over the cap is not fetched again for the gap: a
+                    // checkpoint never changes. The deadline then records it,
+                    // and the backfill retries it at its own pace.
                     let archive_due = self.archive.is_some()
+                        && !archive_over_state_cap
                         && first_seen.elapsed() > ARCHIVE_FALLBACK_AFTER
                         && last_archive_attempt
                             .is_none_or(|at| at.elapsed() > ARCHIVE_RETRY_INTERVAL)
@@ -1330,6 +1560,21 @@ impl IkaCheckpointPusher {
         match fetched {
             Ok(data) => {
                 if let Err(e) = self.verify_archive_checkpoint(seq, &data) {
+                    if over_object_state_cap(&e) {
+                        // Deterministic for a checkpoint, so not fetched again
+                        // for this gap; the deadline records it.
+                        if let Some(gap) = self.pending_gaps.get_mut(&seq) {
+                            gap.archive_over_state_cap = true;
+                        }
+                        warn!(
+                            seq,
+                            error = %e,
+                            cap = self.max_checkpoint_object_states,
+                            "archive served a checkpoint with more object states than the cap — \
+                             its tree is not built; the gap is recorded as lost at its deadline"
+                        );
+                        return false;
+                    }
                     match awaited_committee_epoch(&e) {
                         Some(epoch) => self.log_committee_wait(seq, epoch),
                         None => warn!(
@@ -1528,8 +1773,14 @@ impl IkaCheckpointPusher {
                 },
             ));
         }
-        self.verify_archive_checkpoint(seq, data)
-            .map_err(|e| (BackfillFailure::Verification, error_chain(&e).to_string()))?;
+        self.verify_archive_checkpoint(seq, data).map_err(|e| {
+            let failure = if over_object_state_cap(&e) {
+                BackfillFailure::OverStateCap
+            } else {
+                BackfillFailure::Verification
+            };
+            (failure, error_chain(&e).to_string())
+        })?;
         self.metrics
             .pusher_backfill_outcomes_total
             .with_label_values(&["verified"])
@@ -1654,6 +1905,18 @@ impl IkaCheckpointPusher {
                 error = detail,
                 "archive backfill: the archive served a checkpoint that failed verification — \
                  refusing to fold it"
+            );
+        } else if failure == BackfillFailure::OverStateCap {
+            error!(
+                seq,
+                failures,
+                ?retry_in,
+                cap = self.max_checkpoint_object_states,
+                error = detail,
+                "archive backfill: the checkpoint writes more object states than the cap, so its \
+                 tree is not built and it is not folded; objects it wrote are served at their \
+                 earlier cached versions until their next mutation — the record stays, and the \
+                 backfill retries"
             );
         } else {
             // Paced by the backoff (at most every ten minutes once it caps),
@@ -1795,7 +2058,7 @@ impl IkaCheckpointPusher {
 
         // Build the modified-objects tree once for the whole checkpoint;
         // each Ika-modified object's proof is then a cheap path lookup.
-        let artifacts = CheckpointArtifacts::from(data);
+        let artifacts = self.checkpoint_artifacts(data)?;
         let tree = ModifiedObjectTree::new(&artifacts)
             .map_err(|e| anyhow::anyhow!("ModifiedObjectTree: {e}"))?;
 
@@ -2043,6 +2306,16 @@ fn awaited_committee_epoch(error: &anyhow::Error) -> Option<u64> {
     }
 }
 
+/// Whether `error`, from `verify_archive_checkpoint` or `build_entries`, is
+/// the refusal of a checkpoint with more object states than the worker's cap
+/// (`IkaCheckpointPusher::checkpoint_artifacts`), rather than a failed
+/// verification.
+fn over_object_state_cap(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<TransportError>()
+        .is_some_and(is_object_state_cap_error)
+}
+
 fn unix_seconds_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2097,7 +2370,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use parking_lot::Mutex;
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, HashMap, HashSet};
     use std::io;
     use std::slice;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2167,6 +2440,10 @@ mod tests {
         in_flight: AtomicUsize,
         peak_in_flight: AtomicUsize,
         completed: Mutex<Vec<CheckpointSequenceNumber>>,
+        /// Checkpoints whose whole read fails as too large.
+        too_large: HashSet<CheckpointSequenceNumber>,
+        /// Checkpoints whose whole read fails as `Network`.
+        network_error: HashSet<CheckpointSequenceNumber>,
     }
 
     struct InFlightFetch<'a> {
@@ -2220,6 +2497,16 @@ mod tests {
                 )
                 .await;
                 control.completed.lock().push(seq);
+                if control.too_large.contains(&seq) {
+                    return Err(TransportError::TooLarge(format!(
+                        "checkpoint {seq} is over the decode limit"
+                    )));
+                }
+                if control.network_error.contains(&seq) {
+                    return Err(TransportError::Network(format!(
+                        "checkpoint {seq} read failed"
+                    )));
+                }
             }
             self.checkpoints
                 .get(&seq)
@@ -3732,6 +4019,8 @@ mod tests {
             PendingGap {
                 first_seen: Instant::now(),
                 last_archive_attempt: None,
+                observed_too_large: false,
+                archive_over_state_cap: false,
             },
         );
 
@@ -4748,6 +5037,8 @@ mod tests {
             PendingGap {
                 first_seen: Instant::now() - age,
                 last_archive_attempt: None,
+                observed_too_large: false,
+                archive_over_state_cap: false,
             },
         );
     }
@@ -4902,6 +5193,8 @@ mod tests {
                 PendingGap {
                     first_seen: Instant::now(),
                     last_archive_attempt: None,
+                    observed_too_large: false,
+                    archive_over_state_cap: false,
                 },
             );
         }
@@ -5529,6 +5822,18 @@ mod tests {
         inner: Arc<dyn SuiTransport>,
         seqs: BTreeSet<CheckpointSequenceNumber>,
         error: fn(CheckpointSequenceNumber) -> TransportError,
+        probe: WatermarkProbe,
+    }
+
+    /// How a [`FailingFullnode`] answers the watermark probe.
+    #[derive(Clone, Copy)]
+    enum WatermarkProbe {
+        /// As `inner` does.
+        Answers,
+        /// Fails at once, as an unreachable fullnode does.
+        Fails,
+        /// Never answers, as a hung fullnode does.
+        Hangs,
     }
 
     fn failing_fullnode(
@@ -5540,6 +5845,20 @@ mod tests {
             inner,
             seqs: seqs.iter().copied().collect(),
             error,
+            probe: WatermarkProbe::Answers,
+        })
+    }
+
+    /// `inner`, except that the watermark probe answers as `probe` says.
+    fn fullnode_probed(
+        inner: Arc<dyn SuiTransport>,
+        probe: WatermarkProbe,
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(FailingFullnode {
+            inner,
+            seqs: BTreeSet::new(),
+            error: timed_out,
+            probe,
         })
     }
 
@@ -5568,7 +5887,13 @@ mod tests {
         async fn get_latest_checkpoint_sequence(
             &self,
         ) -> Result<CheckpointSequenceNumber, TransportError> {
-            self.inner.get_latest_checkpoint_sequence().await
+            match self.probe {
+                WatermarkProbe::Answers => self.inner.get_latest_checkpoint_sequence().await,
+                WatermarkProbe::Fails => Err(TransportError::Network(
+                    "status: Unavailable, message: \"connection refused\"".to_owned(),
+                )),
+                WatermarkProbe::Hangs => std::future::pending().await,
+            }
         }
         async fn get_full_checkpoint(
             &self,
@@ -6536,5 +6861,683 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page_ids(direct), vec![entry.id()]);
+    }
+
+    /// A checkpoint whose effects write an object version twice is refused
+    /// with an error by the archive verification and by the fold's entry
+    /// builder.
+    #[tokio::test]
+    async fn a_checkpoint_whose_effects_repeat_a_version_is_refused() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let pusher = backfill_pusher(&fx, cache).await;
+        let package = ika_package_of(&pusher);
+        let object = ika_object(
+            package,
+            ObjectID::from_single_byte(0xC3),
+            7,
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into()),
+        );
+        let seq = BACKFILL_CURSOR + 1;
+        let mut blob =
+            checkpoint_writing(&fx.committee, &fx.keys, seq, &[slice::from_ref(&object)]);
+        blob.transactions.push(blob.transactions[0].clone());
+
+        let Err(error) = pusher.verify_archive_checkpoint(seq, &blob) else {
+            panic!("the archive verification must refuse a repeated version");
+        };
+        assert!(error.to_string().contains("written at version"), "{error}");
+        let Err(error) = pusher.build_entries(&blob) else {
+            panic!("the fold must refuse a repeated version");
+        };
+        assert!(error.to_string().contains("written at version"), "{error}");
+    }
+
+    /// A fullnode for the gap tests: it answers checkpoint fetches as
+    /// `control` says (counting each in `control.completed`), serves
+    /// `checkpoints`, reports `latest` as its head and `live` as the current
+    /// objects.
+    fn gap_fullnode(
+        control: Arc<FetchControl>,
+        latest: CertifiedCheckpointSummary,
+        checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
+        live: &[&Object],
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(MockTransport {
+            fetch_control: Some(control),
+            latest_summary_pruned: false,
+            latest,
+            checkpoints,
+            eoe_seqs: HashMap::new(),
+            live_objects: live.iter().map(|o| (o.id(), (*o).clone())).collect(),
+        })
+    }
+
+    /// How many times the fullnode was asked for checkpoint `seq` whole.
+    fn fullnode_reads(control: &FetchControl, seq: CheckpointSequenceNumber) -> usize {
+        control
+            .completed
+            .lock()
+            .iter()
+            .filter(|read| **read == seq)
+            .count()
+    }
+
+    /// Age pending gap `seq` so it is `age` old and its archive retry is due.
+    fn age_gap(pusher: &mut IkaCheckpointPusher, seq: CheckpointSequenceNumber, age: Duration) {
+        let gap = pusher
+            .pending_gaps
+            .get_mut(&seq)
+            .expect("the gap is pending");
+        gap.first_seen = Instant::now() - age;
+        gap.last_archive_attempt = gap
+            .last_archive_attempt
+            .map(|_| Instant::now() - Duration::from_secs(6));
+    }
+
+    /// An Ika object the gap tests write at `version`.
+    fn gap_object(pusher: &IkaCheckpointPusher, id: u8, version: u64) -> Object {
+        ika_object(
+            ika_package_of(pusher),
+            ObjectID::from_single_byte(id),
+            version,
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into()),
+        )
+    }
+
+    /// End to end: an object is cached at version 7, and the next checkpoint,
+    /// which writes it at version 8, is too large to read whole from the
+    /// fullnode. The gap is repaired from the archive, whose read is bounded
+    /// by the object-state cap, so the cache serves version 8 — not the
+    /// stale version 7 — and the fullnode is not asked for the checkpoint
+    /// again.
+    #[tokio::test]
+    async fn a_too_large_checkpoint_over_a_cached_object_is_repaired_from_the_archive() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let (cached, written) = (gap_object(&pusher, 0xC7, 7), gap_object(&pusher, 0xC7, 8));
+        let (before, large) = (BACKFILL_CURSOR + 1, BACKFILL_CURSOR + 2);
+        let first =
+            checkpoint_writing(&fx.committee, &fx.keys, before, &[slice::from_ref(&cached)]);
+        let second =
+            checkpoint_writing(&fx.committee, &fx.keys, large, &[slice::from_ref(&written)]);
+        let control = Arc::new(FetchControl {
+            delays: HashMap::from([(before, Duration::ZERO), (large, Duration::ZERO)]),
+            too_large: HashSet::from([large]),
+            ..Default::default()
+        });
+        pusher.transport = gap_fullnode(
+            control.clone(),
+            second.checkpoint_summary.clone(),
+            HashMap::from([(before, first), (large, second.clone())]),
+            &[&written],
+        );
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(large, second)]),
+            ..Default::default()
+        });
+        pusher.archive = Some(archive.clone());
+
+        pusher.advance().await.unwrap();
+        assert_eq!(cache.get(cached.id()).unwrap().object.version().value(), 7);
+        assert!(pusher.pending_gaps[&large].observed_too_large);
+
+        age_gap(&mut pusher, large, Duration::from_secs(6));
+        pusher.advance().await.unwrap();
+
+        assert_eq!(
+            cache.get(cached.id()).unwrap().object.version().value(),
+            8,
+            "the checkpoint the fullnode could not serve whole is folded from the archive"
+        );
+        assert!(!pusher.pending_gaps.contains_key(&large));
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 1);
+        assert_eq!(fx.metrics.pusher_gap_archive_repairs_total.get(), 1);
+        assert_eq!(
+            fullnode_reads(&control, large),
+            1,
+            "read whole once, by the scan"
+        );
+        assert!(recorded(&fx).is_empty(), "a repaired gap leaves no record");
+    }
+
+    /// End to end, when the archive cannot serve the too-large checkpoint
+    /// before the gap's deadline: the gap is dropped, counted and recorded as
+    /// lost — persisted, pinned and scheduled for the backfill, like any
+    /// dropped gap — and the backfill folds version 8 once the archive holds
+    /// the checkpoint. The fullnode is never asked for it whole again.
+    #[tokio::test]
+    async fn a_too_large_checkpoint_the_archive_lacks_is_recorded_and_backfilled() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let (cached, written) = (gap_object(&pusher, 0xC8, 7), gap_object(&pusher, 0xC8, 8));
+        let (before, large) = (BACKFILL_CURSOR + 1, BACKFILL_CURSOR + 2);
+        let first =
+            checkpoint_writing(&fx.committee, &fx.keys, before, &[slice::from_ref(&cached)]);
+        let second =
+            checkpoint_writing(&fx.committee, &fx.keys, large, &[slice::from_ref(&written)]);
+        let control = Arc::new(FetchControl {
+            delays: HashMap::from([(before, Duration::ZERO), (large, Duration::ZERO)]),
+            too_large: HashSet::from([large]),
+            ..Default::default()
+        });
+        pusher.transport = gap_fullnode(
+            control.clone(),
+            second.checkpoint_summary.clone(),
+            HashMap::from([(before, first)]),
+            &[&written],
+        );
+        let empty_archive = Arc::new(MockCheckpointArchive::default());
+        pusher.archive = Some(empty_archive.clone());
+
+        pusher.advance().await.unwrap();
+        age_gap(&mut pusher, large, Duration::from_secs(6));
+        pusher.advance().await.unwrap();
+        assert_eq!(empty_archive.fetches.load(Ordering::Relaxed), 1);
+        assert!(pusher.pending_gaps.contains_key(&large));
+
+        age_gap(&mut pusher, large, Duration::from_secs(601));
+        pusher.advance().await.unwrap();
+        assert!(!pusher.pending_gaps.contains_key(&large), "dropped");
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(large, LostCheckpoint::NEW)])
+        );
+        assert!(pusher.lost_checkpoints.contains_key(&large));
+        assert!(cache.is_checkpoint_pinned(large));
+        assert!(pusher.archive_backfill.contains_key(&large));
+
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(large, second)]),
+            ..Default::default()
+        });
+        pusher.archive = Some(archive.clone());
+        tick_backfill(&mut pusher).await;
+
+        assert_eq!(
+            cache.get(cached.id()).unwrap().object.version().value(),
+            8,
+            "the backfill folds the recorded checkpoint"
+        );
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            fullnode_reads(&control, large),
+            1,
+            "read whole once, by the scan"
+        );
+    }
+
+    /// Once the fullnode has answered a gap as too large, the gap is never
+    /// read whole from the fullnode again — not on later ticks, and not when
+    /// the fullnode would now answer — and goes to the archive instead.
+    #[tokio::test]
+    async fn a_gap_found_too_large_is_never_read_whole_from_the_fullnode_again() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let object = gap_object(&pusher, 0xC9, 7);
+        let seq = BACKFILL_CURSOR + 1;
+        let blob = checkpoint_writing(&fx.committee, &fx.keys, seq, &[slice::from_ref(&object)]);
+        let latest = blob.checkpoint_summary.clone();
+        let too_large = Arc::new(FetchControl {
+            delays: HashMap::from([(seq, Duration::ZERO)]),
+            too_large: HashSet::from([seq]),
+            ..Default::default()
+        });
+        pusher.transport = gap_fullnode(too_large.clone(), latest.clone(), HashMap::new(), &[]);
+        let archive = Arc::new(MockCheckpointArchive::default());
+        pusher.archive = Some(archive.clone());
+
+        pusher.advance().await.unwrap();
+        assert_eq!(fullnode_reads(&too_large, seq), 1);
+        for _ in 0..3 {
+            age_gap(&mut pusher, seq, Duration::from_secs(6));
+            pusher.advance().await.unwrap();
+        }
+        assert_eq!(
+            fullnode_reads(&too_large, seq),
+            1,
+            "a gap found too large must not be read whole from the fullnode again"
+        );
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 3);
+
+        // A fullnode that would now serve the checkpoint is not asked either.
+        let serving = Arc::new(FetchControl {
+            delays: HashMap::from([(seq, Duration::ZERO)]),
+            ..Default::default()
+        });
+        pusher.transport = gap_fullnode(serving.clone(), latest, HashMap::from([(seq, blob)]), &[]);
+        age_gap(&mut pusher, seq, Duration::from_secs(6));
+        pusher.advance().await.unwrap();
+        assert_eq!(fullnode_reads(&serving, seq), 0);
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 4);
+        assert!(pusher.pending_gaps.contains_key(&seq));
+    }
+
+    /// A gap the fullnode answers NotFound goes to the archive, and an
+    /// archive blob with more object states than the cap is refused before
+    /// its tree is built and not fetched again for the gap. At the deadline
+    /// the gap is recorded as lost like any other. The backfill's read is
+    /// bounded the same way, and counted as `over_state_cap`, not as a failed
+    /// verification. The checkpoint folds once it is within the cap: the cap
+    /// refuses only above it.
+    #[tokio::test]
+    async fn an_archive_checkpoint_over_the_state_cap_is_refused_and_recorded() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let objects = [gap_object(&pusher, 0xCA, 7), gap_object(&pusher, 0xCB, 7)];
+        let seq = BACKFILL_CURSOR + 1;
+        let blob = checkpoint_writing(&fx.committee, &fx.keys, seq, &[&objects]);
+        let control = Arc::new(FetchControl {
+            delays: HashMap::from([(seq, Duration::ZERO)]),
+            ..Default::default()
+        });
+        pusher.transport = gap_fullnode(
+            control.clone(),
+            blob.checkpoint_summary.clone(),
+            HashMap::new(),
+            &[&objects[0], &objects[1]],
+        );
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(seq, blob)]),
+            ..Default::default()
+        });
+        pusher.archive = Some(archive.clone());
+        pusher.max_checkpoint_object_states = 1;
+
+        pusher.advance().await.unwrap();
+        assert!(
+            !pusher.pending_gaps[&seq].observed_too_large,
+            "NotFound, not too large"
+        );
+        age_gap(&mut pusher, seq, Duration::from_secs(6));
+        pusher.advance().await.unwrap();
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 1);
+        assert!(pusher.pending_gaps[&seq].archive_over_state_cap);
+        assert!(cache.is_empty());
+
+        age_gap(&mut pusher, seq, Duration::from_secs(6));
+        pusher.advance().await.unwrap();
+        assert_eq!(
+            archive.fetches.load(Ordering::Relaxed),
+            1,
+            "a blob over the cap is not fetched again for the gap"
+        );
+
+        age_gap(&mut pusher, seq, Duration::from_secs(601));
+        pusher.advance().await.unwrap();
+        assert!(!pusher.pending_gaps.contains_key(&seq));
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
+        assert_eq!(recorded(&fx), BTreeMap::from([(seq, LostCheckpoint::NEW)]));
+        assert!(cache.is_checkpoint_pinned(seq));
+
+        tick_backfill(&mut pusher).await;
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 2);
+        assert_eq!(backfill_failures(&fx.metrics, "over_state_cap"), 1);
+        assert_eq!(backfill_failures(&fx.metrics, "verification"), 0);
+        assert!(cache.is_empty(), "nothing over the cap is folded");
+        assert!(recorded(&fx).contains_key(&seq), "the record stays");
+        assert!(
+            pusher.archive_backfill.contains_key(&seq),
+            "the backfill retries"
+        );
+
+        pusher.max_checkpoint_object_states = 2;
+        pusher.archive_backfill.get_mut(&seq).unwrap().next_attempt = Instant::now();
+        tick_backfill(&mut pusher).await;
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+        assert_eq!(cache.len(), 2, "at the cap the checkpoint folds");
+    }
+
+    /// The far-behind fast-forward records a sacrificed gap once too large to
+    /// read whole like any other: the backfill's read is bounded by the
+    /// object-state cap.
+    #[tokio::test]
+    async fn a_far_behind_fast_forward_records_a_gap_once_too_large() {
+        let fx = backfill_fixture();
+        let mut pusher = backfill_pusher(&fx, durable_cache(&fx, &[])).await;
+        pusher.transport = transport_reporting(
+            &fx.committee,
+            &fx.keys,
+            BACKFILL_CURSOR + 1_500,
+            HashMap::new(),
+        );
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        for (seq, observed_too_large) in [(50, false), (60, true)] {
+            pusher.pending_gaps.insert(
+                seq,
+                PendingGap {
+                    first_seen: Instant::now(),
+                    last_archive_attempt: None,
+                    observed_too_large,
+                    archive_over_state_cap: false,
+                },
+            );
+        }
+
+        // Propose, then confirm, the fast-forward; then the tick that starts
+        // the backfill.
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.cursor, BACKFILL_CURSOR);
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.cursor, BACKFILL_CURSOR + 1_500);
+        pusher.advance().await.unwrap();
+
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 2);
+        assert_eq!(
+            recorded(&fx).into_keys().collect::<Vec<_>>(),
+            vec![50, 60],
+            "both sacrificed gaps are recorded"
+        );
+        assert!(pusher.archive_backfill.contains_key(&60));
+    }
+
+    // ---- a frozen own fullnode ----
+
+    /// The cursor the frozen-fullnode tests resume from.
+    const UPSTREAM_CURSOR: CheckpointSequenceNumber = 100;
+    /// What the last-advance gauge is overwritten with, so a tick that
+    /// rewrites it shows: real stamps are the current Unix time.
+    const STALE_STAMP: i64 = 1;
+    const FROZEN: &str = "Sui fullnode is not advancing";
+    const RECOVERED: &str = "Sui fullnode is advancing again";
+
+    struct UpstreamFixture {
+        committee: Committee,
+        keys: Vec<AuthorityKeyPair>,
+        metrics: Arc<OcsMetrics>,
+        _dir: tempfile::TempDir,
+    }
+
+    impl UpstreamFixture {
+        /// The node's own fullnode with its latest checkpoint at `height`,
+        /// serving that checkpoint: a tick one behind it scans just that one.
+        fn fullnode_at_height(&self, height: CheckpointSequenceNumber) -> Arc<dyn SuiTransport> {
+            transport_reporting(
+                &self.committee,
+                &self.keys,
+                height,
+                HashMap::from([(
+                    height,
+                    plain_checkpoint(&self.committee, &self.keys, height),
+                )]),
+            )
+        }
+
+        fn last_advance(&self) -> i64 {
+            self.metrics
+                .pusher_upstream_last_advance_timestamp_seconds
+                .get()
+        }
+
+        fn stale_last_advance(&self) {
+            self.metrics
+                .pusher_upstream_last_advance_timestamp_seconds
+                .set(STALE_STAMP);
+        }
+
+        fn probe_failures(&self) -> u64 {
+            self.metrics.pusher_watermark_probe_failures_total.get()
+        }
+    }
+
+    /// A pusher resumed at `UPSTREAM_CURSOR` whose fullnode answered
+    /// `UPSTREAM_CURSOR` (the baseline) and then advanced once, to
+    /// `UPSTREAM_CURSOR + 1`, at the current paused instant — after which the
+    /// last-advance gauge holds [`STALE_STAMP`].
+    async fn advanced_once() -> (UpstreamFixture, IkaCheckpointPusher) {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        perpetual.put_sui_pusher_last_seq(UPSTREAM_CURSOR).unwrap();
+        let fx = UpstreamFixture {
+            committee,
+            keys,
+            metrics: OcsMetrics::new_for_testing(),
+            _dir: dir,
+        };
+        let started = unix_now_secs();
+        let mut pusher = pusher_over_with_cache(
+            perpetual,
+            committees,
+            fx.fullnode_at_height(UPSTREAM_CURSOR),
+            Arc::new(VerifiedStateCache::new()),
+            fx.metrics.clone(),
+        )
+        .await;
+        assert!(
+            fx.last_advance() >= started,
+            "the pusher's start stands in for the first advance"
+        );
+        pusher.advance().await.unwrap();
+        pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 1);
+        fx.stale_last_advance();
+        pusher.advance().await.unwrap();
+        assert!(fx.last_advance() >= started, "an advance stamps the gauge");
+        assert_eq!(pusher.cursor, UPSTREAM_CURSOR + 1);
+        fx.stale_last_advance();
+        (fx, pusher)
+    }
+
+    fn lines_with(logs: &CapturedLogs, needle: &str) -> Vec<String> {
+        logs.text()
+            .lines()
+            .filter(|line| line.contains(needle))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn assert_carries(line: &str, expected: &[&str]) {
+        for expected in expected {
+            assert!(line.contains(expected), "must carry {expected:?}: {line}");
+        }
+    }
+
+    /// The production case: the node's own fullnode stops answering. Every
+    /// probe fails, so the tick ends before the lag gauges are touched and they
+    /// keep their last healthy values. The failures count, the last-advance
+    /// gauge stays where the last advance left it, and once the watermark has
+    /// not advanced for five minutes one ERROR says so.
+    #[tokio::test(start_paused = true)]
+    async fn an_unreachable_fullnode_is_reported_frozen_once_past_the_threshold() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = advanced_once().await;
+        pusher.transport = fullnode_probed(
+            fx.fullnode_at_height(UPSTREAM_CURSOR + 1),
+            WatermarkProbe::Fails,
+        );
+
+        for wait in [0, 299] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            assert!(pusher.advance().await.is_err());
+        }
+        assert!(lines_with(&logs, FROZEN).is_empty(), "under the threshold");
+        for wait in [1, 120] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            assert!(pusher.advance().await.is_err());
+        }
+
+        assert_eq!(fx.probe_failures(), 4);
+        assert_eq!(
+            fx.last_advance(),
+            STALE_STAMP,
+            "a failed probe is no advance"
+        );
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "latched to the transition: {frozen:?}");
+        assert_carries(
+            &frozen[0],
+            &[
+                "ERROR",
+                "cursor=101",
+                "last_seen_watermark=101",
+                "frozen_secs=300",
+                "connection refused",
+            ],
+        );
+        assert_eq!(
+            fx.metrics.pusher_stalled.get(),
+            0,
+            "the legacy lag flag keeps its meaning"
+        );
+        assert_eq!(fx.metrics.pusher_lag_checkpoints.get(), 1);
+    }
+
+    /// A fullnode that answers but has stopped syncing: the lag is measured
+    /// against its own watermark and reads 0. The answers are no advance, so
+    /// the freeze is reported the same way, naming no probe error.
+    #[tokio::test(start_paused = true)]
+    async fn a_fullnode_that_answers_but_stops_advancing_is_reported_frozen() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = advanced_once().await;
+
+        for wait in [0, 299] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            pusher.advance().await.unwrap();
+        }
+        assert!(lines_with(&logs, FROZEN).is_empty(), "under the threshold");
+        for wait in [1, 120] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            pusher.advance().await.unwrap();
+        }
+
+        assert_eq!(fx.probe_failures(), 0);
+        assert_eq!(
+            fx.last_advance(),
+            STALE_STAMP,
+            "an unchanged answer is no advance"
+        );
+        assert_eq!(fx.metrics.pusher_lag_checkpoints.get(), 0);
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "latched to the transition: {frozen:?}");
+        assert_carries(
+            &frozen[0],
+            &[
+                "ERROR",
+                "cursor=101",
+                "last_seen_watermark=101",
+                "frozen_secs=300",
+                "the fullnode answers",
+            ],
+        );
+    }
+
+    /// The fullnode comes back: the first answer above the previous one ends
+    /// the stretch with one INFO and stamps the gauge, and a later freeze is
+    /// reported again, with its own cause rather than the old probe error.
+    #[tokio::test(start_paused = true)]
+    async fn a_fullnode_that_advances_again_is_reported_recovered_once() {
+        let (logs, _guard) = CapturedLogs::start();
+        let started = unix_now_secs();
+        let (fx, mut pusher) = advanced_once().await;
+        pusher.transport = fullnode_probed(
+            fx.fullnode_at_height(UPSTREAM_CURSOR + 1),
+            WatermarkProbe::Fails,
+        );
+        assert!(pusher.advance().await.is_err());
+        tokio::time::advance(Duration::from_secs(400)).await;
+        assert!(pusher.advance().await.is_err());
+        assert_eq!(lines_with(&logs, FROZEN).len(), 1);
+
+        pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 2);
+        pusher.advance().await.unwrap();
+        assert!(fx.last_advance() >= started, "the advance stamps the gauge");
+        let recovered = lines_with(&logs, RECOVERED);
+        assert_eq!(recovered.len(), 1, "{recovered:?}");
+        assert_carries(
+            &recovered[0],
+            &[
+                "INFO",
+                "cursor=101",
+                "last_seen_watermark=102",
+                "was_frozen_secs=400",
+            ],
+        );
+        assert_eq!(pusher.cursor, UPSTREAM_CURSOR + 2, "and the scan resumes");
+
+        pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 3);
+        pusher.advance().await.unwrap();
+        assert_eq!(lines_with(&logs, RECOVERED).len(), 1, "once per stretch");
+        assert_eq!(lines_with(&logs, FROZEN).len(), 1);
+
+        tokio::time::advance(Duration::from_secs(300)).await;
+        pusher.advance().await.unwrap();
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 2, "the latch re-arms: {frozen:?}");
+        assert_carries(
+            &frozen[1],
+            &["last_seen_watermark=103", "the fullnode answers"],
+        );
+    }
+
+    /// A healthy fullnode advancing between every probe never trips the check
+    /// — including across a gap between probes longer than the threshold (a
+    /// tick held by slow fetches): the probe that ends it sees the advance.
+    /// Every advance stamps the gauge.
+    #[tokio::test(start_paused = true)]
+    async fn an_advancing_fullnode_is_never_reported_frozen() {
+        let (logs, _guard) = CapturedLogs::start();
+        let started = unix_now_secs();
+        let (fx, mut pusher) = advanced_once().await;
+        let mut height = UPSTREAM_CURSOR + 1;
+        for wait in [1, 30, 120, 299, 600, 30, 1] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            height += 1;
+            pusher.transport = fx.fullnode_at_height(height);
+            fx.stale_last_advance();
+            pusher.advance().await.unwrap();
+            assert!(
+                fx.last_advance() >= started,
+                "every advance stamps the gauge"
+            );
+        }
+
+        assert_eq!(pusher.cursor, height);
+        assert_eq!(fx.probe_failures(), 0);
+        assert!(lines_with(&logs, FROZEN).is_empty());
+        assert!(lines_with(&logs, RECOVERED).is_empty());
+    }
+
+    /// A fullnode that never answers the probe: each probe fails at its
+    /// deadline instead of holding the tick forever, and the freeze is reported
+    /// like an unreachable fullnode's.
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_probe_fails_at_its_deadline_and_is_reported_frozen() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = advanced_once().await;
+        pusher.transport = fullnode_probed(
+            fx.fullnode_at_height(UPSTREAM_CURSOR + 1),
+            WatermarkProbe::Hangs,
+        );
+
+        let started = TokioInstant::now();
+        for _ in 0..5 {
+            let tick = tokio::time::timeout(Duration::from_secs(3_600), pusher.advance())
+                .await
+                .expect("a hung probe must not hold the tick");
+            assert!(tick.unwrap_err().to_string().contains("deadline"));
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= 5 * WATERMARK_PROBE_TIMEOUT
+                && elapsed < 5 * WATERMARK_PROBE_TIMEOUT + Duration::from_secs(1),
+            "{elapsed:?}"
+        );
+        assert_eq!(fx.probe_failures(), 5);
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "{frozen:?}");
+        assert_carries(&frozen[0], &["ERROR", "frozen_secs=300", "deadline"]);
     }
 }
