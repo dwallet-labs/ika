@@ -132,6 +132,26 @@ impl Default for FallbackBounds {
     }
 }
 
+/// Whether this node's own Sui fullnode is frozen, as the checkpoint pusher
+/// reports it — its latest checkpoint has not moved for the frozen threshold.
+/// The fallback reads it through this interface so the pusher can share the
+/// state in whichever form it keeps it.
+pub trait UpstreamFrozen: Send + Sync {
+    fn is_frozen(&self) -> bool;
+}
+
+impl UpstreamFrozen for AtomicBool {
+    fn is_frozen(&self) -> bool {
+        self.load(Ordering::Relaxed)
+    }
+}
+
+impl UpstreamFrozen for tokio::sync::watch::Receiver<bool> {
+    fn is_frozen(&self) -> bool {
+        *self.borrow()
+    }
+}
+
 /// A peer-proved object that passed every check, with the snapshot the
 /// direct reader caches once its own high-water accepts it.
 pub struct PeerVerified {
@@ -199,11 +219,11 @@ pub struct PeerFallback {
     permits: Semaphore,
     failed_at: Mutex<HashMap<ObjectID, Instant>>,
     /// Whether this node's own fullnode is frozen, as the checkpoint pusher
-    /// reports it (`IkaCheckpointPusher::with_upstream_frozen_flag`). While it
-    /// is, its "current" reference is the last one it saw, so the currency
-    /// check would accept a genuine but superseded version: the fallback stands
-    /// down instead.
-    upstream_frozen: Arc<AtomicBool>,
+    /// reports it ([`Self::attach_upstream_frozen`]). While it is, its
+    /// "current" reference is the last one it saw, so the currency check would
+    /// accept a genuine but superseded version: the fallback stands down
+    /// instead. Not attached before the pusher starts: nothing is known frozen.
+    upstream_frozen: OnceLock<Arc<dyn UpstreamFrozen>>,
     metrics: Arc<OcsMetrics>,
     provider_metrics: Arc<ProofProviderMetrics>,
 }
@@ -224,16 +244,19 @@ impl PeerFallback {
             bounds,
             permits,
             failed_at: Mutex::new(HashMap::new()),
-            upstream_frozen: Arc::new(AtomicBool::new(false)),
+            upstream_frozen: OnceLock::new(),
             metrics,
             provider_metrics,
         }
     }
 
-    /// The flag the checkpoint pusher sets while this node's own fullnode is
-    /// frozen; hand it to the pusher (`with_upstream_frozen_flag`).
-    pub fn upstream_frozen_flag(&self) -> Arc<AtomicBool> {
-        self.upstream_frozen.clone()
+    /// Attach the checkpoint pusher's report of whether this node's own
+    /// fullnode is frozen (`IkaCheckpointPusher::upstream_frozen`), once the
+    /// pusher is built.
+    pub fn attach_upstream_frozen(&self, state: Arc<dyn UpstreamFrozen>) {
+        if self.upstream_frozen.set(state).is_err() {
+            debug!("peer fallback: upstream frozen state already attached");
+        }
     }
 
     /// Attach the p2p network the peers are asked over, once it is up. Reads
@@ -280,7 +303,11 @@ impl PeerFallback {
         // node's fullnode reports now. A frozen fullnode reports a past state,
         // and a genuine old version would match it: ask nobody until it
         // advances again.
-        if self.upstream_frozen.load(Ordering::Relaxed) {
+        if self
+            .upstream_frozen
+            .get()
+            .is_some_and(|state| state.is_frozen())
+        {
             return skipped("this node's own Sui fullnode is frozen");
         }
         if self.failed_recently(id) {
@@ -1202,7 +1229,8 @@ mod tests {
         let node = connected(&[&peer]).await;
         let fullnode = Fullnode::reporting(&[&current]);
         let guarded = fallback(&fx, fullnode.clone(), &node, FallbackBounds::default());
-        let frozen = guarded.upstream_frozen_flag();
+        let frozen = Arc::new(AtomicBool::new(false));
+        guarded.attach_upstream_frozen(frozen.clone());
 
         frozen.store(true, Ordering::Relaxed);
         assert!(guarded.verified_object(current.id()).await.is_err());
@@ -1217,6 +1245,20 @@ mod tests {
         frozen.store(false, Ordering::Relaxed);
         assert!(guarded.verified_object(current.id()).await.is_ok());
         assert_eq!(requests.load(Ordering::Relaxed), 1);
+    }
+
+    /// The pusher's state may be shared as a flag or as a watch; both read the
+    /// same.
+    #[test]
+    fn upstream_frozen_reads_a_flag_and_a_watch() {
+        let flag = AtomicBool::new(false);
+        assert!(!flag.is_frozen());
+        flag.store(true, Ordering::Relaxed);
+        assert!(flag.is_frozen());
+        let (sender, receiver) = tokio::sync::watch::channel(false);
+        assert!(!receiver.is_frozen());
+        sender.send(true).unwrap();
+        assert!(receiver.is_frozen());
     }
 
     /// A fullnode whose latest checkpoint the test sets, and which serves no
@@ -1324,7 +1366,6 @@ mod tests {
             ika_dwallet_2pc_mpc_package_id_v2: None,
             ika_system_package_id: ObjectID::from_single_byte(0x1D),
         };
-        let frozen = Arc::new(AtomicBool::new(false));
         let pusher = IkaCheckpointPusher::new(
             fullnode.clone(),
             perpetual,
@@ -1336,8 +1377,8 @@ mod tests {
             None,
         )
         .await
-        .unwrap()
-        .with_upstream_frozen_flag(Some(frozen.clone()));
+        .unwrap();
+        let frozen = pusher.upstream_frozen();
         tokio::spawn(pusher.run());
 
         tokio::time::sleep(Duration::from_secs(290)).await;
