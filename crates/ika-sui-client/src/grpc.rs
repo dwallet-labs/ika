@@ -1462,8 +1462,12 @@ impl SuiWriter for SuiGrpcClient {
 mod tests {
     use super::*;
 
+    use std::collections::HashMap;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    use proto::get_checkpoint_request::CheckpointId;
+    use proto::ledger_service_server::{LedgerService, LedgerServiceServer};
     use sui_rpc::field::FieldMaskTree;
     use sui_rpc::merge::Merge;
     use sui_types::digests::CheckpointContentsDigest;
@@ -1475,6 +1479,8 @@ mod tests {
         AllowedProposers, GasData, ProgrammableTransaction, TransactionDataV1,
         TransactionExpiration, TransactionKind,
     };
+    use tokio::net::TcpListener;
+    use tonic::transport::Server;
 
     #[test]
     fn validity_checkpoint_preserves_transaction_bytes_and_certified_contents() {
@@ -1836,5 +1842,247 @@ mod tests {
             Err(TransportError::Network(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), PART_READ_ATTEMPTS);
+    }
+
+    /// An in-process Sui ledger service holding one checkpoint, its previous
+    /// checkpoint's summary, and per-transaction effects. It records the read
+    /// mask of every call and the order in which effects reads finish.
+    struct MockLedger {
+        current: CertifiedCheckpointSummary,
+        previous: CertifiedCheckpointSummary,
+        digests: Vec<TransactionDigest>,
+        /// The effects each digest's read answers with.
+        answers: HashMap<TransactionDigest, TransactionEffects>,
+        /// How long each digest's read waits before it answers.
+        delays: HashMap<TransactionDigest, Duration>,
+        /// A digest whose first read is refused as `Unavailable`.
+        refused_once: Option<TransactionDigest>,
+        reads: Mutex<HashMap<TransactionDigest, u32>>,
+        masks: Mutex<Vec<(String, Vec<String>)>>,
+        finished: Mutex<Vec<TransactionDigest>>,
+    }
+
+    impl MockLedger {
+        fn record_mask(&self, call: String, mask: Option<prost_types::FieldMask>) {
+            self.masks
+                .lock()
+                .unwrap()
+                .push((call, mask.map(|mask| mask.paths).unwrap_or_default()));
+        }
+
+        fn summary_proto(summary: &CertifiedCheckpointSummary) -> proto::Checkpoint {
+            let mask = FieldMaskTree::from(prost_types::FieldMask {
+                paths: vec!["summary.bcs".into(), "signature".into()],
+            });
+            let mut checkpoint = proto::Checkpoint::default();
+            checkpoint.merge(summary.data(), &mask);
+            checkpoint.merge(summary.auth_sig().clone(), &mask);
+            checkpoint
+        }
+    }
+
+    #[async_trait]
+    impl LedgerService for MockLedger {
+        async fn get_checkpoint(
+            &self,
+            request: tonic::Request<proto::GetCheckpointRequest>,
+        ) -> Result<tonic::Response<proto::GetCheckpointResponse>, tonic::Status> {
+            let request = request.into_inner();
+            match request.checkpoint_id {
+                Some(CheckpointId::SequenceNumber(seq))
+                    if seq == self.current.data().sequence_number =>
+                {
+                    self.record_mask(format!("checkpoint {seq}"), request.read_mask);
+                    let mut checkpoint = Self::summary_proto(&self.current);
+                    checkpoint.transactions = self
+                        .digests
+                        .iter()
+                        .map(|digest| {
+                            let mut transaction = proto::ExecutedTransaction::default();
+                            transaction.digest = Some(digest.to_string());
+                            transaction
+                        })
+                        .collect();
+                    Ok(tonic::Response::new(proto::GetCheckpointResponse::new(
+                        checkpoint,
+                    )))
+                }
+                Some(CheckpointId::Digest(digest))
+                    if digest == self.previous.digest().to_string() =>
+                {
+                    self.record_mask("previous summary".into(), request.read_mask);
+                    Ok(tonic::Response::new(proto::GetCheckpointResponse::new(
+                        Self::summary_proto(&self.previous),
+                    )))
+                }
+                _ => Err(tonic::Status::not_found("no such checkpoint")),
+            }
+        }
+
+        async fn get_transaction(
+            &self,
+            request: tonic::Request<proto::GetTransactionRequest>,
+        ) -> Result<tonic::Response<proto::GetTransactionResponse>, tonic::Status> {
+            let request = request.into_inner();
+            let digest: TransactionDigest =
+                request
+                    .digest
+                    .as_deref()
+                    .unwrap_or_default()
+                    .parse()
+                    .map_err(|_| tonic::Status::invalid_argument("bad digest"))?;
+            self.record_mask(format!("transaction {digest}"), request.read_mask);
+            let read = {
+                let mut reads = self.reads.lock().unwrap();
+                let read = reads.entry(digest).or_insert(0);
+                *read += 1;
+                *read
+            };
+            if self.refused_once == Some(digest) && read == 1 {
+                return Err(tonic::Status::unavailable("busy"));
+            }
+            sleep(self.delays.get(&digest).copied().unwrap_or_default()).await;
+            let effects = self
+                .answers
+                .get(&digest)
+                .ok_or_else(|| tonic::Status::not_found("no such transaction"))?;
+            let mut effects_proto = proto::TransactionEffects::default();
+            effects_proto.bcs = Some(proto::Bcs::serialize(effects).unwrap());
+            let mut transaction = proto::ExecutedTransaction::default();
+            transaction.effects = Some(effects_proto);
+            self.finished.lock().unwrap().push(digest);
+            Ok(tonic::Response::new(proto::GetTransactionResponse::new(
+                transaction,
+            )))
+        }
+    }
+
+    /// Three transactions in checkpoint 1, whose previous checkpoint 0 counted
+    /// five transactions in all.
+    fn mock_ledger() -> MockLedger {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let certify = |summary| {
+            CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, &keys, &committee)
+        };
+        let previous = certify(summary_counting(0, 5));
+        let current = certify(CheckpointSummary {
+            previous_digest: Some(*previous.digest()),
+            ..summary_counting(1, 8)
+        });
+        let answers: HashMap<TransactionDigest, TransactionEffects> = (0..3)
+            .map(|_| {
+                let mut effects = TransactionEffects::default();
+                let digest = TransactionDigest::random();
+                *effects.transaction_digest_mut_for_testing() = digest;
+                (digest, effects)
+            })
+            .collect();
+        let mut digests: Vec<TransactionDigest> = answers.keys().copied().collect();
+        digests.sort();
+        MockLedger {
+            current,
+            previous,
+            digests,
+            answers,
+            delays: HashMap::new(),
+            refused_once: None,
+            reads: Mutex::new(HashMap::new()),
+            masks: Mutex::new(Vec::new()),
+            finished: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Serve `ledger` on a local port and connect a client to it.
+    async fn serve(ledger: Arc<MockLedger>) -> SuiGrpcClient {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let incoming = stream::unfold(listener, |listener| async move {
+            let accepted = listener.accept().await.map(|(socket, _)| socket);
+            Some((accepted, listener))
+        });
+        tokio::spawn(
+            Server::builder()
+                .add_service(LedgerServiceServer::from_arc(ledger))
+                .serve_with_incoming(incoming),
+        );
+        SuiGrpcClient::connect(format!("http://{address}")).unwrap()
+    }
+
+    /// The part reader against a ledger service: it sends the narrow read
+    /// masks, checks the digest count against the two summaries, retries a
+    /// refused effects read, and returns the effects in checkpoint order
+    /// although the reads finish in another order.
+    #[tokio::test]
+    async fn the_part_reader_reads_narrow_parts_in_order_with_retries() {
+        let mut ledger = mock_ledger();
+        let digests = ledger.digests.clone();
+        ledger.delays.insert(digests[0], Duration::from_millis(300));
+        ledger.refused_once = Some(digests[1]);
+        let ledger = Arc::new(ledger);
+        let client = serve(ledger.clone()).await;
+
+        let (summary, effects) = client
+            .get_checkpoint_effects_in_parts(1)
+            .await
+            .expect("the parts are read");
+
+        assert_eq!(summary.digest(), ledger.current.digest());
+        assert_eq!(
+            effects
+                .iter()
+                .map(|effects| *effects.transaction_digest())
+                .collect::<Vec<_>>(),
+            digests
+        );
+        let finished = ledger.finished.lock().unwrap().clone();
+        assert_eq!(finished.len(), 3);
+        assert_ne!(finished, digests, "the reads finished out of order");
+        assert_eq!(ledger.reads.lock().unwrap()[&digests[1]], 2);
+
+        let masks = ledger.masks.lock().unwrap().clone();
+        let mask_of = |call: &str| {
+            masks
+                .iter()
+                .filter(|(name, _)| name == call)
+                .map(|(_, paths)| paths.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            mask_of("checkpoint 1"),
+            vec![vec!["summary.bcs", "signature", "transactions.digest"]]
+        );
+        assert_eq!(
+            mask_of("previous summary"),
+            vec![vec!["summary.bcs", "signature"]]
+        );
+        for digest in &digests {
+            let masks = mask_of(&format!("transaction {digest}"));
+            assert!(!masks.is_empty());
+            assert!(masks.iter().all(|paths| paths == &["effects.bcs"]));
+        }
+    }
+
+    /// An effects read answered with another transaction's effects is
+    /// refused, and so is a digest list whose length the summaries do not
+    /// allow.
+    #[tokio::test]
+    async fn the_part_reader_refuses_wrong_effects_and_a_wrong_count() {
+        let mut ledger = mock_ledger();
+        let digests = ledger.digests.clone();
+        let other = ledger.answers[&digests[0]].clone();
+        ledger.answers.insert(digests[2], other);
+        let client = serve(Arc::new(ledger)).await;
+        assert!(matches!(
+            client.get_checkpoint_effects_in_parts(1).await,
+            Err(TransportError::Encoding(_))
+        ));
+
+        let mut ledger = mock_ledger();
+        ledger.digests.pop();
+        let client = serve(Arc::new(ledger)).await;
+        assert!(matches!(
+            client.get_checkpoint_effects_in_parts(1).await,
+            Err(TransportError::Encoding(_))
+        ));
     }
 }
