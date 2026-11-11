@@ -355,6 +355,10 @@ struct UpstreamWatch {
     /// cleared exactly where the report latch flips. See
     /// [`IkaCheckpointPusher::upstream_frozen`].
     frozen: tokio::sync::watch::Sender<bool>,
+    /// `true` from the first real advance this process sees — the watermark
+    /// past the cursor and above the previous answer, as `record` counts one —
+    /// and never cleared. See [`IkaCheckpointPusher::upstream_advanced`].
+    advanced: tokio::sync::watch::Sender<bool>,
 }
 
 struct UpstreamProgress {
@@ -391,6 +395,7 @@ impl UpstreamWatch {
             }),
             metrics,
             frozen: tokio::sync::watch::Sender::new(false),
+            advanced: tokio::sync::watch::Sender::new(false),
         }
     }
 
@@ -410,6 +415,8 @@ impl UpstreamWatch {
                     self.metrics
                         .pusher_upstream_last_advance_timestamp_seconds
                         .set(unix_now_secs());
+                    self.advanced
+                        .send_if_modified(|seen| !std::mem::replace(seen, true));
                 }
                 progress.last_seen = Some(*seq);
                 progress.last_error = None;
@@ -1059,6 +1066,15 @@ impl IkaCheckpointPusher {
     /// where that report latch flips.
     pub fn upstream_frozen(&self) -> tokio::sync::watch::Receiver<bool> {
         self.upstream.frozen.subscribe()
+    }
+
+    /// Whether the node's own fullnode has advanced at least once since this
+    /// process started: `false` until the first real advance, then `true` for
+    /// good. Until then [`Self::upstream_frozen`] cannot speak yet — it reports
+    /// a freeze only after `UPSTREAM_FROZEN_AFTER` without an advance — so a
+    /// reader that must not trust a frozen fullnode waits for this first.
+    pub fn upstream_advanced(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.upstream.advanced.subscribe()
     }
 
     pub async fn run(mut self) {

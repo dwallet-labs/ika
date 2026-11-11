@@ -83,9 +83,9 @@ pub struct SuiMirrorPeers {
     /// system at that moment.
     pinned: bool,
     /// A caller-chosen peer list ([`Self::scoped`]) rather than an operator pin
-    /// or the connected set: used exactly as given, never rotated, and a peer
-    /// that does not serve `SuiStateMirror` is skipped as quietly as in
-    /// automatic mode.
+    /// or the connected set: used exactly as given, never rotated, a peer that
+    /// does not serve `SuiStateMirror` is skipped as quietly as in automatic
+    /// mode, and a peer's error answer is logged at debug.
     scoped: bool,
     /// Pinned mode only: round-robin start offset so the fleet spreads reads
     /// across serving peers instead of every node hammering `peers[0]` of the
@@ -120,7 +120,9 @@ impl SuiMirrorPeers {
     /// so that a peer whose answer fails verification is never the only one
     /// asked. The list is used as given and never rotated; a peer that does
     /// not serve `SuiStateMirror` is skipped as quietly as in automatic mode,
-    /// since it is not a misconfigured pin.
+    /// since it is not a misconfigured pin; and a peer's error answer is
+    /// logged at debug, since the caller reports the outcome itself (a scoped
+    /// caller's own deadline is shorter than the relay request timeout).
     pub fn scoped(
         network: Network,
         peers: Vec<PeerId>,
@@ -259,6 +261,10 @@ impl SuiMirrorPeers {
                         // persist for hours; the receiver emits a rate-limited
                         // warning when the full pass fails to find a successor.
                         debug!(?peer_id, ?status, "changeset_page: trying next relay");
+                    } else if self.scoped {
+                        // The scoped caller judges each peer's answer and
+                        // reports the whole pass itself.
+                        debug!(?peer_id, ?status, "{op_label}: scoped peer returned error");
                     } else {
                         warn!(
                             ?peer_id,

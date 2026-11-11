@@ -550,9 +550,9 @@ pub async fn build_sui_connector_stack(
         Arc::new(PeerFallback::new(
             fullnode.clone(),
             committees.clone(),
+            state_cache.clone(),
             FallbackBounds::default(),
             metrics.clone(),
-            provider_metrics.clone(),
         ))
     });
     // Cache-first staleness tripwire (direct only): if the cache head lags the

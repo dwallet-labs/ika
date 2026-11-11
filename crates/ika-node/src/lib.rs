@@ -1218,12 +1218,14 @@ impl IkaNode {
             let archive_backfill = config
                 .sui_connector_config
                 .sui_checkpoint_archive_backfill_seqs();
-            // The reader's peer fallback stands down while the pusher reports
-            // this node's fullnode frozen (see `peer_fallback`). Its watch is
-            // taken as soon as the pusher is built, before `run` consumes it;
-            // until then the fallback treats the fullnode as not frozen.
+            // The reader's peer fallback asks peers only while the pusher has
+            // seen this node's fullnode advance since start and does not report
+            // it frozen (see `peer_fallback`). Its watches are taken as soon as
+            // the pusher is built, before `run` consumes it; until then the
+            // fallback asks nobody.
             let fallback_for_push = peer_fallback.clone();
             tokio::spawn(async move {
+                use ika_core::sui_connector::peer_fallback::PusherUpstream;
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
                 // Retry construction instead of giving up for the lifetime of
                 // the process. The constructor talks to the fullnode, so a
@@ -1261,7 +1263,7 @@ impl IkaNode {
                     {
                         Ok(pusher) => {
                             if let Some(fallback) = &fallback_for_push {
-                                fallback.attach_upstream_frozen(Arc::new(pusher.upstream_frozen()));
+                                fallback.attach_upstream(PusherUpstream::of(&pusher));
                             }
                             break pusher.with_archive_backfill(archive_backfill.clone());
                         }

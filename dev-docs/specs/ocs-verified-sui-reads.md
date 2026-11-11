@@ -1486,31 +1486,47 @@ checkpoint this node saw and failed on. A node that never saw the loss has
 none: a new operator, a wiped and resynced database, a node that
 fast-forwarded past the span. In the epoch-463 incident such nodes hung at
 the `verified_system_inner` boot barrier until an operator listed the `System`
-object's defining checkpoint (`342064086`) by hand. Every up-to-date direct
-peer could still prove that object — its own proof provider reuses its cached
-snapshot — so a direct node reads it from one, the way a mirrored node reads
-everything (`sui_connector/peer_fallback.rs`):
+object's defining checkpoint (`342064086`) by hand. A direct peer whose cache
+still holds a snapshot of that object at the current reference can prove it —
+its proof provider serves from that snapshot — so a direct node reads it from
+one, the way a mirrored node reads everything
+(`sui_connector/peer_fallback.rs`). A peer on a binary that pins the anchors'
+snapshots keeps them; a peer on an older binary (v1.4.x does not pin them)
+only while its cache still holds the snapshot.
 
-- **When.** Only on this node's own reads, never on relay requests it serves:
-  a single-object read whose local provider answered `NotFound` (the singleton
-  anchors behind the boot barrier and the epoch loop, and bag-walk children
-  resolved one by one) and an empty slot of a batch read (the validator set).
-  The provider answers `NotFound` only after `recover_pruned_proof` found no
-  snapshot at the fullnode's exact reference, so an ordinary cache miss never
-  falls back.
+- **When.** One trigger: the direct reader's `NotFound` arm on a
+  single-object read — `verified_object` (which the bag walk also uses for the
+  children it could not prove) and the singleton anchor reads. Batch reads and
+  relay requests this node serves never fall back. The provider answers
+  `NotFound` when the fullnode pruned the defining checkpoint and
+  `recover_pruned_proof` found no snapshot at the exact reference, but also,
+  for a few seconds, for a just-written object whose transaction the fullnode
+  has not indexed yet. So peers are asked only for an object that is *stuck*:
+  its own provider has answered `NotFound` for it for 20 s with no read
+  proving it in between (a 60 s gap without a `NotFound` starts the clock
+  over).
+- **Never in a read's way.** With a cached snapshot (older than the
+  fullnode's current reference, or the provider would have proved it), the
+  reader serves it at once, as before, and the fallback fetches the current
+  version in the background. With nothing cached, a non-anchor read — a bag
+  walk's child included — fails at once as before while the fallback fills
+  the cache in the background, so a later read is a cache hit. Only an anchor
+  read with nothing cached (the boot barrier, which retries until it
+  succeeds) waits for the attempt, at most 15 s.
 - **Over what.** The existing relay surface, unchanged: `verified_object`
   through `SuiMirrorProofProvider`, one connected peer at a time
   (`SuiMirrorPeers::scoped`), so a peer whose answer fails a check never hides
-  one whose answer passes. Every direct node already serves it — v1.4.x
-  included — and a mirrored node or an unknown route answers anemo's route
-  miss, a "don't know".
+  one whose answer passes. A mirrored node or an unknown route answers anemo's
+  route miss, a "don't know".
 - **Verification.** Each answer goes through an `OcsVerifiedReader` configured
   as a mirrored node configures its own (relay provider, `cache_first` off),
   so it passes the code a mirrored node runs on a relayed object
   (`verify_response`): the id binding, the committee BLS signature of the
   summary against this node's `CommitteeStore`, the artifacts-digest binding of
-  the tree root, the Merkle inclusion of the object's full reference, the
-  freshness bound, the reader's high-water, and `check_currency`.
+  the tree root, and the Merkle inclusion of the object's full reference. The
+  rest of `verify_response` does nothing in that reader: it has no freshness
+  bound (direct reads have none either), its high-water starts empty, and
+  `check_currency` has no changeset index to consult, as on every direct read.
 - **Currency.** A mirrored node proves currency from its changeset index and
   gets no verdict (`Unknown`, accepted) for an anchor below that index's
   window. A direct node keeps no changeset index — its currency source is its
@@ -1526,30 +1542,34 @@ everything (`sui_connector/peer_fallback.rs`):
   older than any changeset retention — the very population the fallback
   serves — and it trusts the fullnode for nothing a direct node does not
   already trust it for.
-- **A frozen fullnode.** That currency check is only as current as the
-  fullnode. While the checkpoint pusher reports this node's own fullnode
-  frozen (no advance for five minutes, see the frozen-upstream signal), its
-  reference is a past one and a genuine but superseded version would match
-  it, so the fallback asks nobody — neither a peer nor the fullnode — and
-  counts `skipped`. It reads the pusher's frozen state
-  (`IkaCheckpointPusher::upstream_frozen`, flipped where the frozen ERROR and
-  recovery INFO latch flips); asking resumes when the fullnode advances
-  again.
-- **Afterwards.** The direct reader applies its own high-water, serves the
-  object, and shadow-writes the verified snapshot into its cache like any
-  network-verified read (in memory; the pusher's folds supersede it), so the
-  next read is a cache hit.
-- **Bounds.** Two fallbacks at once; at most 16 peers per attempt, in random
-  order, 5 s each and 15 s for the whole attempt — it runs inside a read,
-  which may be an epoch-loop anchor read; an object whose fallback found
-  nothing acceptable is not tried again for 30 s, and reads of it fail as
-  before meanwhile.
+- **A live fullnode first.** That currency check is only as current as the
+  fullnode. The fallback asks peers only once the checkpoint pusher has seen
+  this node's fullnode advance at least once since the process started
+  (`IkaCheckpointPusher::upstream_advanced`), and not while it reports it
+  frozen (`IkaCheckpointPusher::upstream_frozen`: no advance for five minutes,
+  see the frozen-upstream signal). The frozen report needs those five minutes
+  to speak, so on its own it would let a fullnode that was already stuck at
+  start through until then; requiring an advance closes that window. Until the
+  pusher is built and its state attached, nobody is asked.
+- **Afterwards.** An accepted answer is written into this node's verified
+  cache like any network-verified read (in memory; the pusher's folds
+  supersede it). The direct reader serves it from there under its own
+  high-water, so never below a version it already served. The node's proof
+  provider serves relay requests from the same cache, so the node now also
+  serves that peer-originated snapshot — verified, at its own fullnode's exact
+  current reference — onward to its peers through `recover_pruned_proof`.
+- **Bounds.** Two attempts at once for the reads that wait and two for the
+  background ones; one attempt per object at a time; at most 16 peers per
+  attempt, in random order, 5 s each and 15 s for the whole attempt; no new
+  attempt for an object within 30 s of one that failed; at most 1024 objects
+  tracked, and while that many are (after forgetting idle ones) a new object
+  is not tried.
 - **What it does not cover.** No connected direct peer can prove the object
   at the fullnode's current reference: every peer lost the checkpoint too (a
   fleet-wide undecodable checkpoint) or none still holds a snapshot of it
-  (the singleton anchors are kept by id; other objects only while a record
-  pins them). The fallback result is not persisted, so a restart falls back
-  once more.
+  (the singleton anchors are kept by id on binaries that pin them; other
+  objects only while a record pins them). The fallback result is not
+  persisted, so a restart falls back once more.
 
 The two **singleton anchors** — the `System` and `DWalletCoordinator`
 inner objects (and their versioned-child inners) — are served from the
@@ -2011,15 +2031,23 @@ any increase of the overflow counter or of `{outcome="abandoned"}` — each is
 a cache gap the backfill will not repair. Any `verification` failure means the archive served a blob that
 does not verify and is also logged as security-critical.
 
-The peer fallback exports `ika_ocs_direct_peer_fallback_total{outcome}`
+The peer fallback exports `ika_ocs_direct_peer_fallback_total{outcome}`,
+absent until its first event: one count per attempt by how it ended
 (`served`, `not_current`, `unverified`, `unavailable`, `not_live`,
-`fullnode_error`, `skipped` — also while this node's fullnode is frozen),
-absent until its first event; each peer answer
-it verifies also counts in `ika_ocs_proof_verify_total` /
-`ika_ocs_proof_verify_failures_total` like any relayed read. A rising
-`unavailable` while the reader keeps failing means no connected direct peer
-can prove the object: the operator-list fallback still applies. Any
-`not_current` or `unverified` means a peer served an answer this node refused. A dynamic-field child
+`fullnode_error`), and one per read that was due an attempt but did not get
+one (`skipped_frozen`, `skipped_unconfirmed` — the fullnode has not been seen
+advancing since start —, `skipped_no_network`, `skipped_retry_wait`,
+`skipped_busy`, `skipped_tracked_full`). A read of an object that is not yet
+stuck, or whose attempt is running, counts nothing. The per-peer readers and
+relay clients report into metrics of their own that nothing exports, so a
+peer's answer moves none of the node's relay or verification metrics
+(`ika_ocs_proof_verify_*`, `ika_ocs_last_successful_relay_timestamp_seconds`,
+`ika_ocs_relay_peer_failover_total`). Each attempt logs one line: INFO when
+served, WARN when every answer was refused, debug otherwise; per-peer detail is
+at debug. A rising `unavailable` while the reader keeps failing means no
+connected direct peer can prove the object: the operator-list fallback still
+applies. Any `not_current` or `unverified` means a peer served an answer this
+node refused. A dynamic-field child
 skipped for an encoding error or a too-large defining checkpoint counts in
 `ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total`.
 

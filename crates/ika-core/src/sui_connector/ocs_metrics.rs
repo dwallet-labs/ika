@@ -147,12 +147,15 @@ pub struct OcsMetrics {
     /// increase.
     pub pusher_lost_checkpoints_overflow_total: IntCounter,
     /// A sui-state-direct node's peer fallback for objects it cannot prove
-    /// itself (see `peer_fallback`), by outcome: `served` (a peer's answer
-    /// passed every mirrored-node check and matched this node's fullnode),
-    /// `not_current` (authentic, but not the fullnode's current reference),
-    /// `unverified` (a peer's answer failed verification), `unavailable` (no
-    /// peer served it), `not_live`, `fullnode_error`, or `skipped` (network not
-    /// attached, concurrency cap, or the object failed recently).
+    /// itself (see `peer_fallback`). One count per attempt by how it ended:
+    /// `served` (a peer's answer passed every mirrored-node check and matched
+    /// this node's fullnode), `not_current` (authentic, but not the fullnode's
+    /// current reference), `unverified` (a peer's answer failed verification),
+    /// `unavailable` (no peer served it), `not_live`, `fullnode_error`. And one
+    /// per read that was due an attempt but got none: `skipped_frozen`,
+    /// `skipped_unconfirmed` (the fullnode not seen advancing since start),
+    /// `skipped_no_network`, `skipped_retry_wait`, `skipped_busy`,
+    /// `skipped_tracked_full`.
     pub direct_peer_fallback_total: IntCounterVec, // labels: ["outcome"]
 
     /// Latest-checkpoint watermark samples refused by the rate bound, by
@@ -375,7 +378,7 @@ impl OcsMetrics {
             .unwrap(),
             direct_peer_fallback_total: register_int_counter_vec_with_registry!(
                 "ika_ocs_direct_peer_fallback_total",
-                "A sui-state-direct node's peer fallback for objects it cannot prove itself, by outcome (served, not_current, unverified, unavailable, not_live, fullnode_error, skipped)",
+                "A sui-state-direct node's peer fallback for objects it cannot prove itself: attempts by outcome (served, not_current, unverified, unavailable, not_live, fullnode_error), and reads due an attempt that got none (skipped_frozen, skipped_unconfirmed, skipped_no_network, skipped_retry_wait, skipped_busy, skipped_tracked_full)",
                 &["outcome"],
                 registry,
             )
