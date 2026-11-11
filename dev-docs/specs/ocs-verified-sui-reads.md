@@ -616,7 +616,12 @@ dropping entries are layered:
   transaction, so each part read decodes at most 16 MiB. The tree built from
   the parts is the same tree the whole read builds. The proof is checked
   against the certified summary as before, so the part reads add no trust in
-  the fullnode. A `Network` failure
+  the fullnode. Before either read's effects build the tree, the provider
+  checks that each object's written versions strictly increase across the
+  effects list, in order. Sui's tree builder asserts that condition, and a
+  failed assert ends the process; the list comes from the endpoint and is not
+  yet checked against the certified summary. A list that breaks it fails
+  that checkpoint as `Encoding`, so the child is skipped as above. A `Network` failure
   still fails the page, because it is a property of the source, not of the
   child, and the consumer must back off rather than act on a page that
   silently lost its entries.

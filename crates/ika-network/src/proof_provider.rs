@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSInclusionProof};
 use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::digests::TransactionDigest;
-use sui_types::effects::TransactionEffects;
+use sui_types::effects::{TransactionEffects, TransactionEffectsAPI};
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
@@ -618,6 +618,12 @@ where
 {
     let (summary, artifacts) = match fetch_full().await {
         Ok(data) => {
+            check_written_versions_increase(
+                seq,
+                data.transactions
+                    .iter()
+                    .map(|transaction| &transaction.effects),
+            )?;
             let artifacts = CheckpointArtifacts::from(&data);
             (data.checkpoint_summary, artifacts)
         }
@@ -633,6 +639,7 @@ where
                     summary.sequence_number()
                 )));
             }
+            check_written_versions_increase(seq, effects.iter())?;
             (summary, CheckpointArtifacts::from(effects.as_slice()))
         }
         Err(error) => return Err(error),
@@ -640,6 +647,35 @@ where
     let tree = ModifiedObjectTree::new(&artifacts)
         .map_err(|e| TransportError::Encoding(format!("ModifiedObjectTree::new({seq}): {e}")))?;
     Ok(CachedCheckpoint { summary, tree })
+}
+
+/// Refuse checkpoint `seq` as `Encoding` unless each object's written
+/// versions strictly increase across `effects`, in order.
+///
+/// Sui's `CheckpointArtifacts::from` asserts this condition, and a failed
+/// assert ends the process. The effects come from the Sui endpoint, and
+/// nothing has checked their list against the certified summary yet. So the
+/// same condition is checked here first, and a list that breaks it fails only
+/// this checkpoint: a dynamic-field child defined in it is skipped, as for any
+/// other `Encoding` failure.
+fn check_written_versions_increase<'a>(
+    seq: CheckpointSequenceNumber,
+    effects: impl IntoIterator<Item = &'a TransactionEffects>,
+) -> Result<(), TransportError> {
+    effects
+        .into_iter()
+        .flat_map(|effects| effects.written())
+        .try_fold(
+            BTreeMap::new(),
+            |mut latest, (id, version, _)| match latest.insert(id, version) {
+                Some(previous) if previous >= version => Err(TransportError::Encoding(format!(
+                    "checkpoint {seq}: object {id} written at version {version} after \
+                     version {previous}"
+                ))),
+                _ => Ok(latest),
+            },
+        )
+        .map(|_| ())
 }
 
 impl ProofCache {
@@ -940,7 +976,6 @@ mod tests {
     use sui_types::committee::Committee as SuiCommittee;
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointContentsDigest;
-    use sui_types::effects::TransactionEffectsAPI;
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::{
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
@@ -1379,6 +1414,86 @@ mod tests {
                 .verify(&OCSTarget::new_inclusion_target(object_ref))
                 .expect("the proof from the part reads verifies");
         }
+    }
+
+    /// An effects list in which one transaction's effects appear twice writes
+    /// the same object versions twice. Sui's tree builder would abort the
+    /// process on it, so the checkpoint is refused as `Encoding` first, on the
+    /// whole-read path and on the part-read path. The child defined in it is
+    /// skipped, and the rest of the page is served.
+    #[tokio::test]
+    async fn effects_listed_twice_are_refused_and_the_page_served() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let seq = 7;
+        let mut whole = whole_checkpoint(seq);
+        whole.transactions.push(whole.transactions[1].clone());
+        let (summary, mut effects) = parts_of(&whole_checkpoint(seq));
+        effects.push(effects[1].clone());
+        let parts = (summary, effects);
+
+        let from_whole = build_cached_checkpoint(
+            seq,
+            || async { Ok(whole.clone()) },
+            || async {
+                Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
+                    TransportError::Network("the parts must not be read".into()),
+                )
+            },
+        )
+        .await;
+        assert!(matches!(from_whole, Err(TransportError::Encoding(_))));
+
+        let listed_twice = ObjectID::from_single_byte(0x02);
+        let prove = |id: ObjectID| {
+            let parts = parts.clone();
+            let healthy = proven(&committee, &keys, id, 41);
+            async move {
+                if id != listed_twice {
+                    return healthy;
+                }
+                match build_cached_checkpoint(
+                    seq,
+                    || async {
+                        Err::<CheckpointData, _>(TransportError::TooLarge(
+                            "Error, decoded message length too large".into(),
+                        ))
+                    },
+                    || async move { Ok(parts) },
+                )
+                .await
+                {
+                    Err(error) => Err(error),
+                    Ok(_) => panic!("effects listed twice must be refused"),
+                }
+            }
+        };
+
+        let page = prove_listed_dynamic_fields(
+            vec![listed(0x01), listed(0x02), listed(0x03)],
+            &metrics,
+            &unprovable_entry_cache(),
+            prove,
+        )
+        .await
+        .expect("a refused effects list of one entry must not fail the page");
+
+        let served: Vec<ObjectID> = page.entries.iter().map(|e| e.object.id()).collect();
+        assert_eq!(
+            served,
+            vec![
+                ObjectID::from_single_byte(0x01),
+                ObjectID::from_single_byte(0x03)
+            ]
+        );
+        assert_eq!(page.skipped_entry_ids, vec![listed_twice]);
+        assert_eq!(
+            metrics
+                .proof_build_failures_total
+                .with_label_values(&["dynamic_fields_page_entry", "encoding"])
+                .get(),
+            1
+        );
     }
 
     /// Only a too-large whole read falls back to the part reads. Any other
