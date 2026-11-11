@@ -96,6 +96,11 @@ pub struct FallbackBounds {
     /// Deadline of one peer's answer. A relay read is one proof build on the
     /// serving side, so this only has to outlast a round trip and that build.
     pub peer_timeout: Duration,
+    /// Deadline of a whole attempt, across every peer it asks: the fallback
+    /// runs inside a read, which may be an epoch-loop anchor read, so peers
+    /// that accept a request and never answer must not hold it for
+    /// `max_peers * peer_timeout`.
+    pub attempt_timeout: Duration,
     /// An object whose fallback found no acceptable answer is not tried again
     /// before this has passed; reads of it fail fast meanwhile.
     pub retry_after: Duration,
@@ -109,6 +114,7 @@ impl Default for FallbackBounds {
             max_concurrent: 2,
             max_peers: 16,
             peer_timeout: Duration::from_secs(5),
+            attempt_timeout: Duration::from_secs(15),
             retry_after: Duration::from_secs(30),
             max_tracked_failures: 1_024,
         }
@@ -268,7 +274,13 @@ impl PeerFallback {
         let mut last_error = ReaderError::Transport(TransportError::NotFound(format!(
             "peer fallback for {id}: no connected peer served it"
         )));
+        let deadline = tokio::time::Instant::now() + self.bounds.attempt_timeout;
         for peer in peers {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                debug!(?id, "peer fallback: the attempt deadline passed");
+                break;
+            }
             // A reader configured as a mirrored node's, over this one peer: the
             // answer passes the mirrored verification before anything else
             // looks at it. Its cache is its own, so nothing reaches this node's
@@ -292,7 +304,7 @@ impl PeerFallback {
                 None,
             );
             let verified = match tokio::time::timeout(
-                self.bounds.peer_timeout,
+                self.bounds.peer_timeout.min(remaining),
                 Box::pin(reader.verified_object(id)),
             )
             .await
@@ -527,6 +539,8 @@ mod tests {
     struct PeerProvider {
         answer: Answer,
         requests: Arc<AtomicUsize>,
+        /// How long the peer sits on a request before answering.
+        delay: Duration,
     }
 
     #[async_trait]
@@ -536,6 +550,7 @@ mod tests {
             id: ObjectID,
         ) -> Result<VerifiedObjectResponse, TransportError> {
             self.requests.fetch_add(1, Ordering::Relaxed);
+            tokio::time::sleep(self.delay).await;
             (self.answer)(id)
         }
         async fn batch_verified_objects(
@@ -563,6 +578,11 @@ mod tests {
     /// A direct peer serving the real `SuiStateMirror` server (as `make_server`
     /// builds it on every direct node), whose provider answers `answer`.
     fn direct_peer(answer: Answer) -> (anemo::Network, Arc<AtomicUsize>) {
+        slow_direct_peer(answer, Duration::ZERO)
+    }
+
+    /// [`direct_peer`] that sits on every request for `delay` first.
+    fn slow_direct_peer(answer: Answer, delay: Duration) -> (anemo::Network, Arc<AtomicUsize>) {
         let requests = Arc::new(AtomicUsize::new(0));
         let metrics = ProofProviderMetrics::new_for_testing();
         let unused = SuiMirrorPeers::new(network(anemo::Router::new()), vec![], metrics.clone());
@@ -571,6 +591,7 @@ mod tests {
             Arc::new(PeerProvider {
                 answer,
                 requests: requests.clone(),
+                delay,
             }),
             metrics,
         );
@@ -1099,6 +1120,41 @@ mod tests {
         tokio::time::sleep(retry_after).await;
         assert!(bounded.verified_object(current.id()).await.is_err());
         assert_eq!(requests.load(Ordering::Relaxed), 2);
+    }
+
+    /// A whole attempt ends at `attempt_timeout`, however many peers are left
+    /// and however long each may take: peers that accept a request and never
+    /// answer cannot hold the read for `max_peers * peer_timeout`.
+    #[tokio::test]
+    async fn an_attempt_ends_at_its_deadline() {
+        let fx = fixture();
+        let current = object(0xA1, 7);
+        // Peers that accept the request and sit on it far past every deadline.
+        let peers: Vec<_> = (0..4)
+            .map(|_| slow_direct_peer(not_proving(), Duration::from_secs(60)))
+            .collect();
+        let node = connected(&peers.iter().map(|(n, _)| n).collect::<Vec<_>>()).await;
+        let bounded = fallback(
+            &fx,
+            Fullnode::reporting(&[&current]),
+            &node,
+            FallbackBounds {
+                peer_timeout: Duration::from_secs(1),
+                attempt_timeout: Duration::from_millis(1_500),
+                ..FallbackBounds::default()
+            },
+        );
+        let started = Instant::now();
+        assert!(bounded.verified_object(current.id()).await.is_err());
+        let took = started.elapsed();
+        // The first peer gets its full second, the second only the half second
+        // left; no peer is asked once the deadline has passed.
+        assert!(
+            took < Duration::from_millis(1_900),
+            "4 peers at 1 s each, but the attempt is bounded at 1.5 s: took {took:?}"
+        );
+        let asked: usize = peers.iter().map(|(_, r)| r.load(Ordering::Relaxed)).sum();
+        assert_eq!(asked, 2, "no peer is asked after the deadline");
     }
 
     /// At most `max_peers` peers are asked per attempt.

@@ -1289,8 +1289,10 @@ everything (`sui_connector/peer_fallback.rs`):
   network-verified read (in memory; the pusher's folds supersede it), so the
   next read is a cache hit.
 - **Bounds.** Two fallbacks at once; at most 16 peers per attempt, in random
-  order, 5 s each; an object whose fallback found nothing acceptable is not
-  tried again for 30 s, and reads of it fail as before meanwhile.
+  order, 5 s each and 15 s for the whole attempt — it runs inside a read,
+  which may be an epoch-loop anchor read; an object whose fallback found
+  nothing acceptable is not tried again for 30 s, and reads of it fail as
+  before meanwhile.
 - **What it does not cover.** No connected direct peer can prove the object
   at the fullnode's current reference: every peer lost the checkpoint too (a
   fleet-wide undecodable checkpoint) or none still holds a snapshot of it
