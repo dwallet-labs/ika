@@ -20,11 +20,12 @@
 
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use moka::future::Cache;
+use moka::policy::EvictionPolicy;
 use prometheus::{
     HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Registry,
     register_histogram_vec_with_registry, register_int_counter_vec_with_registry,
@@ -34,14 +35,21 @@ use serde::{Deserialize, Serialize};
 use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSInclusionProof};
 use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::digests::TransactionDigest;
+use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
 };
 use sui_types::object::Object;
 
-use ika_sui_client::grpc::SuiGrpcClient;
-use ika_sui_client::transport::{DynamicFieldEntry, SuiTransport, TransportError};
-use tracing::{debug, warn};
+use ika_sui_client::grpc::{
+    MAX_CHECKPOINT_OBJECT_STATES, SuiGrpcClient, is_object_state_cap_error, object_state_cap_error,
+};
+use ika_sui_client::transport::{
+    CheckpointObjectStates, DynamicFieldEntry, SuiTransport, TransportError,
+    check_checkpoint_written_versions_increase,
+};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::{debug, info, warn};
 
 /// Serving-side cap on the number of object ids one `BatchVerifiedObjects`
 /// request may carry — each id costs one inclusion-proof build, so this bounds
@@ -108,7 +116,8 @@ pub struct ProofProviderMetrics {
     pub dynamic_fields_walk_entries_skipped_transient_total: IntCounter,
     /// Children skipped because building their proof failed with an encoding
     /// error — e.g. the defining checkpoint holds a transaction this binary
-    /// cannot decode. The rest of the page is still served; the skipped id is
+    /// cannot decode — or because the defining checkpoint was too large to
+    /// fetch. The rest of the page is still served; the skipped id is
     /// reported to the consumer like a pruned one.
     pub dynamic_fields_walk_entries_skipped_encoding_total: IntCounter,
 
@@ -234,7 +243,7 @@ impl ProofProviderMetrics {
             .unwrap(),
             dynamic_fields_walk_entries_skipped_encoding_total: register_int_counter_with_registry!(
                 "ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total",
-                "Children skipped because building their proof failed with an encoding error (e.g. an undecodable defining checkpoint); the rest of the page is still served",
+                "Children skipped because building their proof failed with an encoding error (e.g. an undecodable defining checkpoint) or a defining checkpoint too large to fetch; the rest of the page is still served",
                 registry,
             )
             .unwrap(),
@@ -434,6 +443,7 @@ fn record_proof_build_failure(metrics: &ProofProviderMetrics, kind: &str, err: &
         TransportError::NotFound(_) => "not_found",
         TransportError::Encoding(_) => "encoding",
         TransportError::Network(_) => "network",
+        TransportError::TooLarge(_) => "too_large",
     };
     metrics
         .proof_build_failures_total
@@ -462,6 +472,10 @@ struct ProvenDynamicFields {
 ///   halted the bag event pump outright. Warned once per id per
 ///   `UNPROVABLE_ENTRY_WARN_INTERVAL`, since the pump re-walks the bag many
 ///   times a second.
+/// - `TooLarge` skips the entry the same way: the response holding its
+///   defining checkpoint is over the client's decode limit. That is a
+///   property of this entry's checkpoint, not of the source, so failing the
+///   page would again hide every other child of the collection.
 /// - `Network` fails the page: the source itself is unreachable, and the
 ///   consumer must back off rather than read a page that silently lost every
 ///   entry.
@@ -516,7 +530,7 @@ where
                     .inc();
                 page.skipped_entry_ids.push(entry.object_id);
             }
-            Err(error @ TransportError::Encoding(_)) => {
+            Err(error @ (TransportError::Encoding(_) | TransportError::TooLarge(_))) => {
                 record_proof_build_failure(metrics, "dynamic_fields_page_entry", &error);
                 metrics
                     .dynamic_fields_walk_entries_skipped_encoding_total
@@ -529,8 +543,8 @@ where
                     warn!(
                         ?id,
                         %error,
-                        "dynamic-field child cannot be proven (encoding error); skipping it and \
-                         serving the rest of the page"
+                        "dynamic-field child cannot be proven; skipping it and serving the \
+                         rest of the page"
                     );
                 }
                 page.skipped_entry_ids.push(id);
@@ -546,12 +560,16 @@ where
 
 #[derive(Clone, Debug)]
 pub struct ProofCacheConfig {
-    /// Entry-count capacity for the per-checkpoint tree cache. Sized by
-    /// count, not bytes, deliberately: an entry is a checkpoint summary plus
-    /// a `ModifiedObjectTree` (object refs + hashes — tens of KB for a busy
-    /// checkpoint, not the full `CheckpointData`), so 32 entries is a few MB
-    /// worst-case, and `tree_ttl` already bounds residency. Revisit with a
-    /// moka weigher only if entries ever start carrying object contents.
+    /// Capacity of the per-checkpoint tree cache, in object states summed
+    /// over the cached trees. A tree holds about 220 bytes per object state
+    /// (a 72-byte leaf, its position-map share and about two 32-byte Merkle
+    /// nodes), so the default of 32 million is about 7 GB at most. A
+    /// checkpoint read whole holds at most a few million states, so many
+    /// ordinary trees fit; one tree built from the part read may take up to
+    /// `MAX_CHECKPOINT_OBJECT_STATES` (also 32 million). The cache evicts the
+    /// least recently used trees to admit a new one, so even a tree that
+    /// takes the whole capacity is kept and reused. `tree_ttl` still bounds
+    /// residency.
     pub tree_capacity: u64,
     pub tree_ttl: Duration,
     /// LRU capacity for the `tx_digest → checkpoint_seq` map. This mapping is
@@ -564,7 +582,7 @@ pub struct ProofCacheConfig {
 impl Default for ProofCacheConfig {
     fn default() -> Self {
         Self {
-            tree_capacity: 32,
+            tree_capacity: 32_000_000,
             tree_ttl: Duration::from_secs(300),
             tx_checkpoint_capacity: 8_192,
         }
@@ -576,16 +594,225 @@ impl Default for ProofCacheConfig {
 /// objects) and many proofs against the same checkpoint share it.
 struct ProofCache {
     /// Keyed by checkpoint sequence. Holds both the summary and the tree
-    /// so we can serve proofs without re-fetching either.
+    /// so we can serve proofs without re-fetching either. Weighed by each
+    /// tree's object states, and evicted least recently used first. moka's
+    /// default policy admits a new entry that needs room only when it has
+    /// been looked up more often than the entries it would evict, which a
+    /// tree just built never has: a large part-read tree was then dropped as
+    /// soon as it was built, and every later proof against its checkpoint
+    /// read all the parts and built the tree again.
     trees: Cache<CheckpointSequenceNumber, Arc<CachedCheckpoint>>,
     /// `tx_digest → checkpoint_seq`, immutable once committed. Saves a
     /// `get_transaction_checkpoint` full-node round-trip per relayed read.
     tx_checkpoints: Cache<TransactionDigest, CheckpointSequenceNumber>,
+    /// Checkpoints whose whole read was over the decode limit. A checkpoint
+    /// never changes, so the whole read is not tried for them again: their
+    /// trees are built from the part reads at once.
+    too_large_checkpoints: Cache<CheckpointSequenceNumber, ()>,
+    /// Checkpoints whose part read passed `MAX_CHECKPOINT_OBJECT_STATES`. A
+    /// checkpoint never changes, so they are refused at once, before any
+    /// read and without waiting for `part_read_builds`.
+    over_state_cap_checkpoints: Cache<CheckpointSequenceNumber, ()>,
+    /// One tree build from the part read at a time, so at most one such
+    /// build's peak memory is in use at once. A build takes the permit for
+    /// the part read and the tree build, and keeps it until its tree is in
+    /// the cache and the cache has applied the tree's weight (evicting
+    /// others); a failed build gives it back when it ends.
+    part_read_builds: Arc<Semaphore>,
 }
+
+/// How many too-large checkpoint numbers [`ProofCache`] remembers, and how
+/// many checkpoint numbers over the object-state cap, each for the tree
+/// cache's lifetime (`ProofCacheConfig::tree_ttl`).
+const TOO_LARGE_CHECKPOINTS_CAPACITY: u64 = 1_024;
 
 struct CachedCheckpoint {
     summary: CertifiedCheckpointSummary,
     tree: ModifiedObjectTree,
+    /// How many object states the tree holds: its weight in the cache.
+    object_states: usize,
+}
+
+/// Checkpoint `seq`'s summary and tree from `cache`, or built and cached.
+///
+/// Simultaneous misses of the same checkpoint share one build: the first
+/// runs it, and the others wait for its result. A hit counts in
+/// `proof_tree_cache_hits_total`, a build in `proof_tree_cache_misses_total`,
+/// and a caller that waited for another's build in neither.
+async fn get_or_build_checkpoint<Full, FullFut, Parts, PartsFut>(
+    cache: &ProofCache,
+    metrics: &ProofProviderMetrics,
+    seq: CheckpointSequenceNumber,
+    fetch_full: Full,
+    fetch_parts: Parts,
+) -> Result<Arc<CachedCheckpoint>, TransportError>
+where
+    Full: FnOnce() -> FullFut,
+    FullFut: Future<Output = Result<CheckpointData, TransportError>>,
+    Parts: FnOnce() -> PartsFut,
+    PartsFut: Future<
+        Output = Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError>,
+    >,
+{
+    if let Some(cached) = cache.trees.get(&seq).await {
+        metrics.proof_tree_cache_hits_total.inc();
+        return Ok(cached);
+    }
+    // The part-read build permit of a build run here, kept until its tree is
+    // in the cache and weighed.
+    let permit = Mutex::new(None);
+    let built = cache
+        .trees
+        .try_get_with(seq, async {
+            metrics.proof_tree_cache_misses_total.inc();
+            build_cached_checkpoint_keeping_permit(seq, cache, &permit, fetch_full, fetch_parts)
+                .await
+                .map(Arc::new)
+        })
+        .await
+        .map_err(|error| (*error).clone());
+    let permit = permit
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    if let Some(permit) = permit {
+        cache.trees.run_pending_tasks().await;
+        drop(permit);
+    }
+    built
+}
+
+/// Build checkpoint `seq`'s summary and modified-object tree.
+///
+/// The tree needs only the effects of the checkpoint's transactions.
+/// `fetch_full` reads the whole checkpoint. When that read is over the
+/// client's decode limit (`TooLarge`), `seq` is remembered in
+/// `cache.too_large_checkpoints`, and `fetch_parts` reads the summary and
+/// folds each transaction's effects in separate, smaller reads instead,
+/// holding `cache.part_read_builds` until the tree is built. For a `seq`
+/// already too large, `fetch_full` is not called. A `seq` whose part read
+/// passed the object-state cap is remembered and refused at once. Any other
+/// error of `fetch_full` is returned as is.
+///
+/// A part-read build leaves its permit in `permit` once its tree is built,
+/// so the caller can keep it until the tree is in the cache.
+async fn build_cached_checkpoint_keeping_permit<Full, FullFut, Parts, PartsFut>(
+    seq: CheckpointSequenceNumber,
+    cache: &ProofCache,
+    permit: &Mutex<Option<OwnedSemaphorePermit>>,
+    fetch_full: Full,
+    fetch_parts: Parts,
+) -> Result<CachedCheckpoint, TransportError>
+where
+    Full: FnOnce() -> FullFut,
+    FullFut: Future<Output = Result<CheckpointData, TransportError>>,
+    Parts: FnOnce() -> PartsFut,
+    PartsFut: Future<
+        Output = Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError>,
+    >,
+{
+    if cache.over_state_cap_checkpoints.contains_key(&seq) {
+        return Err(object_state_cap_error(seq, MAX_CHECKPOINT_OBJECT_STATES));
+    }
+    let remembered_too_large = cache.too_large_checkpoints.contains_key(&seq);
+    let whole = if remembered_too_large {
+        Err(TransportError::TooLarge(format!(
+            "checkpoint {seq} is known to be over the decode limit"
+        )))
+    } else {
+        fetch_full().await
+    };
+    match whole {
+        Ok(data) => {
+            check_checkpoint_written_versions_increase(&data)?;
+            let artifacts = CheckpointArtifacts::from(&data);
+            build_tree(seq, data.checkpoint_summary, &artifacts)
+        }
+        Err(TransportError::TooLarge(reason)) => {
+            info!(
+                seq,
+                reason, "whole checkpoint is over the decode limit; reading its effects in parts"
+            );
+            // Remembered only when the whole read itself was too large, so a
+            // retry of a remembered checkpoint does not renew its lifetime.
+            if !remembered_too_large {
+                cache.too_large_checkpoints.insert(seq, ()).await;
+            }
+            let held = cache
+                .part_read_builds
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|error| {
+                    TransportError::Network(format!("part-read build permit: {error}"))
+                })?;
+            let (summary, states) = match fetch_parts().await {
+                Ok(parts) => parts,
+                Err(error) => {
+                    if is_object_state_cap_error(&error) {
+                        cache.over_state_cap_checkpoints.insert(seq, ()).await;
+                    }
+                    return Err(error);
+                }
+            };
+            if *summary.sequence_number() != seq {
+                return Err(TransportError::Encoding(format!(
+                    "asked for checkpoint {seq}, got the summary of {}",
+                    summary.sequence_number()
+                )));
+            }
+            let built = build_tree(
+                seq,
+                summary,
+                &CheckpointArtifacts::from_object_states(states),
+            )?;
+            *permit
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(held);
+            Ok(built)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// [`build_cached_checkpoint_keeping_permit`], giving a part-read build's
+/// permit back when it returns.
+#[cfg(test)]
+async fn build_cached_checkpoint<Full, FullFut, Parts, PartsFut>(
+    seq: CheckpointSequenceNumber,
+    cache: &ProofCache,
+    fetch_full: Full,
+    fetch_parts: Parts,
+) -> Result<CachedCheckpoint, TransportError>
+where
+    Full: FnOnce() -> FullFut,
+    FullFut: Future<Output = Result<CheckpointData, TransportError>>,
+    Parts: FnOnce() -> PartsFut,
+    PartsFut: Future<
+        Output = Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError>,
+    >,
+{
+    build_cached_checkpoint_keeping_permit(seq, cache, &Mutex::new(None), fetch_full, fetch_parts)
+        .await
+}
+
+/// Sui's `ModifiedObjectTree` over `artifacts`, with `summary`.
+fn build_tree(
+    seq: CheckpointSequenceNumber,
+    summary: CertifiedCheckpointSummary,
+    artifacts: &CheckpointArtifacts,
+) -> Result<CachedCheckpoint, TransportError> {
+    let object_states = artifacts
+        .object_states()
+        .map_err(|e| TransportError::Encoding(format!("object states of {seq}: {e}")))?
+        .len();
+    let tree = ModifiedObjectTree::new(artifacts)
+        .map_err(|e| TransportError::Encoding(format!("ModifiedObjectTree::new({seq}): {e}")))?;
+    Ok(CachedCheckpoint {
+        summary,
+        tree,
+        object_states,
+    })
 }
 
 impl ProofCache {
@@ -593,11 +820,24 @@ impl ProofCache {
         Self {
             trees: Cache::builder()
                 .max_capacity(cfg.tree_capacity)
+                .weigher(|_, cached: &Arc<CachedCheckpoint>| {
+                    u32::try_from(cached.object_states.max(1)).unwrap_or(u32::MAX)
+                })
+                .eviction_policy(EvictionPolicy::lru())
                 .time_to_live(cfg.tree_ttl)
                 .build(),
             tx_checkpoints: Cache::builder()
                 .max_capacity(cfg.tx_checkpoint_capacity)
                 .build(),
+            too_large_checkpoints: Cache::builder()
+                .max_capacity(TOO_LARGE_CHECKPOINTS_CAPACITY)
+                .time_to_live(cfg.tree_ttl)
+                .build(),
+            over_state_cap_checkpoints: Cache::builder()
+                .max_capacity(TOO_LARGE_CHECKPOINTS_CAPACITY)
+                .time_to_live(cfg.tree_ttl)
+                .build(),
+            part_read_builds: Arc::new(Semaphore::new(1)),
         }
     }
 }
@@ -648,22 +888,14 @@ impl LocalProofProvider {
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<Arc<CachedCheckpoint>, TransportError> {
-        if let Some(c) = self.cache.trees.get(&seq).await {
-            self.metrics.proof_tree_cache_hits_total.inc();
-            return Ok(c);
-        }
-        self.metrics.proof_tree_cache_misses_total.inc();
-        let data = self.raw.get_full_checkpoint(seq).await?;
-        let artifacts = CheckpointArtifacts::from(&data);
-        let tree = ModifiedObjectTree::new(&artifacts).map_err(|e| {
-            TransportError::Encoding(format!("ModifiedObjectTree::new({seq}): {e}"))
-        })?;
-        let entry = Arc::new(CachedCheckpoint {
-            summary: data.checkpoint_summary,
-            tree,
-        });
-        self.cache.trees.insert(seq, entry.clone()).await;
-        Ok(entry)
+        get_or_build_checkpoint(
+            &self.cache,
+            &self.metrics,
+            seq,
+            || self.raw.get_full_checkpoint(seq),
+            || self.raw.get_checkpoint_object_states_in_parts(seq),
+        )
+        .await
     }
 
     async fn build_object_entry(
@@ -880,16 +1112,23 @@ impl ProofProvider for LocalProofProvider {
 mod tests {
     use super::*;
 
-    use sui_light_client::proof::ocs::ModifiedObjectTree;
-    use sui_types::base_types::SequenceNumber;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    use ika_sui_client::transport::fold_written_object_states;
+    use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSTarget};
+    use sui_types::base_types::{ObjectDigest, SequenceNumber};
     use sui_types::committee::Committee as SuiCommittee;
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEffectsV1};
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::{
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
     };
     use sui_types::object::Owner;
+    use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
+    use tokio::task::yield_now;
+    use tokio::time::{sleep, timeout};
 
     struct StaticSnapshotCache {
         entry: VerifiedObjectEntry,
@@ -1010,6 +1249,10 @@ mod tests {
         Ok((seq, entry, summary))
     }
 
+    fn proof_cache() -> ProofCache {
+        ProofCache::new(&ProofCacheConfig::default())
+    }
+
     fn unprovable_entry_cache() -> Cache<ObjectID, ()> {
         Cache::builder().max_capacity(16).build()
     }
@@ -1123,6 +1366,62 @@ mod tests {
         );
     }
 
+    /// One child whose defining checkpoint is over the fetch's decode limit is
+    /// skipped and reported, and every other child of the page is served.
+    #[tokio::test]
+    async fn an_entry_whose_checkpoint_is_too_large_is_skipped_and_the_page_served() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let warned = unprovable_entry_cache();
+        let oversized = ObjectID::from_single_byte(0x02);
+        let prove = |id: ObjectID| {
+            let result = if id == oversized {
+                Err(TransportError::TooLarge(
+                    "Error, decoded message length too large: found 140000000 bytes, \
+                     the limit is: 134217728 bytes"
+                        .into(),
+                ))
+            } else {
+                proven(&committee, &keys, id, 41)
+            };
+            async move { result }
+        };
+
+        let page = prove_listed_dynamic_fields(
+            vec![listed(0x01), listed(0x02), listed(0x03)],
+            &metrics,
+            &warned,
+            prove,
+        )
+        .await
+        .expect("a too-large checkpoint of one entry must not fail the page");
+
+        let served: Vec<ObjectID> = page.entries.iter().map(|e| e.object.id()).collect();
+        assert_eq!(
+            served,
+            vec![
+                ObjectID::from_single_byte(0x01),
+                ObjectID::from_single_byte(0x03)
+            ]
+        );
+        assert_eq!(page.skipped_entry_ids, vec![oversized]);
+        assert_eq!(
+            metrics
+                .proof_build_failures_total
+                .with_label_values(&["dynamic_fields_page_entry", "too_large"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            metrics
+                .dynamic_fields_walk_entries_skipped_encoding_total
+                .get(),
+            1
+        );
+        assert_eq!(metrics.dynamic_fields_walk_entries_returned_total.get(), 2);
+        assert!(warned.contains_key(&oversized));
+    }
+
     /// NotFound keeps its existing meaning: skipped and reported, not a page
     /// failure and not counted as an encoding skip.
     #[tokio::test]
@@ -1161,6 +1460,763 @@ mod tests {
                 .dynamic_fields_walk_entries_skipped_encoding_total
                 .get(),
             0
+        );
+    }
+
+    /// A checkpoint of three transactions that create, mutate, transfer and
+    /// delete objects, as one whole read returns it.
+    fn whole_checkpoint(seq: CheckpointSequenceNumber) -> CheckpointData {
+        let mut builder = TestCheckpointBuilder::new(seq)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .create_owned_object(2)
+            .create_owned_object(3)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .delete_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .transfer_object(3, 1)
+            .create_owned_object(4)
+            .finish_transaction();
+        CheckpointData::from(builder.build_checkpoint())
+    }
+
+    /// What the part reads return for `data`: its summary and the object
+    /// states its transactions' effects fold into, in order, or the fold's
+    /// refusal.
+    fn parts_of(
+        data: &CheckpointData,
+    ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
+        let seq = data.checkpoint_summary.sequence_number;
+        let states = data.transactions.iter().try_fold(
+            CheckpointObjectStates::new(),
+            |mut states, transaction| {
+                fold_written_object_states(seq, &mut states, &transaction.effects).map(|()| states)
+            },
+        )?;
+        Ok((data.checkpoint_summary.clone(), states))
+    }
+
+    /// When the whole checkpoint is over the decode limit, the summary and the
+    /// effects are read in parts and the tree is built from them. Every proof
+    /// from that tree is byte-identical to the proof the whole checkpoint
+    /// gives, and verifies, so the proof uses nothing else from the whole
+    /// checkpoint.
+    #[tokio::test]
+    async fn a_too_large_checkpoint_is_read_in_parts_and_gives_the_same_proofs() {
+        let seq = 7;
+        let data = whole_checkpoint(seq);
+        let parts = parts_of(&data).expect("the fixture folds");
+
+        let from_whole = build_cached_checkpoint(
+            seq,
+            &proof_cache(),
+            || async { Ok(data.clone()) },
+            || async {
+                Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(
+                    TransportError::Network("the parts must not be read".into()),
+                )
+            },
+        )
+        .await
+        .expect("the whole read succeeds");
+        let parts_read = AtomicBool::new(false);
+        let from_parts = build_cached_checkpoint(
+            seq,
+            &proof_cache(),
+            || async {
+                Err::<CheckpointData, _>(TransportError::TooLarge(
+                    "Error, decoded message length too large: found 140000000 bytes, \
+                     the limit is: 134217728 bytes"
+                        .into(),
+                ))
+            },
+            || {
+                parts_read.store(true, Ordering::SeqCst);
+                async { Ok(parts.clone()) }
+            },
+        )
+        .await
+        .expect("the part reads build the tree");
+
+        assert!(parts_read.load(Ordering::SeqCst));
+        assert_eq!(from_parts.summary.digest(), from_whole.summary.digest());
+        let latest_refs: BTreeMap<ObjectID, ObjectRef> = data
+            .transactions
+            .iter()
+            .flat_map(|transaction| transaction.effects.written())
+            .map(|object_ref| (object_ref.0, object_ref))
+            .collect();
+        assert!(
+            latest_refs.len() >= 4,
+            "the checkpoint writes several objects"
+        );
+        for object_ref in latest_refs.into_values() {
+            let whole_proof = from_whole
+                .tree
+                .get_inclusion_proof(object_ref)
+                .expect("the whole read proves every written object");
+            let parts_proof = from_parts
+                .tree
+                .get_inclusion_proof(object_ref)
+                .expect("the part reads prove every written object");
+            assert_eq!(
+                bcs::to_bytes(&parts_proof).unwrap(),
+                bcs::to_bytes(&whole_proof).unwrap(),
+                "proof of {object_ref:?} differs between the two reads"
+            );
+            parts_proof
+                .verify(&OCSTarget::new_inclusion_target(object_ref))
+                .expect("the proof from the part reads verifies");
+        }
+    }
+
+    /// An effects list in which one transaction's effects appear twice writes
+    /// the same object versions twice. Sui's tree builder would abort the
+    /// process on it, so the checkpoint is refused as `Encoding` first, on the
+    /// whole-read path and on the part-read path. The child defined in it is
+    /// skipped, and the rest of the page is served.
+    #[tokio::test]
+    async fn effects_listed_twice_are_refused_and_the_page_served() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let seq = 7;
+        let mut whole = whole_checkpoint(seq);
+        whole.transactions.push(whole.transactions[1].clone());
+        let parts = parts_of(&whole);
+        assert!(matches!(parts, Err(TransportError::Encoding(_))));
+
+        let from_whole = build_cached_checkpoint(
+            seq,
+            &proof_cache(),
+            || async { Ok(whole.clone()) },
+            || async {
+                Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(
+                    TransportError::Network("the parts must not be read".into()),
+                )
+            },
+        )
+        .await;
+        assert!(matches!(from_whole, Err(TransportError::Encoding(_))));
+
+        let listed_twice = ObjectID::from_single_byte(0x02);
+        let prove = |id: ObjectID| {
+            let parts = parts.clone();
+            let healthy = proven(&committee, &keys, id, 41);
+            async move {
+                if id != listed_twice {
+                    return healthy;
+                }
+                match build_cached_checkpoint(
+                    seq,
+                    &proof_cache(),
+                    || async {
+                        Err::<CheckpointData, _>(TransportError::TooLarge(
+                            "Error, decoded message length too large".into(),
+                        ))
+                    },
+                    || async move { parts },
+                )
+                .await
+                {
+                    Err(error) => Err(error),
+                    Ok(_) => panic!("effects listed twice must be refused"),
+                }
+            }
+        };
+
+        let page = prove_listed_dynamic_fields(
+            vec![listed(0x01), listed(0x02), listed(0x03)],
+            &metrics,
+            &unprovable_entry_cache(),
+            prove,
+        )
+        .await
+        .expect("a refused effects list of one entry must not fail the page");
+
+        let served: Vec<ObjectID> = page.entries.iter().map(|e| e.object.id()).collect();
+        assert_eq!(
+            served,
+            vec![
+                ObjectID::from_single_byte(0x01),
+                ObjectID::from_single_byte(0x03)
+            ]
+        );
+        assert_eq!(page.skipped_entry_ids, vec![listed_twice]);
+        assert_eq!(
+            metrics
+                .proof_build_failures_total
+                .with_label_values(&["dynamic_fields_page_entry", "encoding"])
+                .get(),
+            1
+        );
+    }
+
+    /// Only a too-large whole read falls back to the part reads. Any other
+    /// failure of the whole read is returned, and nothing else is read.
+    #[tokio::test]
+    async fn a_network_error_on_the_whole_read_is_returned_without_reading_parts() {
+        let seq = 7;
+        let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
+        let parts_read = AtomicBool::new(false);
+        let result = build_cached_checkpoint(
+            seq,
+            &proof_cache(),
+            || async {
+                Err::<CheckpointData, _>(TransportError::Network("connection reset".into()))
+            },
+            || {
+                parts_read.store(true, Ordering::SeqCst);
+                async { Ok(parts.clone()) }
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(TransportError::Network(_))));
+        assert!(!parts_read.load(Ordering::SeqCst));
+    }
+
+    fn too_large_error() -> TransportError {
+        TransportError::TooLarge("Error, decoded message length too large".into())
+    }
+
+    /// A checkpoint found too large is remembered: the next build of it reads
+    /// the parts without trying the whole read again.
+    #[tokio::test]
+    async fn a_checkpoint_found_too_large_is_not_read_whole_again() {
+        let seq = 7;
+        let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
+        let cache = proof_cache();
+        let whole_reads = AtomicU32::new(0);
+        let whole_read = || {
+            whole_reads.fetch_add(1, Ordering::SeqCst);
+            async { Err::<CheckpointData, _>(too_large_error()) }
+        };
+
+        for _ in 0..2 {
+            build_cached_checkpoint(seq, &cache, whole_read, || async { Ok(parts.clone()) })
+                .await
+                .expect("the part reads build the tree");
+        }
+
+        assert_eq!(whole_reads.load(Ordering::SeqCst), 1);
+        assert!(cache.too_large_checkpoints.contains_key(&seq));
+    }
+
+    /// Simultaneous misses of the same checkpoint share one build, and so
+    /// one set of reads.
+    #[tokio::test]
+    async fn simultaneous_misses_of_one_checkpoint_share_one_build() {
+        let seq = 7;
+        let data = whole_checkpoint(seq);
+        let cache = ProofCache::new(&ProofCacheConfig::default());
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let whole_reads = AtomicU32::new(0);
+        let whole_read = || {
+            whole_reads.fetch_add(1, Ordering::SeqCst);
+            let data = data.clone();
+            async move {
+                yield_now().await;
+                Ok(data)
+            }
+        };
+        let no_parts = || async {
+            Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(TransportError::Network(
+                "the parts must not be read".into(),
+            ))
+        };
+
+        let (first, second) = tokio::join!(
+            get_or_build_checkpoint(&cache, &metrics, seq, whole_read, no_parts),
+            get_or_build_checkpoint(&cache, &metrics, seq, whole_read, no_parts),
+        );
+
+        let (first, second) = (first.unwrap(), second.unwrap());
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(whole_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(metrics.proof_tree_cache_misses_total.get(), 1);
+    }
+
+    /// Version 1 effects of the checkpoint's own transaction, whose
+    /// `written()` Sui leaves `unimplemented!`, are refused as `Encoding` on
+    /// the whole read and on the part read.
+    #[tokio::test]
+    async fn version_one_effects_are_refused_on_both_reads() {
+        let seq = 7;
+        let mut whole = whole_checkpoint(seq);
+        let digest = *whole.transactions[0].effects.transaction_digest();
+        let mut effects = TransactionEffects::V1(TransactionEffectsV1::default());
+        *effects.transaction_digest_mut_for_testing() = digest;
+        whole.transactions[0].effects = effects;
+        let parts = parts_of(&whole);
+        assert!(matches!(parts, Err(TransportError::Encoding(_))));
+
+        let from_whole = build_cached_checkpoint(
+            seq,
+            &proof_cache(),
+            || async { Ok(whole.clone()) },
+            || async {
+                Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(
+                    TransportError::Network("the parts must not be read".into()),
+                )
+            },
+        )
+        .await;
+        assert!(matches!(from_whole, Err(TransportError::Encoding(_))));
+
+        let from_parts = build_cached_checkpoint(
+            seq,
+            &proof_cache(),
+            || async { Err::<CheckpointData, _>(too_large_error()) },
+            || async { parts.clone() },
+        )
+        .await;
+        assert!(matches!(from_parts, Err(TransportError::Encoding(_))));
+    }
+
+    /// Objects written by several transactions of the checkpoint, in order:
+    /// created, then mutated twice, then transferred.
+    fn several_writes_checkpoint(seq: CheckpointSequenceNumber) -> CheckpointData {
+        let mut builder = TestCheckpointBuilder::new(seq)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .create_owned_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .mutate_owned_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .transfer_object(1, 1)
+            .finish_transaction();
+        CheckpointData::from(builder.build_checkpoint())
+    }
+
+    /// Objects wrapped, deleted and unwrapped across transactions.
+    fn wraps_and_deletions_checkpoint(seq: CheckpointSequenceNumber) -> CheckpointData {
+        let mut builder = TestCheckpointBuilder::new(seq)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .create_owned_object(2)
+            .create_owned_object(3)
+            .finish_transaction()
+            .start_transaction(0)
+            .wrap_object(1)
+            .delete_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .unwrap_object(1)
+            .wrap_object(3)
+            .finish_transaction();
+        CheckpointData::from(builder.build_checkpoint())
+    }
+
+    /// The object states the part read folds are exactly the ones Sui's
+    /// `CheckpointArtifacts::from` builds from the whole checkpoint, and so
+    /// is the artifacts digest a proof's tree commits to.
+    #[test]
+    fn folded_object_states_equal_sui_s_artifacts() {
+        let fixtures = [
+            ("mixed", whole_checkpoint(7)),
+            ("several writes", several_writes_checkpoint(8)),
+            ("wraps and deletions", wraps_and_deletions_checkpoint(9)),
+        ];
+        for (name, data) in fixtures {
+            let (_, states) = parts_of(&data).expect("the fixture folds");
+            let whole = CheckpointArtifacts::from(&data);
+            assert_eq!(
+                &states,
+                whole.object_states().expect("object states"),
+                "folded object states differ from Sui's for the {name} checkpoint"
+            );
+            assert_eq!(
+                CheckpointArtifacts::from_object_states(states)
+                    .digest()
+                    .expect("artifacts digest"),
+                whole.digest().expect("artifacts digest"),
+                "folded artifacts digest differs from Sui's for the {name} checkpoint"
+            );
+        }
+    }
+
+    async fn no_parts()
+    -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
+        Err(TransportError::Network("the parts must not be read".into()))
+    }
+
+    /// The tree cache is weighed by object states: trees whose states sum
+    /// past the capacity are evicted, however few they are.
+    #[tokio::test]
+    async fn the_tree_cache_is_weighed_by_object_states() {
+        let cache = ProofCache::new(&ProofCacheConfig {
+            tree_capacity: 10,
+            ..ProofCacheConfig::default()
+        });
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let states_per_tree = parts_of(&whole_checkpoint(1))
+            .expect("the fixture folds")
+            .1
+            .len();
+        assert!(states_per_tree * 5 > 10);
+        for seq in 1..=5 {
+            let data = whole_checkpoint(seq);
+            get_or_build_checkpoint(
+                &cache,
+                &metrics,
+                seq,
+                move || async move { Ok(data) },
+                no_parts,
+            )
+            .await
+            .expect("the whole read builds the tree");
+        }
+        cache.trees.run_pending_tasks().await;
+        assert!(cache.trees.weighted_size() <= 10);
+        assert!(
+            cache.trees.entry_count() < 5,
+            "the cache must evict trees past its object-state capacity"
+        );
+    }
+
+    /// Part-read tree builds of different checkpoints run one at a time, and
+    /// a build that fails gives its turn back.
+    #[tokio::test]
+    async fn part_read_builds_run_one_at_a_time_and_a_failed_build_releases_its_turn() {
+        let cache = proof_cache();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let in_flight = AtomicU32::new(0);
+        let most_in_flight = AtomicU32::new(0);
+        let read_parts = |seq: CheckpointSequenceNumber| {
+            let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
+            let in_flight = &in_flight;
+            let most_in_flight = &most_in_flight;
+            async move {
+                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                most_in_flight.fetch_max(now, Ordering::SeqCst);
+                sleep(Duration::from_millis(50)).await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok(parts)
+            }
+        };
+        let too_large = || async { Err::<CheckpointData, _>(too_large_error()) };
+
+        let (first, second) = tokio::join!(
+            get_or_build_checkpoint(&cache, &metrics, 7, too_large, || read_parts(7)),
+            get_or_build_checkpoint(&cache, &metrics, 8, too_large, || read_parts(8)),
+        );
+        first.expect("the first part read builds");
+        second.expect("the second part read builds");
+        assert_eq!(
+            most_in_flight.load(Ordering::SeqCst),
+            1,
+            "part-read builds must run one at a time"
+        );
+
+        let failed = get_or_build_checkpoint(&cache, &metrics, 9, too_large, || async {
+            Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(TransportError::Network(
+                "refused".into(),
+            ))
+        })
+        .await;
+        assert!(failed.is_err());
+        let next = timeout(
+            Duration::from_secs(5),
+            get_or_build_checkpoint(&cache, &metrics, 10, too_large, || read_parts(10)),
+        )
+        .await;
+        assert!(
+            matches!(next, Ok(Ok(_))),
+            "a failed build must give its turn back"
+        );
+    }
+
+    /// A checkpoint whose part read passed the object-state cap is
+    /// remembered: the next build of it is refused with the same error at
+    /// once, with no read and without waiting for the build permit.
+    #[tokio::test]
+    async fn a_checkpoint_over_the_state_cap_is_refused_at_once_afterwards() {
+        let cache = proof_cache();
+        let seq = 7;
+        let first = build_cached_checkpoint(
+            seq,
+            &cache,
+            || async { Err::<CheckpointData, _>(too_large_error()) },
+            || async {
+                Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(
+                    object_state_cap_error(seq, MAX_CHECKPOINT_OBJECT_STATES),
+                )
+            },
+        )
+        .await;
+        assert!(matches!(&first, Err(error) if is_object_state_cap_error(error)));
+
+        let _held = cache.part_read_builds.acquire().await.expect("the permit");
+        let reads = AtomicU32::new(0);
+        let second = timeout(
+            Duration::from_secs(5),
+            build_cached_checkpoint(
+                seq,
+                &cache,
+                || {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    async { Err::<CheckpointData, _>(too_large_error()) }
+                },
+                || {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    no_parts()
+                },
+            ),
+        )
+        .await;
+        match second {
+            Ok(Err(error)) if is_object_state_cap_error(&error) => {}
+            _ => panic!("a checkpoint over the state cap must be refused at once"),
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+    }
+
+    /// Many object states for checkpoint `seq`, so that building its tree
+    /// takes a while.
+    fn large_parts(
+        seq: CheckpointSequenceNumber,
+        count: usize,
+    ) -> (CertifiedCheckpointSummary, CheckpointObjectStates) {
+        let summary = whole_checkpoint(seq).checkpoint_summary;
+        let states = (0..count)
+            .map(|_| {
+                (
+                    ObjectID::random(),
+                    (SequenceNumber::from_u64(1), ObjectDigest::random()),
+                )
+            })
+            .collect();
+        (summary, states)
+    }
+
+    /// The part-read build permit covers the tree build too: a second
+    /// part-read build, on another worker thread, starts only once the
+    /// first build's tree is built and in the cache.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn part_read_builds_run_one_at_a_time_through_the_tree_build() {
+        let cache = Arc::new(proof_cache());
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let first_parts_read = Arc::new(AtomicBool::new(false));
+        let first_in_cache_when_second_started = Arc::new(Mutex::new(None));
+
+        let first = tokio::spawn({
+            let cache = cache.clone();
+            let metrics = metrics.clone();
+            let first_parts_read = first_parts_read.clone();
+            async move {
+                get_or_build_checkpoint(
+                    &cache,
+                    &metrics,
+                    7,
+                    || async { Err::<CheckpointData, _>(too_large_error()) },
+                    move || async move {
+                        let parts = large_parts(7, 400_000);
+                        first_parts_read.store(true, Ordering::SeqCst);
+                        Ok(parts)
+                    },
+                )
+                .await
+                .map(|_| ())
+            }
+        });
+        while !first_parts_read.load(Ordering::SeqCst) {
+            sleep(Duration::from_millis(1)).await;
+        }
+        let second = tokio::spawn({
+            let cache = cache.clone();
+            let metrics = metrics.clone();
+            let seen = first_in_cache_when_second_started.clone();
+            async move {
+                let parts = parts_of(&whole_checkpoint(8)).expect("the fixture folds");
+                let probe = cache.clone();
+                get_or_build_checkpoint(
+                    &cache,
+                    &metrics,
+                    8,
+                    || async { Err::<CheckpointData, _>(too_large_error()) },
+                    move || async move {
+                        let in_cache = probe.trees.contains_key(&7);
+                        *seen.lock().unwrap() = Some(in_cache);
+                        Ok(parts)
+                    },
+                )
+                .await
+                .map(|_| ())
+            }
+        });
+        first.await.unwrap().expect("the first part read builds");
+        second.await.unwrap().expect("the second part read builds");
+        assert_eq!(
+            *first_in_cache_when_second_started.lock().unwrap(),
+            Some(true),
+            "a part-read build must hold its permit through the tree build"
+        );
+    }
+
+    /// A part-read build keeps its permit until the cache has weighed its
+    /// tree: when the next part-read build starts, the cache's own counters
+    /// already show one tree at its full capacity, and that tree is the later
+    /// one, admitted in place of the earlier. The test runs no cache
+    /// maintenance itself, so only the build's own maintenance can have
+    /// updated the counters.
+    #[tokio::test]
+    async fn a_part_read_build_waits_for_the_previous_tree_to_be_weighed() {
+        let states = parts_of(&whole_checkpoint(1))
+            .expect("the fixture folds")
+            .1
+            .len();
+        let cache = ProofCache::new(&ProofCacheConfig {
+            tree_capacity: states as u64,
+            ..ProofCacheConfig::default()
+        });
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let too_large = || async { Err::<CheckpointData, _>(too_large_error()) };
+        for seq in [1, 2] {
+            let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
+            get_or_build_checkpoint(&cache, &metrics, seq, too_large, move || async move {
+                Ok(parts)
+            })
+            .await
+            .expect("the part read builds");
+        }
+        let cache_when_third_started = Mutex::new(None);
+        let parts = parts_of(&whole_checkpoint(3)).expect("the fixture folds");
+        get_or_build_checkpoint(&cache, &metrics, 3, too_large, || {
+            *cache_when_third_started.lock().unwrap() = Some((
+                cache.trees.entry_count(),
+                cache.trees.weighted_size(),
+                cache.trees.contains_key(&1),
+                cache.trees.contains_key(&2),
+            ));
+            async { Ok(parts) }
+        })
+        .await
+        .expect("the part read builds");
+        assert_eq!(
+            *cache_when_third_started.lock().unwrap(),
+            Some((1, states as u64, false, true)),
+            "the later tree must be in the cache, weighed, before the next part-read build"
+        );
+    }
+
+    /// A part-read tree that needs nearly the whole capacity is admitted,
+    /// evicting smaller trees that were looked up many times, and the next
+    /// lookup of its checkpoint is a cache hit, with no part read. So is a
+    /// second such tree right after it, which evicts the first.
+    #[tokio::test]
+    async fn near_capacity_part_read_trees_are_admitted_and_reused() {
+        const CAPACITY: usize = 1_000;
+        let cache = ProofCache::new(&ProofCacheConfig {
+            tree_capacity: CAPACITY as u64,
+            ..ProofCacheConfig::default()
+        });
+        let metrics = ProofProviderMetrics::new_for_testing();
+        for seq in 1..=5 {
+            for _ in 0..10 {
+                let data = whole_checkpoint(seq);
+                get_or_build_checkpoint(
+                    &cache,
+                    &metrics,
+                    seq,
+                    move || async move { Ok(data) },
+                    no_parts,
+                )
+                .await
+                .expect("the whole read builds the tree");
+            }
+        }
+        cache.trees.run_pending_tasks().await;
+        assert!(cache.trees.weighted_size() > 0);
+
+        let too_large = || async { Err::<CheckpointData, _>(too_large_error()) };
+        for seq in [100, 101] {
+            let part_reads = AtomicU32::new(0);
+            let parts = large_parts(seq, CAPACITY - 10);
+            for _ in 0..2 {
+                let parts = parts.clone();
+                let built = get_or_build_checkpoint(&cache, &metrics, seq, too_large, || {
+                    part_reads.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(parts) }
+                })
+                .await
+                .expect("the part read builds the tree");
+                assert_eq!(built.object_states, CAPACITY - 10);
+            }
+            assert_eq!(
+                part_reads.load(Ordering::SeqCst),
+                1,
+                "checkpoint {seq}'s tree must be served from the cache on the next lookup"
+            );
+            assert!(cache.trees.contains_key(&seq));
+        }
+        assert!(
+            !cache.trees.contains_key(&100),
+            "the second near-capacity tree evicts the first"
+        );
+    }
+
+    /// Both remembered-checkpoint markers live as long as a cached tree.
+    #[tokio::test]
+    async fn remembered_checkpoints_expire_with_the_tree_cache() {
+        let cache = ProofCache::new(&ProofCacheConfig {
+            tree_ttl: Duration::from_millis(100),
+            ..ProofCacheConfig::default()
+        });
+        cache.too_large_checkpoints.insert(7, ()).await;
+        cache.over_state_cap_checkpoints.insert(7, ()).await;
+        sleep(Duration::from_millis(300)).await;
+        assert!(
+            !cache.too_large_checkpoints.contains_key(&7)
+                && !cache.over_state_cap_checkpoints.contains_key(&7),
+            "remembered checkpoints must expire with the tree cache's lifetime"
+        );
+    }
+
+    /// A retry of a remembered too-large checkpoint does not renew its
+    /// marker: the marker expires on the schedule its first whole read set.
+    #[tokio::test]
+    async fn a_retry_does_not_renew_the_too_large_marker() {
+        let cache = ProofCache::new(&ProofCacheConfig {
+            tree_ttl: Duration::from_millis(400),
+            ..ProofCacheConfig::default()
+        });
+        let seq = 7;
+        let failing_parts = || async {
+            Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(TransportError::Network(
+                "refused".into(),
+            ))
+        };
+        let first = build_cached_checkpoint(
+            seq,
+            &cache,
+            || async { Err::<CheckpointData, _>(too_large_error()) },
+            failing_parts,
+        )
+        .await;
+        assert!(first.is_err());
+        assert!(cache.too_large_checkpoints.contains_key(&seq));
+        sleep(Duration::from_millis(250)).await;
+        let retry = build_cached_checkpoint(
+            seq,
+            &cache,
+            || async { Err::<CheckpointData, _>(too_large_error()) },
+            failing_parts,
+        )
+        .await;
+        assert!(retry.is_err());
+        sleep(Duration::from_millis(250)).await;
+        assert!(
+            !cache.too_large_checkpoints.contains_key(&seq),
+            "a retry of a remembered checkpoint must not renew its marker"
         );
     }
 }

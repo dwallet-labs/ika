@@ -601,7 +601,208 @@ dropping entries are layered:
   `ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total` and warned once
   per id per hour. Before this, one such child failed the whole page, and with
   it every walk of the collection: on mainnet a single undecodable checkpoint
-  starved the bag event pump of every session in the bag. A `Network` failure
+  starved the bag event pump of every session in the bag. A `TooLarge`
+  failure skips the child the same way, and counts in the same counter: the
+  response holding the child's defining checkpoint is over the client's
+  decode limit (128 MiB for a whole checkpoint). The gRPC client maps tonic's
+  own refusal of such a response to `TooLarge`, matched by status code and
+  tonic's message, and does not count it as a rate-limit answer from the
+  endpoint. Before it reports `TooLarge`, the direct proof provider reads
+  the checkpoint again in parts, because an inclusion proof needs only the
+  certified summary and the latest written state of each object the
+  checkpoint's transactions wrote. One read returns the summary, its
+  signature and the transaction digests. An honest checkpoint lists at most
+  about 225,000: 20,000 scheduled transactions
+  (`max_transactions_per_checkpoint`), plus up to 205,000 accumulator
+  settlement transactions (20,000 × 1,025 accumulator updates, the 1,024 of
+  `max_num_accumulator_events` plus one from gas charging, ÷ 100 per
+  settlement transaction, `max_updates_per_settlement_txn`), plus a few
+  system transactions; about 11 MiB. Then one read per transaction returns
+  only its effects. The read masks are narrow, but the endpoint's work is
+  not: Sui's `GetCheckpoint` loads the whole checkpoint's data whenever the
+  mask names `transactions` (sui-rpc-api `get_checkpoint.rs:86-105` at Sui
+  6a567fa), and `GetTransaction` loads the transaction's whole object set
+  whenever the mask names `effects` (`get_transaction.rs:83-84`,
+  `object_set.rs:16-20`). So the part reads cost the endpoint about the
+  whole read's object loading again, plus one call per transaction. Sui's executor caps each
+  transaction's estimated effects at 512 KiB, or 8 MiB for a system
+  transaction, so each part read decodes at most 16 MiB. That bound holds
+  for effects from Sui protocol version 141 on, which Sui mainnet runs:
+  before 141 the size estimate left out accumulator writes, so older effects
+  could be larger, and a read of them would fail as `TooLarge`.
+
+  The effects reads run 16 at a time, and their results are taken in
+  checkpoint order. Each result is folded into a map of the latest written
+  state of each object, as the loop of Sui's `CheckpointArtifacts::from`
+  does, and then dropped; the map goes to Sui's
+  `CheckpointArtifacts::from_object_states`. The tree built from the parts
+  is the same tree the whole read builds. A result that is an error once
+  its retries are spent stops the reads; errors are seen in checkpoint
+  order, so a failed read is reported only after the reads before it have
+  arrived. The proof is checked
+  against the certified summary as before, so the part reads add no trust in
+  the fullnode. The number of digests must equal the summary's
+  `network_total_transactions` minus the previous checkpoint's, read by the
+  summary's `previous_digest` and refused unless it hashes to that digest;
+  checkpoint 0 counts all of its own. A part read that fails as `Network` is
+  retried on its own, up to four tries with a 250 ms wait that doubles, so
+  the parts already read are kept. A checkpoint found too large is
+  remembered (up to 1,024 of them, as long as a cached tree, 300 s, counted
+  from the whole read that found it; a retry does not renew it), and its
+  whole read is not tried again.
+  Simultaneous builds of one checkpoint's tree share one set of reads.
+  Before either read's effects build the tree, the provider
+  checks that every effects is version 2 and that each object's written
+  versions strictly increase across the effects list, in order (in the part
+  read, as each result is folded). Sui's tree
+  builder asserts the version order, and reads each effects' `written()`,
+  which Sui leaves `unimplemented!` for version 1 effects; either failure
+  ends the process. The list comes from the endpoint and is not yet checked
+  against the certified summary. A list that breaks either condition fails
+  that checkpoint as `Encoding`, so the child is skipped as above. The
+  checkpoint pusher and the mirror server's changeset page run the same
+  check before they build artifacts from a checkpoint. The pusher's archive
+  verification and fold then fail with an error. A checkpoint the fold
+  refuses stops that node's scan at it, and the scan tries it again every
+  tick. Once the cursor is more than 1,000 checkpoints behind the head, the
+  existing catch-up fast-forward jumps past it, and the objects of the
+  skipped span stay missing from the cache, as for any fast-forward. The
+  changeset page answers `internal`. A checkpoint whose fullnode read fails
+  as too large becomes a pending gap of the pusher. The pusher does not
+  read it whole from the fullnode again: a checkpoint never changes, and
+  each such read makes the fullnode load all of it. The gap goes to the
+  checkpoint archive, as a gap the fullnode refuses does. The archive read
+  has no size limit, so the pusher bounds every archive blob, for any gap
+  or lost checkpoint, with the part read's cap (`MAX_CHECKPOINT_OBJECT_STATES`,
+  below): it folds the blob's object states with the written-version check
+  and refuses the blob as soon as they pass the cap, before Sui's tree is
+  built. The folded states give the same tree as Sui's
+  `CheckpointArtifacts::from`. A gap whose archive blob is over the cap is
+  not fetched from the archive again. Like any gap still not repaired at its
+  600 s deadline, it is dropped, counted, and recorded as a lost checkpoint,
+  pinned and scheduled for the archive backfill (below), whose reads the
+  cap bounds the same way. Until a gap or a lost checkpoint is folded, an
+  object it wrote is served from the cache at the version cached before it,
+  as for any gap.
+
+  The whole read also checks, before Sui's conversion of the checkpoint's
+  object set, that every Move object's contents start with a 32-byte id.
+  BCS accepts shorter contents, and that conversion assumes the id is
+  there. A checkpoint that fails is `Encoding`. The checkpoint archive's
+  read goes through Sui's own `fetch_checkpoint` (sui-storage
+  `object_store/util.rs:514-548`), which runs that conversion before ika
+  sees the data, so the archive path does not yet refuse such objects.
+
+  A summary past checkpoint 0 that names no previous checkpoint is
+  refused. The summary is not signature-checked in the part read, so an
+  endpoint that answers wrongly can make the count check pass with any
+  count; a proof built from such an answer still fails at the consumer.
+  Such an endpoint can make the reader issue many more effects reads than
+  an ordinary checkpoint needs, with at most 16 answers of up to 16 MiB
+  held at once, and an object-state map as large as the effects it sends.
+
+  Without a cap, proving an entry of the largest honest checkpoint Sui's
+  limits allow would need this much memory (Sui 6a567fa):
+  - written object states: each user transaction's estimated effects are at
+    most 512 KiB (`max_serialized_tx_effects_size_bytes`); the estimate
+    charges 2,210 bytes fixed, 128 for each written or modified object, and
+    40 for each id-only change, and at most 2,048 ids are deleted per
+    transaction (`max_num_deleted_move_object_ids`). So one user
+    transaction writes at most 2,048 + (524,288 − 2,210 − 2,048 × 40) / 128
+    = 5,486 object states, and 20,000 of them 109,720,000. Settlement
+    writes at most one accumulator object per update, 20,500,000, plus the
+    accumulator root. The few system transactions, at most 8 MiB of
+    estimated effects each at 40 bytes per state, add at most about 1
+    million. In all, at most about 131.3 million object states;
+  - the fold's map holds each in 72 bytes plus `BTreeMap` node overhead,
+    about 120 to 165 bytes, so about 16 to 22 GB;
+  - Sui's `ModifiedObjectTree::new` then holds, while the map is still
+    alive, a 72-byte leaf per state (about 9.5 GB), a position map of about
+    41 bytes per bucket over up to 2^28 buckets (about 11 GB, briefly 16.5 GB
+    while it grows), and a Merkle tree of about two 32-byte nodes per state
+    (about 8.4 GB). The cached tree keeps the last three, about 29 GB;
+  - so the peak is about 45 to 56 GB, and a cached tree of such a
+    checkpoint keeps about 29 GB.
+  This is far above real checkpoints, whose effects are a few KiB per
+  transaction.
+
+  So the part read caps the folded object states at 32 million
+  (`MAX_CHECKPOINT_OBJECT_STATES`), checked as each result is folded and
+  before Sui's tree is built; past it the read stops with `Encoding`, and
+  the entry is skipped. The cap also bounds the pusher's archive reads
+  (above); a checkpoint read whole from the fullnode is under 128 MiB and
+  holds at most a few million states. A
+  checkpoint found over the cap is remembered (up to 1,024 of them, as long
+  as a cached tree, 300 s; a checkpoint never changes) and refused at once
+  afterwards, with the same error, before any read. The part read checks
+  that the summary it got is the one asked for before anything else, so a
+  cap refusal, and what is remembered from it, is always about the
+  checkpoint asked for. One part-read build at the cap, by the same
+  model: the map about 3.8 to 5.3 GB, the leaves about 2.3 GB, the position
+  map about 2.75 GB (2^26 buckets, briefly 4.1 GB while it grows) and the
+  Merkle nodes about 2.0 GB, so a peak of about 11 to 14 GB, and a tree of
+  about 7 GB once built.
+
+  Only one part-read build runs at a time: a build takes a permit for the
+  part read and the tree build, never for the whole read. A build that
+  succeeds keeps the permit until its tree is in the cache and the cache
+  has applied the tree's weight, evicting others past the capacity; the
+  cache applies weights only at its maintenance, so without this two built
+  trees and a third build could be held at once. A build that fails gives
+  the permit back when it ends. Each try of each part
+  read (the digest read, the previous-summary read and each effects read)
+  fails as `Network` after 60 s (`PART_READ_DEADLINE`), so it is retried
+  within its four tries and then fails the page, and the next walk tries
+  again. So one build holds the permit for at most about 4 × 60 s + 1.75 s
+  per part read, with 16 effects reads in flight at a time. The tree cache is
+  weighed by object states, 32 million in all across the cached trees,
+  about 220 bytes per state, so about 7 GB at most; trees from the whole
+  read are weighed the same way. The cache evicts the least recently used
+  trees to admit a new one (moka's LRU policy), so a tree up to the whole
+  capacity is kept and reused. moka's default policy admits an entry that
+  needs room only when it has been looked up more often than the entries it
+  would evict, which a tree just built never has: a large part-read tree was
+  dropped as soon as it was built, and every later proof against its
+  checkpoint read the parts and built the tree again. A tree the cache
+  evicts is not freed at once: moka removes it from its map but defers the
+  drop through crossbeam-epoch (moka-0.12.16 `cht/map/bucket.rs:703`). moka
+  flushes the crossbeam epoch after it initializes a value
+  (`future/cache.rs:1798-1799`) and after its maintenance
+  (`future/base_cache.rs:1460`), but a flush does not by itself free the
+  value at once: the memory comes back only when the epoch is later
+  reclaimed. Memory a validator must have free for the proof provider, as
+  an estimate: the full cache, about 7 GB, plus one part-read build at its
+  peak, about 14 GB, plus one evicted tree awaiting reclamation, about
+  7 GB, so about 28 GB, plus the whole-read builds running at the time,
+  each under about 1 GB (a whole checkpoint is under 128 MiB). The estimate
+  holds while no thread stays pinned in an older crossbeam epoch; a thread
+  that stays pinned can keep more than one evicted tree unfreed. No way is
+  known for a user alone to cause such a pin. The pusher's bounded archive
+  read is not part of this estimate: at the cap it peaks at about the same
+  11 to 14 GB as a part-read build (the fold's map, then the tree), plus the
+  checkpoint blob itself, which the cap does not bound. The pusher reads one
+  archive blob at a time, and that read can run while a part-read build
+  does.
+
+  The remaining risk: a user who builds a checkpoint above the cap makes
+  every entry defined in it unprovable by the part read, so the sessions it
+  defines wait, and the version 7 epoch switch waits with them, until an
+  operator acts. Reaching the cap takes about 4,900 to 5,800 maximal
+  transactions in one consensus commit: 32 million ÷ 5,486 object states
+  per user transaction, or ÷ 6,511 when each also emits 1,025 accumulator
+  updates that settlement writes. Estimated cost, at Sui 6a567fa's gas
+  schedule: computation is at most `max_gas_computation_bucket` (5,000,000)
+  gas units per transaction, so at most 5,000,000 × the reference gas price;
+  at mainnet's reference gas price of 100 MIST (read on 11 November 2026 at
+  Sui epoch 1308; it can change every epoch) that is at most 0.5 SUI per
+  transaction, about 2,450 to 2,900 SUI for 4,900 to 5,800 transactions. Each created object deposits
+  about 0.00076 SUI of storage (about 100 bytes × 100 units × 76 MIST), so
+  2,048 per transaction deposit about 1.6 SUI, about 7,600 to 9,100 SUI in
+  all, 99% refunded on deletion. The 2,048 deleted ids per transaction must
+  be wrapped first by earlier transactions, which costs about as much
+  again. The computation actually charged for such a transaction is
+  estimated, not measured; it may be well under the cap. The hardest part
+  is landing about 5,000 such transactions in one consensus commit. A `Network` failure
   still fails the page, because it is a property of the source, not of the
   child, and the consumer must back off rather than act on a page that
   silently lost its entries.
@@ -1109,7 +1310,15 @@ A direct node therefore re-folds checkpoints from the archive
   recovers it with no list in the release and no operator action. The span a
   fast-forward jumps over is *not* recorded: it was never fetched, it is
   unbounded, and sacrificing it is that path's purpose. Nothing is recorded
-  on a node with no archive, which could never re-fold it.
+  on a node with no archive, which could never re-fold it. A gap the
+  fullnode answered as too large to read whole is recorded like any other:
+  the backfill's archive read is bounded by the object-state cap (per-entry
+  failure isolation, above). A blob over the cap is refused before its tree
+  is built, counted in `ika_ocs_pusher_backfill_failures_total` as
+  `over_state_cap` (not `verification`: an honest checkpoint that large is
+  refused the same way every time), and retried at the backoff; the record
+  stays, so objects it wrote keep their earlier cached versions until their
+  next mutation or a binary with a larger cap folds it.
 - **Recorded on the first decode or fold failure.** A pending gap that
   exists but this binary cannot read is recorded and pinned on its *first*
   such failure, not at the deadline: the gap is held only in memory behind a
@@ -1683,7 +1892,7 @@ The archive backfill exports `ika_ocs_pusher_backfill_outcomes_total{outcome}`
 `folded` / `already_cached` / `nothing_to_fold` / `abandoned`),
 `ika_ocs_pusher_backfill_failures_total{reason}` (`archive_not_found`,
 `archive_fetch`, `archive_timeout`, `missing_committee`, `verification`,
-`currency_lookup`) and the gauge `ika_ocs_pusher_backfill_pending` — the
+`over_state_cap`, `currency_lookup`) and the gauge `ika_ocs_pusher_backfill_pending` — the
 alert target: non-zero for long means the node still lacks objects it
 needs. The lost-checkpoint record exports the gauge
 `ika_ocs_pusher_lost_checkpoints` (records held: pending, or settled and
@@ -1693,7 +1902,7 @@ and `ika_ocs_pusher_lost_checkpoints_overflow_total`; alert on
 any increase of the overflow counter or of `{outcome="abandoned"}` — each is
 a cache gap the backfill will not repair. Any `verification` failure means the archive served a blob that
 does not verify and is also logged as security-critical. A dynamic-field child
-skipped for an encoding error counts in
+skipped for an encoding error or a too-large defining checkpoint counts in
 `ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total`.
 
 Code anchors: `crates/ika-core/src/sui_connector/` — `verified_reader.rs`
