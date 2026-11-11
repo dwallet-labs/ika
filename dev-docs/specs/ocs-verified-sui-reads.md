@@ -618,11 +618,10 @@ The relay exposes verified-read RPCs (`VerifiedObject`,
 `BatchVerifiedObjects`, `VerifiedDynamicFieldsPage`), the `ChangesetPage` currency
 stream (paged `from_seq`+`limit`; see *Freshness and rollback protection*),
 and committee-ratchet plumbing (checkpoint summary/full/by-digest,
-`LastCheckpointOfEpoch`, `get_current_epoch`). Direct nodes also ask one
-another `ObjectCheckpointLookup` — which checkpoint proves an object at an
-exact reference — over the same service; the answer is a bare sequence
-number the asker verifies against the archive itself (see *Asking direct
-peers* under the cache fast path). It serves **reads only** — there is no
+`LastCheckpointOfEpoch`, `get_current_epoch`). Direct nodes read from one
+another over the same surface, unchanged, when one cannot prove an object
+itself, and verify each answer as a mirrored node does (see *The peer
+fallback* under the cache fast path). It serves **reads only** — there is no
 `SubmitTransaction`: writes are notifier-gated and the notifier always uses a
 direct uplink, so no node submits through the relay (a submit-via-relay surface
 would only be an unverified-effects + amplification hazard). Every served read
@@ -1148,8 +1147,8 @@ A direct node therefore re-folds checkpoints from the archive
   archive timeout, so it surfaces as a timeout.
 - **The operator's `sui-checkpoint-archive-backfill` config list**, for a
   checkpoint the node lost without recording it (an older binary, a pending
-  gap the fullnode never served that was lost to a restart) and that no
-  connected direct peer can name for it (see *Asking direct peers* below).
+  gap the fullnode never served that was lost to a restart) and whose objects
+  no connected direct peer can prove either (see *The peer fallback* below).
   (v1.4.2–v1.4.4
   carried a built-in mainnet list, `[342064086, 342064089]`, for the
   epoch-463 stall; the second is the checkpoint above, the first held the
@@ -1240,77 +1239,64 @@ job, and a node that never backfilled it and boots after the archive
 expired it keeps retrying at the 10-minute cap and reports
 `ika_ocs_pusher_backfill_pending` above zero.
 
-**Asking direct peers (a node that never saw the loss).** The records cover
-a checkpoint this node saw and failed on. A node that never saw the loss has
+**The peer fallback (a node that never saw the loss).** The records cover a
+checkpoint this node saw and failed on. A node that never saw the loss has
 none: a new operator, a wiped and resynced database, a node that
 fast-forwarded past the span. In the epoch-463 incident such nodes hung at
-the `verified_system_inner` boot barrier until an operator looked up the
-`System` object's defining checkpoint (`342064086`) and listed it by hand.
-Every up-to-date direct peer knows that number — it is the source checkpoint
-of its own cached snapshot — so a direct node with an archive asks
-(`sui_connector/peer_checkpoint_lookup.rs`):
+the `verified_system_inner` boot barrier until an operator listed the `System`
+object's defining checkpoint (`342064086`) by hand. Every up-to-date direct
+peer could still prove that object — its own proof provider reuses its cached
+snapshot — so a direct node reads it from one, the way a mirrored node reads
+everything (`sui_connector/peer_fallback.rs`):
 
-- **Trigger.** The verified reader on a direct node reports an object it
-  could not prove: a single-object read (the singleton anchors behind the
-  boot barrier and the epoch loop, and bag-walk children resolved one by
-  one) whose provider answered `NotFound`, or a batch read (the validator
-  set) with an empty slot. The provider answers `NotFound` only after
-  `recover_pruned_proof` found no snapshot at the fullnode's exact reference,
-  so an ordinary cache miss never reports. Relay requests served to mirrored
-  peers never report: only this node's own reads start a lookup. A report
-  starts a lookup only once the same object has stayed unprovable for 20 s
-  (a just-written object is unprovable for a moment too); the lookup reads
-  the object's current reference from the node's own fullnode and stops if
-  the cache already holds it.
-- **Ask.** `ObjectCheckpointLookup` on the `SuiStateMirror` relay service
-  (see *Relay protocol*): "which checkpoint proves object `X` at exactly
-  reference `R`?", sent to every connected peer at once (up to 128, above
-  the committee's size: direct nodes may be a small share of it). A peer answers
-  from its verified cache — the source checkpoint of its snapshot at exactly
-  `R` (`VerifiedStateCache::checkpoint_of`, one map read), which includes the
-  snapshots its own lost-checkpoint backfill restored and keeps pinned — or
-  "don't know". A lost-checkpoint record holds only a sequence number, so a
-  checkpoint a peer has not folded yet answers nothing. Candidates are
-  ranked by how many peers named them.
-- **Verify and fold.** Each candidate goes to the pusher's archive backfill
-  exactly as a lost checkpoint does: recorded, pinned, fetched, verified
-  (`verify_archive_checkpoint`, then `build_entries`) and folded only for
-  objects the fullnode reports at exactly the archived reference. Nothing a
-  peer sends is ever folded — the answer carries no object data at all. The
-  requester waits for that backfill to settle (at most 4 minutes; the
-  backfill keeps going after that), then checks its cache, and tries the
-  next candidate only if the object is still unprovable. A wrong candidate
-  that folds nothing settles `nothing_to_fold`, and its record and pin are
-  collected at once; a pending gap, a seq ahead of the scan or one the cache
-  already holds snapshots from is not taken.
-- **Trust.** An answer is an untrusted pointer: a wrong one costs one
-  archive download. There is no quorum, no stake weighting, no trust change
-  and no protocol-version gate.
-- **Bounds.** Per object: one lookup a minute, and at most 3 distinct
-  candidates per object reference for the life of the process (a new
-  version starts a new budget), deduplicated and tried one at a time,
-  stopping at the first that proves it. Node-wide: a lookup budget of 4,
-  refilled one every 30 s; 2 lookups at once; 256 objects tracked. A
-  candidate above the node's processed checkpoint, or older than the
-  archive's retention, is refused before any download. The retention floor
-  is read off the committee chain's retained end-of-epoch summaries: one
-  past the end of the oldest epoch that ended within the last 30 days —
-  conservative by at most one epoch. Serving: a per-requester rate (1/s,
-  burst 16, refused with `TooManyRequests`) and an inflight cap of 64.
-- **Mixed fleets.** A peer that does not know the method — an older binary,
-  a mirrored node, a direct node with `serve-mirror: false` — answers
-  anemo's bare route-miss `NotFound`, which counts as "don't know", never as
-  an error. A peer older than the lost-checkpoint backfill still answers
-  from its cache. A node without an archive does not ask (it has nothing to
-  verify an answer against) but still answers.
-- **What it does not cover.** No connected direct peer holds a snapshot at
-  that reference — every peer lost the checkpoint too (a fleet-wide
-  undecodable checkpoint), or every peer's snapshot aged out of its window
-  (the singleton anchors are pinned; other objects only while a record pins
-  them) — or the checkpoint is older than the archive's retention. And a
-  checkpoint that already has snapshots in this node's cache is settled by
-  the backfill as `already_cached` without a fetch, so an object of it that
-  aged out while a pinned sibling stayed cannot be re-folded this way.
+- **When.** Only on this node's own reads, never on relay requests it serves:
+  a single-object read whose local provider answered `NotFound` (the singleton
+  anchors behind the boot barrier and the epoch loop, and bag-walk children
+  resolved one by one) and an empty slot of a batch read (the validator set).
+  The provider answers `NotFound` only after `recover_pruned_proof` found no
+  snapshot at the fullnode's exact reference, so an ordinary cache miss never
+  falls back.
+- **Over what.** The existing relay surface, unchanged: `verified_object`
+  through `SuiMirrorProofProvider`, one connected peer at a time
+  (`SuiMirrorPeers::scoped`), so a peer whose answer fails a check never hides
+  one whose answer passes. Every direct node already serves it — v1.4.x
+  included — and a mirrored node or an unknown route answers anemo's route
+  miss, a "don't know".
+- **Verification.** Each answer goes through an `OcsVerifiedReader` configured
+  as a mirrored node configures its own (relay provider, `cache_first` off),
+  so it passes the code a mirrored node runs on a relayed object
+  (`verify_response`): the id binding, the committee BLS signature of the
+  summary against this node's `CommitteeStore`, the artifacts-digest binding of
+  the tree root, the Merkle inclusion of the object's full reference, the
+  freshness bound, the reader's high-water, and `check_currency`.
+- **Currency.** A mirrored node proves currency from its changeset index and
+  gets no verdict (`Unknown`, accepted) for an anchor below that index's
+  window. A direct node keeps no changeset index — its currency source is its
+  own fullnode, for every read it serves: the cache folds that fullnode's
+  checkpoints, the provider proves the object it reports, and
+  `recover_pruned_proof` and the archive backfill reuse a snapshot only at its
+  exact current reference. The fallback applies the same rule: a peer's
+  object is accepted only if its reference equals the one this node's
+  fullnode reports now, else `NotCurrent`. An older version (a rollback), a
+  newer one the fullnode has not reached, and a deleted object (the fullnode
+  reports none, so no peer is asked) are all refused, whatever the proof
+  says. The check has no window, so it also refuses the rollback of an anchor
+  older than any changeset retention — the very population the fallback
+  serves — and it trusts the fullnode for nothing a direct node does not
+  already trust it for.
+- **Afterwards.** The direct reader applies its own high-water, serves the
+  object, and shadow-writes the verified snapshot into its cache like any
+  network-verified read (in memory; the pusher's folds supersede it), so the
+  next read is a cache hit.
+- **Bounds.** Two fallbacks at once; at most 16 peers per attempt, in random
+  order, 5 s each; an object whose fallback found nothing acceptable is not
+  tried again for 30 s, and reads of it fail as before meanwhile.
+- **What it does not cover.** No connected direct peer can prove the object
+  at the fullnode's current reference: every peer lost the checkpoint too (a
+  fleet-wide undecodable checkpoint) or none still holds a snapshot of it
+  (the singleton anchors are kept by id; other objects only while a record
+  pins them). The fallback result is not persisted, so a restart falls back
+  once more.
 
 The two **singleton anchors** — the `System` and `DWalletCoordinator`
 inner objects (and their versioned-child inners) — are served from the
@@ -1772,23 +1758,14 @@ any increase of the overflow counter or of `{outcome="abandoned"}` — each is
 a cache gap the backfill will not repair. Any `verification` failure means the archive served a blob that
 does not verify and is also logged as security-critical.
 
-The peer checkpoint lookup exports, on the asking node,
-`ika_ocs_peer_checkpoint_lookups_total{outcome}` (`recovered`,
-`already_cached`, `not_live`, `fullnode_error`, `no_candidate`,
-`not_recovered`, `exhausted`, `backfill_unavailable`, `no_peers`),
-`ika_ocs_peer_checkpoint_answers_total{answer}` (`named`, `unknown`,
-`unimplemented` — an older binary or a non-serving node — and `failed`),
-`ika_ocs_peer_checkpoint_candidates_total{result}` (`submitted`, then
-`folded` / `not_folded`; or refused before any download as `above_head`,
-`beyond_retention`, `already_tried`, `over_budget`) and
-`ika_ocs_peer_checkpoint_lookups_throttled_total{reason}` (`rate_limit`,
-`concurrency`, `tracked_full`); on the serving node,
-`ika_ocs_serve_object_checkpoint_lookup_total{result}` (`named`, `unknown`)
-next to the per-op `ika_ocs_serve_request_total{op="object_checkpoint_lookup"}`.
-All are absent until their first event. A rising `no_candidate` or
-`exhausted` while the reader keeps failing means no connected peer holds the
-object: the operator-list fallback (`sui-checkpoint-archive-backfill`) still
-applies. A dynamic-field child
+The peer fallback exports `ika_ocs_direct_peer_fallback_total{outcome}`
+(`served`, `not_current`, `unverified`, `unavailable`, `not_live`,
+`fullnode_error`, `skipped`), absent until its first event; each peer answer
+it verifies also counts in `ika_ocs_proof_verify_total` /
+`ika_ocs_proof_verify_failures_total` like any relayed read. A rising
+`unavailable` while the reader keeps failing means no connected direct peer
+can prove the object: the operator-list fallback still applies. Any
+`not_current` or `unverified` means a peer served an answer this node refused. A dynamic-field child
 skipped for an encoding error counts in
 `ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total`.
 
