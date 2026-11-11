@@ -34,6 +34,8 @@ use serde::{Deserialize, Serialize};
 use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSInclusionProof};
 use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::digests::TransactionDigest;
+use sui_types::effects::TransactionEffects;
+use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
 };
@@ -41,7 +43,7 @@ use sui_types::object::Object;
 
 use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::transport::{DynamicFieldEntry, SuiTransport, TransportError};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Serving-side cap on the number of object ids one `BatchVerifiedObjects`
 /// request may carry — each id costs one inclusion-proof build, so this bounds
@@ -594,6 +596,52 @@ struct CachedCheckpoint {
     tree: ModifiedObjectTree,
 }
 
+/// Build checkpoint `seq`'s summary and modified-object tree.
+///
+/// The tree needs only the effects of the checkpoint's transactions.
+/// `fetch_full` reads the whole checkpoint. When that read is over the
+/// client's decode limit (`TooLarge`), `fetch_parts` reads the summary and
+/// each transaction's effects in separate, smaller reads instead. Any other
+/// error of `fetch_full` is returned as is.
+async fn build_cached_checkpoint<Full, FullFut, Parts, PartsFut>(
+    seq: CheckpointSequenceNumber,
+    fetch_full: Full,
+    fetch_parts: Parts,
+) -> Result<CachedCheckpoint, TransportError>
+where
+    Full: FnOnce() -> FullFut,
+    FullFut: Future<Output = Result<CheckpointData, TransportError>>,
+    Parts: FnOnce() -> PartsFut,
+    PartsFut: Future<
+        Output = Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError>,
+    >,
+{
+    let (summary, artifacts) = match fetch_full().await {
+        Ok(data) => {
+            let artifacts = CheckpointArtifacts::from(&data);
+            (data.checkpoint_summary, artifacts)
+        }
+        Err(TransportError::TooLarge(reason)) => {
+            info!(
+                seq,
+                reason, "whole checkpoint is over the decode limit; reading its effects in parts"
+            );
+            let (summary, effects) = fetch_parts().await?;
+            if *summary.sequence_number() != seq {
+                return Err(TransportError::Encoding(format!(
+                    "asked for checkpoint {seq}, got the summary of {}",
+                    summary.sequence_number()
+                )));
+            }
+            (summary, CheckpointArtifacts::from(effects.as_slice()))
+        }
+        Err(error) => return Err(error),
+    };
+    let tree = ModifiedObjectTree::new(&artifacts)
+        .map_err(|e| TransportError::Encoding(format!("ModifiedObjectTree::new({seq}): {e}")))?;
+    Ok(CachedCheckpoint { summary, tree })
+}
+
 impl ProofCache {
     fn new(cfg: &ProofCacheConfig) -> Self {
         Self {
@@ -659,15 +707,14 @@ impl LocalProofProvider {
             return Ok(c);
         }
         self.metrics.proof_tree_cache_misses_total.inc();
-        let data = self.raw.get_full_checkpoint(seq).await?;
-        let artifacts = CheckpointArtifacts::from(&data);
-        let tree = ModifiedObjectTree::new(&artifacts).map_err(|e| {
-            TransportError::Encoding(format!("ModifiedObjectTree::new({seq}): {e}"))
-        })?;
-        let entry = Arc::new(CachedCheckpoint {
-            summary: data.checkpoint_summary,
-            tree,
-        });
+        let entry = Arc::new(
+            build_cached_checkpoint(
+                seq,
+                || self.raw.get_full_checkpoint(seq),
+                || self.raw.get_checkpoint_effects_in_parts(seq),
+            )
+            .await?,
+        );
         self.cache.trees.insert(seq, entry.clone()).await;
         Ok(entry)
     }
@@ -886,16 +933,20 @@ impl ProofProvider for LocalProofProvider {
 mod tests {
     use super::*;
 
-    use sui_light_client::proof::ocs::ModifiedObjectTree;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSTarget};
     use sui_types::base_types::SequenceNumber;
     use sui_types::committee::Committee as SuiCommittee;
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::effects::TransactionEffectsAPI;
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::{
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
     };
     use sui_types::object::Owner;
+    use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
 
     struct StaticSnapshotCache {
         entry: VerifiedObjectEntry,
@@ -1224,5 +1275,132 @@ mod tests {
                 .get(),
             0
         );
+    }
+
+    /// A checkpoint of three transactions that create, mutate, transfer and
+    /// delete objects, as one whole read returns it.
+    fn whole_checkpoint(seq: CheckpointSequenceNumber) -> CheckpointData {
+        let mut builder = TestCheckpointBuilder::new(seq)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .create_owned_object(2)
+            .create_owned_object(3)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .delete_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .transfer_object(3, 1)
+            .create_owned_object(4)
+            .finish_transaction();
+        CheckpointData::from(builder.build_checkpoint())
+    }
+
+    /// What the part reads return for `data`: its summary and each
+    /// transaction's effects, and nothing else.
+    fn parts_of(data: &CheckpointData) -> (CertifiedCheckpointSummary, Vec<TransactionEffects>) {
+        (
+            data.checkpoint_summary.clone(),
+            data.transactions
+                .iter()
+                .map(|transaction| transaction.effects.clone())
+                .collect(),
+        )
+    }
+
+    /// When the whole checkpoint is over the decode limit, the summary and the
+    /// effects are read in parts and the tree is built from them. Every proof
+    /// from that tree is byte-identical to the proof the whole checkpoint
+    /// gives, and verifies, so the proof uses nothing else from the whole
+    /// checkpoint.
+    #[tokio::test]
+    async fn a_too_large_checkpoint_is_read_in_parts_and_gives_the_same_proofs() {
+        let seq = 7;
+        let data = whole_checkpoint(seq);
+        let parts = parts_of(&data);
+
+        let from_whole = build_cached_checkpoint(
+            seq,
+            || async { Ok(data.clone()) },
+            || async {
+                Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
+                    TransportError::Network("the parts must not be read".into()),
+                )
+            },
+        )
+        .await
+        .expect("the whole read succeeds");
+        let parts_read = AtomicBool::new(false);
+        let from_parts = build_cached_checkpoint(
+            seq,
+            || async {
+                Err::<CheckpointData, _>(TransportError::TooLarge(
+                    "Error, decoded message length too large: found 140000000 bytes, \
+                     the limit is: 134217728 bytes"
+                        .into(),
+                ))
+            },
+            || {
+                parts_read.store(true, Ordering::SeqCst);
+                async { Ok(parts.clone()) }
+            },
+        )
+        .await
+        .expect("the part reads build the tree");
+
+        assert!(parts_read.load(Ordering::SeqCst));
+        assert_eq!(from_parts.summary.digest(), from_whole.summary.digest());
+        let latest_refs: BTreeMap<ObjectID, ObjectRef> = data
+            .transactions
+            .iter()
+            .flat_map(|transaction| transaction.effects.written())
+            .map(|object_ref| (object_ref.0, object_ref))
+            .collect();
+        assert!(
+            latest_refs.len() >= 4,
+            "the checkpoint writes several objects"
+        );
+        for object_ref in latest_refs.into_values() {
+            let whole_proof = from_whole
+                .tree
+                .get_inclusion_proof(object_ref)
+                .expect("the whole read proves every written object");
+            let parts_proof = from_parts
+                .tree
+                .get_inclusion_proof(object_ref)
+                .expect("the part reads prove every written object");
+            assert_eq!(
+                bcs::to_bytes(&parts_proof).unwrap(),
+                bcs::to_bytes(&whole_proof).unwrap(),
+                "proof of {object_ref:?} differs between the two reads"
+            );
+            parts_proof
+                .verify(&OCSTarget::new_inclusion_target(object_ref))
+                .expect("the proof from the part reads verifies");
+        }
+    }
+
+    /// Only a too-large whole read falls back to the part reads. Any other
+    /// failure of the whole read is returned, and nothing else is read.
+    #[tokio::test]
+    async fn a_network_error_on_the_whole_read_is_returned_without_reading_parts() {
+        let seq = 7;
+        let parts = parts_of(&whole_checkpoint(seq));
+        let parts_read = AtomicBool::new(false);
+        let result = build_cached_checkpoint(
+            seq,
+            || async {
+                Err::<CheckpointData, _>(TransportError::Network("connection reset".into()))
+            },
+            || {
+                parts_read.store(true, Ordering::SeqCst);
+                async { Ok(parts.clone()) }
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(TransportError::Network(_))));
+        assert!(!parts_read.load(Ordering::SeqCst));
     }
 }

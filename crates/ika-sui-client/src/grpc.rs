@@ -20,6 +20,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use fastcrypto::traits::ToFromBytes;
 use futures::StreamExt;
+use futures::stream;
 use ika_config::node::{SuiGrpcHeaderValue, SuiGrpcHeaders};
 use move_core_types::language_storage::StructTag;
 use prost_types::value::Kind as ProtoValueKind;
@@ -35,7 +36,7 @@ use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, Tra
 use sui_types::committee::Committee;
 use sui_types::crypto::AuthorityStrongQuorumSignInfo;
 use sui_types::digests::{ChainIdentifier, CheckpointDigest};
-use sui_types::effects::TransactionEvents;
+use sui_types::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEvents};
 use sui_types::full_checkpoint_content::{Checkpoint as FullCheckpoint, CheckpointData};
 use sui_types::gas_coin::{GAS, GasCoin};
 use sui_types::messages_checkpoint::{
@@ -59,6 +60,22 @@ use crate::transport::{
 /// as soon as it accumulates more than that; and the whole set is not needed
 /// in the first place. Stop paging at the cap.
 const MAX_GAS_PAYMENT_OBJECTS: usize = 256;
+
+/// The most bytes a whole-checkpoint read decodes.
+pub const FULL_CHECKPOINT_DECODE_LIMIT: usize = 128 * 1024 * 1024;
+
+/// The most bytes one read of [`SuiGrpcClient::get_checkpoint_effects_in_parts`]
+/// decodes. Its largest read is one transaction's effects. Sui's executor
+/// refuses a transaction whose estimated effects pass 512 KiB, or 8 MiB for a
+/// system transaction (`max_serialized_tx_effects_size_bytes` and
+/// `max_serialized_tx_effects_size_bytes_system_tx`); a refused transaction
+/// commits small failure effects instead. The other read carries the summary
+/// and at most `max_transactions_per_checkpoint` (20,000) digests, about 1 MiB.
+/// Twice the system-transaction cap leaves room for the protobuf framing.
+pub const CHECKPOINT_PART_DECODE_LIMIT: usize = 16 * 1024 * 1024;
+
+/// How many per-transaction effects reads one checkpoint keeps in flight.
+const CHECKPOINT_PART_CONCURRENCY: usize = 16;
 
 /// Deadline for a transaction submission.
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -231,6 +248,103 @@ impl SuiGrpcClient {
         sequence_number: CheckpointSequenceNumber,
     ) -> Result<CheckpointData, TransportError> {
         SuiTransport::get_full_checkpoint(self, sequence_number).await
+    }
+
+    /// The certified summary of checkpoint `seq` and the effects of each of
+    /// its transactions, in checkpoint order, read in parts instead of as one
+    /// whole checkpoint. Built for a checkpoint whose whole read is over
+    /// [`FULL_CHECKPOINT_DECODE_LIMIT`]: the effects are all an object
+    /// inclusion proof needs from it.
+    ///
+    /// The first read returns the summary, its signature and the transaction
+    /// digests. Then each transaction's effects come in a read of their own.
+    /// Every read decodes at most [`CHECKPOINT_PART_DECODE_LIMIT`]. Nothing
+    /// read here is trusted: a proof built from these effects is checked
+    /// against the certified summary by whoever verifies it.
+    pub async fn get_checkpoint_effects_in_parts(
+        &self,
+        seq: CheckpointSequenceNumber,
+    ) -> Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError> {
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::GetCheckpointRequest::by_sequence_number(seq);
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec![
+                "summary.bcs".into(),
+                "signature".into(),
+                "transactions.digest".into(),
+            ],
+        });
+        let response = self
+            .gated(async move {
+                rpc.ledger_client()
+                    .max_decoding_message_size(CHECKPOINT_PART_DECODE_LIMIT)
+                    .get_checkpoint(request)
+                    .await
+            })
+            .await?
+            .into_inner();
+        let checkpoint = response
+            .checkpoint
+            .ok_or_else(|| TransportError::NotFound(format!("checkpoint {seq} not found")))?;
+        let summary = Self::decode_certified_summary(&checkpoint)?;
+        let digests = checkpoint
+            .transactions
+            .iter()
+            .map(|executed| {
+                executed
+                    .digest
+                    .as_deref()
+                    .ok_or_else(|| TransportError::Encoding("missing transaction digest".into()))?
+                    .parse::<TransactionDigest>()
+                    .map_err(|e| {
+                        TransportError::Encoding(format!("decode transaction digest: {e}"))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let effects = stream::iter(digests)
+            .map(|digest| self.get_transaction_effects(digest))
+            .buffered(CHECKPOINT_PART_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((summary, effects))
+    }
+
+    /// The effects of `digest`, alone, under [`CHECKPOINT_PART_DECODE_LIMIT`].
+    async fn get_transaction_effects(
+        &self,
+        digest: TransactionDigest,
+    ) -> Result<TransactionEffects, TransportError> {
+        let mut rpc = self.rpc.clone();
+        let mut request = proto::GetTransactionRequest::default();
+        request.digest = Some(digest.to_string());
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["effects.bcs".into()],
+        });
+        let response = self
+            .gated(async move {
+                rpc.ledger_client()
+                    .max_decoding_message_size(CHECKPOINT_PART_DECODE_LIMIT)
+                    .get_transaction(request)
+                    .await
+            })
+            .await?
+            .into_inner();
+        let effects: TransactionEffects = response
+            .transaction
+            .ok_or_else(|| TransportError::NotFound(format!("transaction {digest} not found")))?
+            .effects()
+            .bcs()
+            .deserialize()
+            .map_err(|e| TransportError::Encoding(format!("decode effects.bcs: {e}")))?;
+        if *effects.transaction_digest() != digest {
+            return Err(TransportError::Encoding(format!(
+                "effects returned for transaction {digest} belong to {}",
+                effects.transaction_digest()
+            )));
+        }
+        Ok(effects)
     }
 
     pub async fn get_object(&self, object_id: ObjectID) -> Result<Object, TransportError> {
@@ -928,7 +1042,7 @@ impl SuiTransport for SuiGrpcClient {
         let response = self
             .gated(async move {
                 rpc.ledger_client()
-                    .max_decoding_message_size(128 * 1024 * 1024)
+                    .max_decoding_message_size(FULL_CHECKPOINT_DECODE_LIMIT)
                     .get_checkpoint(request)
                     .await
             })

@@ -607,7 +607,16 @@ dropping entries are layered:
   decode limit (128 MiB for a whole checkpoint). The gRPC client maps tonic's
   own refusal of such a response to `TooLarge`, matched by status code and
   tonic's message, and does not count it as a rate-limit answer from the
-  endpoint. A `Network` failure
+  endpoint. Before it reports `TooLarge`, the direct proof provider reads
+  the checkpoint again in parts, because an inclusion proof needs only the
+  certified summary and each transaction's effects. One read returns the
+  summary, its signature and the transaction digests (at most 20,000). Then
+  one read per transaction returns only its effects. Sui's executor caps
+  each transaction's estimated effects at 512 KiB, or 8 MiB for a system
+  transaction, so each part read decodes at most 16 MiB. The tree built from
+  the parts is the same tree the whole read builds. The proof is checked
+  against the certified summary as before, so the part reads add no trust in
+  the fullnode. A `Network` failure
   still fails the page, because it is a property of the source, not of the
   child, and the consumer must back off rather than act on a page that
   silently lost its entries.
