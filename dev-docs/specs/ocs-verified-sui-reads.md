@@ -751,14 +751,19 @@ dropping entries are layered:
   about 220 bytes per state, so about 7 GB at most; trees from the whole
   read are weighed the same way. A tree the cache evicts, or a new tree it
   rejects, is not freed at once: moka removes it from its map but defers the
-  drop through crossbeam-epoch (moka-0.12.16 `cht/map/bucket.rs:703`), and
-  moka flushes that deferral only after it initializes a value
-  (`future/cache.rs:1798-1799`), so the memory comes back only when the
-  epoch is later reclaimed. Memory a validator must have free for the proof
-  provider: the full cache, about 7 GB, plus one part-read build at its
+  drop through crossbeam-epoch (moka-0.12.16 `cht/map/bucket.rs:703`). moka
+  flushes the crossbeam epoch after it initializes a value
+  (`future/cache.rs:1798-1799`) and after its maintenance
+  (`future/base_cache.rs:1460`), but a flush does not by itself free the
+  value at once: the memory comes back only when the epoch is later
+  reclaimed. Memory a validator must have free for the proof provider, as
+  an estimate: the full cache, about 7 GB, plus one part-read build at its
   peak, about 14 GB, plus one evicted tree awaiting reclamation, about
   7 GB, so about 28 GB, plus the whole-read builds running at the time,
-  each under about 1 GB (a whole checkpoint is under 128 MiB).
+  each under about 1 GB (a whole checkpoint is under 128 MiB). The estimate
+  holds while no thread stays pinned in an older crossbeam epoch; a thread
+  that stays pinned can keep more than one evicted tree unfreed. No way is
+  known for a user alone to cause such a pin.
 
   The remaining risk: a user who builds a checkpoint above the cap makes
   every entry defined in it unprovable by the part read, so the sessions it
