@@ -209,6 +209,8 @@ impl Server {
     /// to read whole. A part read that fails refuses the page with the reason:
     /// skipping the checkpoint would leave the receiver, which folds only a
     /// contiguous chain, at a gap it reports forever without saying why.
+    // The handler's own error type: anemo fixes it to `Status`.
+    #[allow(clippy::result_large_err)]
     async fn changeset_in_parts(
         &self,
         seq: CheckpointSequenceNumber,
@@ -586,7 +588,6 @@ mod tests {
     use sui_types::base_types::TransactionDigest;
     use sui_types::committee::Committee;
     use sui_types::gas::GasCostSummary;
-    use sui_types::message_envelope::Message;
     use sui_types::messages_checkpoint::{
         CheckpointCommitment, CheckpointContents, CheckpointSummary,
     };
@@ -761,6 +762,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::result_large_err)]
     async fn page(server: &Server, from_seq: CheckpointSequenceNumber) -> Result<Vec<u64>, Status> {
         server
             .changeset_page(Request::new(ChangesetPageRequest {
