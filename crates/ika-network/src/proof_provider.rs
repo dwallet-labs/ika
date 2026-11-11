@@ -105,6 +105,12 @@ pub struct ProofProviderMetrics {
     pub serve_request_by_peer_total: IntCounterVec, // labels: ["op", "peer"]
     /// Serving-side handler latency, by op.
     pub serve_latency_seconds: HistogramVec, // labels: ["op"]
+    /// Changesets of checkpoints too large to read whole, read in parts to
+    /// serve a `changeset_page`, by outcome: `served`, or `failed` (the part
+    /// read failed or passed the entry cap; the page is refused with the
+    /// reason instead of skipping the checkpoint, so mirrored nodes reading
+    /// through this relay cannot advance past it until it is served).
+    pub serve_changeset_part_reads_total: IntCounterVec, // labels: ["outcome"]
 
     // -- Dynamic-field walk (both roles) --
     /// Children scanned in `verified_dynamic_fields_page` (across all pages).
@@ -145,7 +151,7 @@ pub struct ProofProviderMetrics {
 
 impl ProofProviderMetrics {
     pub fn new(registry: &Registry) -> Arc<Self> {
-        Arc::new(Self {
+        let metrics = Arc::new(Self {
             proof_built_total: register_int_counter_vec_with_registry!(
                 "ika_ocs_proof_built_total",
                 "OCS inclusion proofs successfully constructed (sui-state-direct only)",
@@ -223,6 +229,13 @@ impl ProofProviderMetrics {
                 registry,
             )
             .unwrap(),
+            serve_changeset_part_reads_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_serve_changeset_part_reads_total",
+                "Changesets of checkpoints too large to read whole, read in parts to serve a changeset_page (sui-state-direct serving side), by outcome: served, or failed (the page is refused with the reason; mirrored nodes reading through this relay cannot advance past the checkpoint)",
+                &["outcome"],
+                registry,
+            )
+            .unwrap(),
             dynamic_fields_walk_entries_seen_total: register_int_counter_with_registry!(
                 "ika_ocs_dynamic_fields_walk_entries_seen_total",
                 "Children scanned during a verified dynamic-field walk",
@@ -286,7 +299,15 @@ impl ProofProviderMetrics {
                 registry,
             )
             .unwrap(),
-        })
+        });
+        // Present at 0 from the start, so an alert on `failed` reads 0 rather
+        // than absent on a relay that never served a too-large checkpoint.
+        for outcome in ["served", "failed"] {
+            metrics
+                .serve_changeset_part_reads_total
+                .with_label_values(&[outcome]);
+        }
+        metrics
     }
 
     pub fn new_for_testing() -> Arc<Self> {
@@ -390,6 +411,20 @@ pub trait ProofProvider: Send + Sync {
         &self,
         request: VerifiedDynamicFieldsPageRequest,
     ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError>;
+
+    /// Checkpoint `seq`'s changeset read in parts, to serve mirrored nodes a
+    /// checkpoint whose whole read is over the decode limit. Nothing read here
+    /// is trusted: the receiver binds the object states to the summary's
+    /// committed artifacts digest. Only a provider over a direct fullnode
+    /// reads parts; the default refuses.
+    async fn checkpoint_changeset_in_parts(
+        &self,
+        seq: CheckpointSequenceNumber,
+    ) -> Result<CheckpointChangeset, TransportError> {
+        Err(TransportError::TooLarge(format!(
+            "checkpoint {seq} is over the decode limit, and this provider cannot read it in parts"
+        )))
+    }
 }
 
 /// Read-only bridge to the durable, already-verified object snapshots owned by
@@ -617,9 +652,18 @@ struct ProofCache {
     /// build's peak memory is in use at once. A build takes the permit for
     /// the part read and the tree build, and keeps it until its tree is in
     /// the cache and the cache has applied the tree's weight (evicting
-    /// others); a failed build gives it back when it ends. Waiting for it is
-    /// bounded by [`PART_READ_PERMIT_WAIT`].
+    /// others); a failed build gives it back when it ends. A changeset read
+    /// in parts takes the same permit for its read. Waiting for it is bounded
+    /// by [`PART_READ_PERMIT_WAIT`].
     part_read_builds: Arc<Semaphore>,
+    /// Changesets of checkpoints too large to read whole, read in parts and
+    /// served to mirrored nodes. Weighed by object states, least recently
+    /// used evicted first, like `trees`.
+    changesets: Cache<CheckpointSequenceNumber, Arc<CheckpointChangeset>>,
+    /// Checkpoints whose changeset passed [`MAX_CHANGESET_ENTRY_OBJECT_STATES`]:
+    /// refused at once, before any read and without waiting for
+    /// `part_read_builds`.
+    changeset_over_cap: Cache<CheckpointSequenceNumber, ()>,
 }
 
 /// How many too-large checkpoint numbers [`ProofCache`] remembers, and how
@@ -641,6 +685,18 @@ const PART_READ_PERMIT_WAIT: Duration = Duration::from_secs(20);
 /// per-read deadlines and the object-state cap, and the whole read gets this.
 /// A whole read is at most `FULL_CHECKPOINT_DECODE_LIMIT` (128 MiB).
 const WHOLE_CHECKPOINT_READ_DEADLINE: Duration = Duration::from_secs(120);
+
+/// The most object states a changeset entry served to mirrored nodes carries.
+/// An entry ships about 72 bytes per state (id, version, digest), so the cap
+/// keeps one entry near 150 MB, well under the 1 GiB p2p frame, and bounds
+/// what a mirrored node decodes and re-derives the artifacts digest over. An
+/// honest checkpoint too large to read whole holds far fewer: its size comes
+/// from object contents and transactions, which the entry does not carry.
+pub const MAX_CHANGESET_ENTRY_OBJECT_STATES: usize = 2_000_000;
+
+/// A checkpoint's certified summary and the latest written state of each
+/// object its transactions wrote: what a changeset entry carries.
+pub type CheckpointChangeset = (CertifiedCheckpointSummary, CheckpointObjectStates);
 
 /// The part-read build permit, waited for at most [`PART_READ_PERMIT_WAIT`].
 async fn acquire_part_read_permit(
@@ -747,6 +803,71 @@ where
     })
     .await
     .map_err(|error| TransportError::Network(format!("checkpoint {seq} build task: {error}")))?
+}
+
+/// Checkpoint `seq`'s changeset from `cache`, or read in parts by
+/// `read_parts` and cached. Simultaneous requests share one read, which holds
+/// the part-read build permit. A checkpoint whose changeset passed
+/// [`MAX_CHANGESET_ENTRY_OBJECT_STATES`], or whose tree passed the tree cap,
+/// is remembered and refused at once.
+async fn get_or_read_changeset<Parts, PartsFut>(
+    cache: &ProofCache,
+    seq: CheckpointSequenceNumber,
+    read_parts: Parts,
+) -> Result<Arc<CheckpointChangeset>, TransportError>
+where
+    Parts: FnOnce() -> PartsFut,
+    PartsFut: Future<Output = Result<CheckpointChangeset, TransportError>>,
+{
+    if cache.changeset_over_cap.contains_key(&seq)
+        || cache.over_state_cap_checkpoints.contains_key(&seq)
+    {
+        return Err(object_state_cap_error(
+            seq,
+            MAX_CHANGESET_ENTRY_OBJECT_STATES,
+        ));
+    }
+    cache
+        .changesets
+        .try_get_with(seq, async {
+            let _held = acquire_part_read_permit(cache, seq).await?;
+            let (summary, states) = match read_parts().await {
+                Ok(parts) => parts,
+                Err(error) => {
+                    if is_object_state_cap_error(&error) {
+                        cache.changeset_over_cap.insert(seq, ()).await;
+                    }
+                    return Err(error);
+                }
+            };
+            if *summary.sequence_number() != seq {
+                return Err(TransportError::Encoding(format!(
+                    "asked for checkpoint {seq}, got the summary of {}",
+                    summary.sequence_number()
+                )));
+            }
+            Ok(Arc::new((summary, states)))
+        })
+        .await
+        .map_err(|error| (*error).clone())
+}
+
+/// [`get_or_read_changeset`] in a task of its own, so the read outlives a
+/// caller that gives up (see [`get_or_build_checkpoint_detached`]).
+async fn get_or_read_changeset_detached<Parts, PartsFut>(
+    cache: Arc<ProofCache>,
+    seq: CheckpointSequenceNumber,
+    read_parts: Parts,
+) -> Result<Arc<CheckpointChangeset>, TransportError>
+where
+    Parts: FnOnce() -> PartsFut + Send + 'static,
+    PartsFut: Future<Output = Result<CheckpointChangeset, TransportError>> + Send,
+{
+    tokio::spawn(async move { get_or_read_changeset(&cache, seq, read_parts).await })
+        .await
+        .map_err(|error| {
+            TransportError::Network(format!("checkpoint {seq} changeset task: {error}"))
+        })?
 }
 
 /// Build checkpoint `seq`'s summary and modified-object tree.
@@ -898,6 +1019,18 @@ impl ProofCache {
                 .time_to_live(cfg.tree_ttl)
                 .build(),
             part_read_builds: Arc::new(Semaphore::new(1)),
+            changesets: Cache::builder()
+                .max_capacity(2 * MAX_CHANGESET_ENTRY_OBJECT_STATES as u64)
+                .weigher(|_, changeset: &Arc<CheckpointChangeset>| {
+                    u32::try_from(changeset.1.len().max(1)).unwrap_or(u32::MAX)
+                })
+                .eviction_policy(EvictionPolicy::lru())
+                .time_to_live(cfg.tree_ttl)
+                .build(),
+            changeset_over_cap: Cache::builder()
+                .max_capacity(TOO_LARGE_CHECKPOINTS_CAPACITY)
+                .time_to_live(cfg.tree_ttl)
+                .build(),
         }
     }
 }
@@ -1180,6 +1313,23 @@ impl ProofProvider for LocalProofProvider {
             claimed_latest_checkpoint_seq: head,
             skipped_entry_ids,
         })
+    }
+
+    async fn checkpoint_changeset_in_parts(
+        &self,
+        seq: CheckpointSequenceNumber,
+    ) -> Result<CheckpointChangeset, TransportError> {
+        let raw = self.raw.clone();
+        let changeset =
+            get_or_read_changeset_detached(self.cache.clone(), seq, move || async move {
+                raw.get_checkpoint_object_states_in_parts_up_to(
+                    seq,
+                    MAX_CHANGESET_ENTRY_OBJECT_STATES,
+                )
+                .await
+            })
+            .await?;
+        Ok((*changeset).clone())
     }
 }
 
@@ -2372,5 +2522,91 @@ mod tests {
             .expect("served from the cache, at once")
             .expect("the tree");
         assert_eq!(part_reads.load(Ordering::SeqCst), 1);
+    }
+
+    /// A changeset read in parts is cached, and simultaneous requests share
+    /// one read.
+    #[tokio::test]
+    async fn a_changeset_read_in_parts_is_read_once() {
+        let cache = proof_cache();
+        let seq = 7;
+        let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
+        let reads = AtomicU32::new(0);
+        let read = || {
+            reads.fetch_add(1, Ordering::SeqCst);
+            let parts = parts.clone();
+            async move {
+                yield_now().await;
+                Ok(parts)
+            }
+        };
+        let (first, second) = tokio::join!(
+            get_or_read_changeset(&cache, seq, read),
+            get_or_read_changeset(&cache, seq, read),
+        );
+        assert_eq!(first.unwrap().1, parts.1);
+        assert_eq!(second.unwrap().1, parts.1);
+        get_or_read_changeset(&cache, seq, read).await.unwrap();
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+    }
+
+    /// A changeset over the entry cap is remembered: asked again, it is
+    /// refused with the same error at once, with no read and without waiting
+    /// for the permit.
+    #[tokio::test]
+    async fn a_changeset_over_the_entry_cap_is_refused_at_once_afterwards() {
+        let cache = proof_cache();
+        let seq = 7;
+        let first = get_or_read_changeset(&cache, seq, || async {
+            Err::<CheckpointChangeset, _>(object_state_cap_error(
+                seq,
+                MAX_CHANGESET_ENTRY_OBJECT_STATES,
+            ))
+        })
+        .await;
+        assert!(matches!(&first, Err(error) if is_object_state_cap_error(error)));
+
+        let _held = cache.part_read_builds.acquire().await.expect("the permit");
+        let reads = AtomicU32::new(0);
+        let second = timeout(
+            Duration::from_secs(5),
+            get_or_read_changeset(&cache, seq, || {
+                reads.fetch_add(1, Ordering::SeqCst);
+                no_parts()
+            }),
+        )
+        .await;
+        match second {
+            Ok(Err(error)) if is_object_state_cap_error(&error) => {}
+            _ => panic!("a changeset over the entry cap must be refused at once"),
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+    }
+
+    /// A changeset read whose caller gives up still finishes and is cached.
+    #[tokio::test(start_paused = true)]
+    async fn a_changeset_read_outlives_a_caller_that_gives_up() {
+        let cache = Arc::new(proof_cache());
+        let reads = Arc::new(AtomicU32::new(0));
+        let seq = 7;
+        let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
+        let read = || {
+            let reads = reads.clone();
+            let parts = parts.clone();
+            get_or_read_changeset_detached(cache.clone(), seq, move || async move {
+                reads.fetch_add(1, Ordering::SeqCst);
+                sleep(Duration::from_secs(45)).await;
+                Ok(parts)
+            })
+        };
+
+        assert!(timeout(Duration::from_secs(30), read()).await.is_err());
+        sleep(Duration::from_secs(20)).await;
+        let served = timeout(Duration::from_secs(1), read())
+            .await
+            .expect("served from the cache, at once")
+            .expect("the changeset");
+        assert_eq!(served.1, parts.1);
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
     }
 }

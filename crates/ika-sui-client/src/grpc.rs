@@ -437,6 +437,22 @@ impl SuiGrpcClient {
         .await
     }
 
+    /// [`Self::get_checkpoint_object_states_in_parts`], refused as soon as the
+    /// fold passes `max_states` object states (never more than
+    /// [`MAX_CHECKPOINT_OBJECT_STATES`]).
+    pub async fn get_checkpoint_object_states_in_parts_up_to(
+        &self,
+        seq: CheckpointSequenceNumber,
+        max_states: usize,
+    ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
+        self.get_checkpoint_object_states_in_parts_capped(
+            seq,
+            max_states.min(MAX_CHECKPOINT_OBJECT_STATES),
+            PART_READ_DEADLINE,
+        )
+        .await
+    }
+
     /// [`Self::get_checkpoint_object_states_in_parts`] with at most
     /// `max_states` object states, refused as soon as the fold passes it,
     /// and `deadline` on each try of each part read.

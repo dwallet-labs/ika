@@ -494,6 +494,18 @@ one, so `time() -` it is the alert signal even on a node whose relays never
 served it. Nothing about verification changes: every entry is still BLS- and
 artifacts-bound and folded only contiguously.
 
+**A checkpoint too large to read whole.** A relay serves its changeset from
+the bounded part read (summary plus object states, which is exactly what an
+entry carries), alone in its page. A page ends before it, and the next page
+is just it. The entry is capped at 2 million object states (about 150 MB on
+the wire). A part read that fails, or a checkpoint past the cap, refuses the
+page with the checkpoint and the reason, counted in
+`ika_ocs_serve_changeset_part_reads_total{outcome="failed"}`. The relay no
+longer fast-forwards past such a checkpoint, which had left the receiver at a
+gap it reported forever without saying why. The receiver binds the entry to
+the summary's artifacts digest as it does any other, so a part-read entry
+gains no trust.
+
 The out-of-order queue retains at most 256 changesets. It counts each drop,
 reports contiguous head, highest verified sequence seen and queue depth,
 and warns at most once a minute per index. Last-progress Unix time changes

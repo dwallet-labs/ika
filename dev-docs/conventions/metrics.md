@@ -457,6 +457,12 @@ so the gap alert never fires. These families cover that case:
     demoted.
   - `none`: no relay had anything newer.
   - `failed`: the pass failed.
+- `ika_ocs_serve_changeset_part_reads_total{outcome}` (counter, on the
+  serving relay, both outcomes present from the start): changesets of
+  checkpoints too large to read whole, served from their part read
+  (`served`), or refused with the reason (`failed`). Mirrored nodes reading
+  through a relay cannot advance past a `failed` checkpoint until it is
+  served.
 
 The receiver logs one `ERROR` ("no Sui state relay is advancing") after five
 minutes without an advance, and one `INFO` when a relay serves a newer
@@ -891,6 +897,7 @@ ika_ocs_relay_peer_failover_total
 ika_ocs_relay_request_latency_seconds
 ika_ocs_relay_request_total
 ika_ocs_role_info
+ika_ocs_serve_changeset_part_reads_total
 ika_ocs_serve_latency_seconds
 ika_ocs_serve_request_by_peer_total
 ika_ocs_serve_request_total
