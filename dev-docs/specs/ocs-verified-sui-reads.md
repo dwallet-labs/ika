@@ -1510,6 +1510,14 @@ everything (`sui_connector/peer_fallback.rs`):
   older than any changeset retention — the very population the fallback
   serves — and it trusts the fullnode for nothing a direct node does not
   already trust it for.
+- **A frozen fullnode.** That currency check is only as current as the
+  fullnode. While the checkpoint pusher reports this node's own fullnode
+  frozen (no advance for five minutes, see the frozen-upstream signal), its
+  reference is a past one and a genuine but superseded version would match
+  it, so the fallback asks nobody — neither a peer nor the fullnode — and
+  counts `skipped`. The pusher sets and clears the shared flag at the same
+  point as its frozen ERROR and recovery INFO; asking resumes when the
+  fullnode advances again.
 - **Afterwards.** The direct reader applies its own high-water, serves the
   object, and shadow-writes the verified snapshot into its cache like any
   network-verified read (in memory; the pusher's folds supersede it), so the
@@ -1988,7 +1996,8 @@ does not verify and is also logged as security-critical.
 
 The peer fallback exports `ika_ocs_direct_peer_fallback_total{outcome}`
 (`served`, `not_current`, `unverified`, `unavailable`, `not_live`,
-`fullnode_error`, `skipped`), absent until its first event; each peer answer
+`fullnode_error`, `skipped` — also while this node's fullnode is frozen),
+absent until its first event; each peer answer
 it verifies also counts in `ika_ocs_proof_verify_total` /
 `ika_ocs_proof_verify_failures_total` like any relayed read. A rising
 `unavailable` while the reader keeps failing means no connected direct peer

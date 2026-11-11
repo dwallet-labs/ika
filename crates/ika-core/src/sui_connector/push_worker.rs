@@ -31,7 +31,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures::{StreamExt, stream};
@@ -315,6 +315,11 @@ pub struct IkaCheckpointPusher {
     /// size limit — a gap the fullnode answered as too large, or any gap or
     /// lost checkpoint the archive serves. A field so tests can lower it.
     max_checkpoint_object_states: usize,
+    /// Shared with readers that must not trust this node's fullnode as current
+    /// while it is frozen (the direct peer fallback, `peer_fallback`): set and
+    /// cleared with the frozen-upstream report in `note_upstream_watermark`.
+    /// `None` when nothing shares it.
+    upstream_frozen: Option<Arc<AtomicBool>>,
 }
 
 /// Whether the node's own fullnode is still moving. Its watermark advances
@@ -543,7 +548,16 @@ impl IkaCheckpointPusher {
             lost_overflow_warned: false,
             committee_wait_logged: AtomicU64::new(0),
             max_checkpoint_object_states: MAX_CHECKPOINT_OBJECT_STATES,
+            upstream_frozen: None,
         })
+    }
+
+    /// Share whether this node's own fullnode is frozen (see
+    /// `upstream_frozen`): `flag` is set when the frozen-upstream error fires
+    /// and cleared when the fullnode advances again.
+    pub fn with_upstream_frozen_flag(mut self, flag: Option<Arc<AtomicBool>>) -> Self {
+        self.upstream_frozen = flag;
+        self
     }
 
     /// Re-fold `seqs` — the operator's `sui-checkpoint-archive-backfill` list —
@@ -1255,6 +1269,9 @@ impl IkaCheckpointPusher {
             _ => {}
         }
         self.upstream.frozen_reported = frozen;
+        if let Some(flag) = &self.upstream_frozen {
+            flag.store(frozen, Ordering::Relaxed);
+        }
     }
 
     /// Fold one fetched checkpoint: capture the committee transition the

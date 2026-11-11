@@ -1211,6 +1211,11 @@ impl IkaNode {
             let archive_backfill = config
                 .sui_connector_config
                 .sui_checkpoint_archive_backfill_seqs();
+            // The pusher reports a frozen fullnode to the reader's peer
+            // fallback, which stands down while it is (see `peer_fallback`).
+            let upstream_frozen = peer_fallback
+                .as_ref()
+                .map(|fallback| fallback.upstream_frozen_flag());
             tokio::spawn(async move {
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
                 // Retry construction instead of giving up for the lifetime of
@@ -1247,7 +1252,11 @@ impl IkaNode {
                     )
                     .await
                     {
-                        Ok(pusher) => break pusher.with_archive_backfill(archive_backfill.clone()),
+                        Ok(pusher) => {
+                            break pusher
+                                .with_archive_backfill(archive_backfill.clone())
+                                .with_upstream_frozen_flag(upstream_frozen.clone());
+                        }
                         Err(e) => {
                             warn!(
                                 error = ?e,

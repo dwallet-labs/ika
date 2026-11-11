@@ -63,12 +63,23 @@
 //! read (not persisted; the pusher's folds supersede it), so the next read is a
 //! cache hit instead of another fallback.
 //!
+//! # A frozen fullnode
+//!
+//! The currency check is only as current as the fullnode. While the checkpoint
+//! pusher reports this node's own fullnode frozen — its latest checkpoint has
+//! not moved for `UPSTREAM_FROZEN_AFTER` — the fullnode's reference is a past
+//! one, and a genuine but superseded version would match it. The fallback asks
+//! no peer until the fullnode advances again; reads fail as they would without
+//! it.
+//!
 //! # Bounds
 //!
-//! A few fallbacks at once; a per-peer deadline; at most a handful of peers per
-//! attempt; and an object whose fallback failed is not tried again for a while.
+//! A few fallbacks at once; a per-peer deadline and one for the whole attempt;
+//! at most a handful of peers per attempt; and an object whose fallback failed
+//! is not tried again for a while.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -187,6 +198,12 @@ pub struct PeerFallback {
     bounds: FallbackBounds,
     permits: Semaphore,
     failed_at: Mutex<HashMap<ObjectID, Instant>>,
+    /// Whether this node's own fullnode is frozen, as the checkpoint pusher
+    /// reports it (`IkaCheckpointPusher::with_upstream_frozen_flag`). While it
+    /// is, its "current" reference is the last one it saw, so the currency
+    /// check would accept a genuine but superseded version: the fallback stands
+    /// down instead.
+    upstream_frozen: Arc<AtomicBool>,
     metrics: Arc<OcsMetrics>,
     provider_metrics: Arc<ProofProviderMetrics>,
 }
@@ -207,9 +224,16 @@ impl PeerFallback {
             bounds,
             permits,
             failed_at: Mutex::new(HashMap::new()),
+            upstream_frozen: Arc::new(AtomicBool::new(false)),
             metrics,
             provider_metrics,
         }
+    }
+
+    /// The flag the checkpoint pusher sets while this node's own fullnode is
+    /// frozen; hand it to the pusher (`with_upstream_frozen_flag`).
+    pub fn upstream_frozen_flag(&self) -> Arc<AtomicBool> {
+        self.upstream_frozen.clone()
     }
 
     /// Attach the p2p network the peers are asked over, once it is up. Reads
@@ -252,6 +276,13 @@ impl PeerFallback {
         let Some(network) = self.network.get() else {
             return skipped("the p2p network is not attached yet");
         };
+        // The currency check below compares a peer's answer with what this
+        // node's fullnode reports now. A frozen fullnode reports a past state,
+        // and a genuine old version would match it: ask nobody until it
+        // advances again.
+        if self.upstream_frozen.load(Ordering::Relaxed) {
+            return skipped("this node's own Sui fullnode is frozen");
+        }
         if self.failed_recently(id) {
             return skipped("it failed recently");
         }
@@ -1155,6 +1186,171 @@ mod tests {
         );
         let asked: usize = peers.iter().map(|(_, r)| r.load(Ordering::Relaxed)).sum();
         assert_eq!(asked, 2, "no peer is asked after the deadline");
+    }
+
+    /// While the checkpoint pusher reports this node's own fullnode frozen,
+    /// the fallback asks nobody — neither a peer nor the fullnode, whose
+    /// "current" reference is a past one. Once it advances again, asking
+    /// resumes.
+    #[tokio::test]
+    async fn a_frozen_fullnode_stands_the_fallback_down() {
+        let fx = fixture();
+        let current = object(0xA1, 7);
+        let (c, k) = (fx.committee.clone(), fx.keys.clone());
+        let x = current.clone();
+        let (peer, requests) = direct_peer(answering(move || genuine(&c, &k, 400, &x, &[&x])));
+        let node = connected(&[&peer]).await;
+        let fullnode = Fullnode::reporting(&[&current]);
+        let guarded = fallback(&fx, fullnode.clone(), &node, FallbackBounds::default());
+        let frozen = guarded.upstream_frozen_flag();
+
+        frozen.store(true, Ordering::Relaxed);
+        assert!(guarded.verified_object(current.id()).await.is_err());
+        assert_eq!(requests.load(Ordering::Relaxed), 0, "no peer is asked");
+        assert_eq!(
+            fullnode.lookups.load(Ordering::Relaxed),
+            0,
+            "nor the fullnode"
+        );
+        assert_eq!(outcome(&fx, "skipped"), 1);
+
+        frozen.store(false, Ordering::Relaxed);
+        assert!(guarded.verified_object(current.id()).await.is_ok());
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+    }
+
+    /// A fullnode whose latest checkpoint the test sets, and which serves no
+    /// checkpoint contents.
+    struct WatermarkFullnode {
+        height: std::sync::atomic::AtomicU64,
+    }
+
+    #[async_trait]
+    impl SuiTransport for WatermarkFullnode {
+        async fn get_chain_identifier(&self) -> Result<String, TransportError> {
+            unimplemented!()
+        }
+        async fn get_current_epoch(&self) -> Result<u64, TransportError> {
+            unimplemented!()
+        }
+        async fn get_committee(&self, _: Option<u64>) -> Result<Committee, TransportError> {
+            unimplemented!()
+        }
+        async fn get_latest_checkpoint(
+            &self,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unimplemented!("the pusher probes the watermark")
+        }
+        async fn get_latest_checkpoint_sequence(
+            &self,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            Ok(self.height.load(Ordering::Relaxed))
+        }
+        async fn get_full_checkpoint(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointData, TransportError> {
+            Err(TransportError::NotFound(format!(
+                "checkpoint {seq} not served"
+            )))
+        }
+        async fn get_checkpoint_summary_by_digest(
+            &self,
+            _: CheckpointDigest,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unimplemented!()
+        }
+        async fn last_checkpoint_of_epoch(
+            &self,
+            _: u64,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object(&self, _: ObjectID) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object_with_version(
+            &self,
+            _: ObjectID,
+            _: SequenceNumber,
+        ) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn batch_get_objects(&self, _: &[ObjectID]) -> Result<Vec<Object>, TransportError> {
+            unimplemented!()
+        }
+        async fn list_dynamic_fields(
+            &self,
+            _: ObjectID,
+            _: Option<u32>,
+            _: Option<Vec<u8>>,
+        ) -> Result<DynamicFieldPage, TransportError> {
+            unimplemented!()
+        }
+        async fn get_transaction(
+            &self,
+            _: TransactionDigest,
+        ) -> Result<ExecutedTransaction, TransportError> {
+            unimplemented!()
+        }
+    }
+
+    /// The checkpoint pusher raises the shared flag when it reports this
+    /// node's fullnode frozen — no advance for five minutes — and clears it
+    /// when the fullnode advances again.
+    #[tokio::test(start_paused = true)]
+    async fn the_pusher_raises_and_clears_the_frozen_flag() {
+        use crate::sui_connector::push_worker::IkaCheckpointPusher;
+        use ika_types::messages_dwallet_mpc::IkaPackageConfig;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (committee, _) = Committee::new_simple_test_committee();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee)),
+            )
+            .unwrap(),
+        );
+        perpetual.put_sui_pusher_last_seq(100).unwrap();
+        let fullnode = Arc::new(WatermarkFullnode {
+            height: std::sync::atomic::AtomicU64::new(100),
+        });
+        let packages = IkaPackageConfig {
+            ika_package_id: ObjectID::from_single_byte(0x1A),
+            ika_common_package_id: ObjectID::from_single_byte(0x1B),
+            ika_dwallet_2pc_mpc_package_id: ObjectID::from_single_byte(0x1C),
+            ika_dwallet_2pc_mpc_package_id_v2: None,
+            ika_system_package_id: ObjectID::from_single_byte(0x1D),
+        };
+        let frozen = Arc::new(AtomicBool::new(false));
+        let pusher = IkaCheckpointPusher::new(
+            fullnode.clone(),
+            perpetual,
+            OcsMetrics::new_for_testing(),
+            &packages,
+            Duration::from_secs(1),
+            Arc::new(VerifiedStateCache::new()),
+            committees,
+            None,
+        )
+        .await
+        .unwrap()
+        .with_upstream_frozen_flag(Some(frozen.clone()));
+        tokio::spawn(pusher.run());
+
+        tokio::time::sleep(Duration::from_secs(290)).await;
+        assert!(!frozen.load(Ordering::Relaxed), "under five minutes");
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        assert!(
+            frozen.load(Ordering::Relaxed),
+            "no advance for five minutes"
+        );
+
+        fullnode.height.store(101, Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        assert!(!frozen.load(Ordering::Relaxed), "advancing again");
     }
 
     /// At most `max_peers` peers are asked per attempt.
