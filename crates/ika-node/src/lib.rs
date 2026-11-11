@@ -1219,7 +1219,9 @@ impl IkaNode {
                 .sui_connector_config
                 .sui_checkpoint_archive_backfill_seqs();
             // The reader's peer fallback stands down while the pusher reports
-            // this node's fullnode frozen (see `peer_fallback`).
+            // this node's fullnode frozen (see `peer_fallback`). Its watch is
+            // taken as soon as the pusher is built, before `run` consumes it;
+            // until then the fallback treats the fullnode as not frozen.
             let fallback_for_push = peer_fallback.clone();
             tokio::spawn(async move {
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;

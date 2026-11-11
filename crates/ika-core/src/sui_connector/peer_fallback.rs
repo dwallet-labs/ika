@@ -72,6 +72,14 @@
 //! no peer until the fullnode advances again; reads fail as they would without
 //! it.
 //!
+//! The state is the pusher's own (`IkaCheckpointPusher::upstream_frozen`, a
+//! watch flipped where its frozen ERROR / recovery INFO latch flips), attached
+//! once the pusher is built. Until then — the pusher is still being built, or
+//! there is none (a node without an OCS anchor builds no fallback either) —
+//! nothing is known frozen and the fallback runs. If the pusher task stops, the
+//! watch keeps its last value: a fallback that was standing down stays down, one
+//! that was running keeps running with no further frozen report.
+//!
 //! # Bounds
 //!
 //! A few fallbacks at once; a per-peer deadline and one for the whole attempt;
@@ -222,7 +230,8 @@ pub struct PeerFallback {
     /// reports it ([`Self::attach_upstream_frozen`]). While it is, its
     /// "current" reference is the last one it saw, so the currency check would
     /// accept a genuine but superseded version: the fallback stands down
-    /// instead. Not attached before the pusher starts: nothing is known frozen.
+    /// instead. Unattached (no pusher yet, or none) reads as not frozen; a
+    /// stopped pusher's watch keeps its last value (see the module docs).
     upstream_frozen: OnceLock<Arc<dyn UpstreamFrozen>>,
     metrics: Arc<OcsMetrics>,
     provider_metrics: Arc<ProofProviderMetrics>,
