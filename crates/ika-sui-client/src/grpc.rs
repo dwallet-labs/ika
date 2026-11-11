@@ -70,9 +70,15 @@ pub const FULL_CHECKPOINT_DECODE_LIMIT: usize = 128 * 1024 * 1024;
 /// refuses a transaction whose estimated effects pass 512 KiB, or 8 MiB for a
 /// system transaction (`max_serialized_tx_effects_size_bytes` and
 /// `max_serialized_tx_effects_size_bytes_system_tx`); a refused transaction
-/// commits small failure effects instead. The other read carries the summary
-/// and at most `max_transactions_per_checkpoint` (20,000) digests, about 1 MiB.
-/// Twice the system-transaction cap leaves room for the protobuf framing.
+/// commits small failure effects instead. That bound holds from Sui protocol
+/// version 141 on, which Sui mainnet runs: 141 turns on
+/// `complete_effects_size_estimate`, and before it the estimate left out
+/// accumulator writes, so older effects could be larger. The other read
+/// carries the summary and the digests: `max_transactions_per_checkpoint`
+/// (20,000) caps the transactions scheduled into a checkpoint, and Sui may
+/// add a few settlement transactions and the end-of-epoch transaction, so
+/// about 1 MiB. Twice the system-transaction cap leaves room for the
+/// protobuf framing.
 pub const CHECKPOINT_PART_DECODE_LIMIT: usize = 16 * 1024 * 1024;
 
 /// How many per-transaction effects reads one checkpoint keeps in flight.

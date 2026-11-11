@@ -610,10 +610,15 @@ dropping entries are layered:
   endpoint. Before it reports `TooLarge`, the direct proof provider reads
   the checkpoint again in parts, because an inclusion proof needs only the
   certified summary and each transaction's effects. One read returns the
-  summary, its signature and the transaction digests (at most 20,000). Then
-  one read per transaction returns only its effects. Sui's executor caps
-  each transaction's estimated effects at 512 KiB, or 8 MiB for a system
-  transaction, so each part read decodes at most 16 MiB. The tree built from
+  summary, its signature and the transaction digests. Sui caps the
+  transactions scheduled into a checkpoint at 20,000, and may add a few
+  settlement transactions and the end-of-epoch transaction. Then one read
+  per transaction returns only its effects. Sui's executor caps each
+  transaction's estimated effects at 512 KiB, or 8 MiB for a system
+  transaction, so each part read decodes at most 16 MiB. That bound holds
+  for effects from Sui protocol version 141 on, which Sui mainnet runs:
+  before 141 the size estimate left out accumulator writes, so older effects
+  could be larger, and a read of them would fail as `TooLarge`. The tree built from
   the parts is the same tree the whole read builds. The proof is checked
   against the certified summary as before, so the part reads add no trust in
   the fullnode. The number of digests must equal the summary's
