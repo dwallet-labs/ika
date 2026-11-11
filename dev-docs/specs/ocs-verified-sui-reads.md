@@ -491,22 +491,32 @@ answer, not a failure (`ika_ocs_changeset_successor_seeks_total{outcome}`).
 Five minutes without an advance logs one `ERROR` with the frontier, the time
 frozen and the last relay error, then one `INFO` when a relay serves a newer
 checkpoint. `ika_ocs_changeset_upstream_last_advance_timestamp_seconds` is
-stamped on every advance and set to the receiver's start until the first
-one, so `time() -` it is the alert signal even on a node whose relays never
-served it. Nothing about verification changes: every entry is still BLS- and
-artifacts-bound and folded only contiguously.
+stamped on every advance, and at boot on a sui-state-mirrored node, before any
+Sui I/O, so `time() -` it is the alert signal even on a node whose relays
+never served it or whose receiver was never built (an alert gates on it being
+above 0, with an uptime condition). A page with an entry that fails
+verification (committee signature, artifacts binding or chain link) passes
+its relay over: the relay is demoted and left out of the next pass, so it
+cannot keep winning passes with a forged entry. Nothing about verification
+changes: every entry is still BLS- and artifacts-bound and folded only
+contiguously. A relay that is behind but still advancing is not passed over:
+the frontier then moves, slowly, and the stall measure does not see it.
 
 **A checkpoint too large to read whole.** A relay serves its changeset from
 the bounded part read (summary plus object states, which is exactly what an
 entry carries), alone in its page. A page ends before it, and the next page
-is just it. The entry is capped at 2 million object states (about 150 MB on
-the wire). A part read that fails, or a checkpoint past the cap, refuses the
-page with the checkpoint and the reason, counted in
-`ika_ocs_serve_changeset_part_reads_total{outcome="failed"}`. The relay no
-longer fast-forwards past such a checkpoint, which had left the receiver at a
-gap it reported forever without saying why. The receiver binds the entry to
-the summary's artifacts digest as it does any other, so a part-read entry
-gains no trust.
+is just it. This works only up to 2 million object states per entry (about
+150 MB on the wire; Sui allows a checkpoint about 131 million) and only when
+the part read succeeds. A part read that fails, or a checkpoint past the cap,
+refuses the page with the checkpoint and the reason, counted in
+`ika_ocs_serve_changeset_part_reads_total{outcome="failed"}`. A receiver that
+needs that checkpoint then stops at it, with the reason in its logs, rather
+than at a gap it reported forever without saying why; a receiver that is
+bootstrapping begins after it, as it did when the relay fast-forwarded past
+it. A checkpoint the relay already knows is too large is not read whole
+again. The receiver binds the entry to the summary's artifacts digest as it
+does any other, so a part-read entry gains no trust. The receiver's fold of a
+large entry holds the index's write lock while it re-derives that digest.
 
 The out-of-order queue retains at most 256 changesets. It counts each drop,
 reports contiguous head, highest verified sequence seen and queue depth,
@@ -786,16 +796,22 @@ dropping entries are layered:
   fails as `Network` after 60 s (`PART_READ_DEADLINE`), so it is retried
   within its four tries and then fails the page, and the next walk tries
   again. So one build holds the permit for at most about 4 × 60 s + 1.75 s
-  per part read, with 16 effects reads in flight at a time. A build waits at
-  most 20 s for the permit, then fails as a retriable `Network` error, so a
-  relayed request queued behind another checkpoint's part read is answered
-  before the relay client's 30 s deadline instead of timing out. Builds run in
-  a task of their own: a relayed request's handler is dropped when the client
-  gives up at 30 s, and a build tied to it used to be abandoned with it, so a
-  part read longer than that never completed over relays. Now the build
-  finishes, bounded by the part reads' own deadlines, the object-state cap and
-  a 120 s deadline on the whole read, and caches its tree for the next
-  request; requests arriving meanwhile join it. The tree cache is
+  per part read, with 16 effects reads in flight at a time. A checkpoint can
+  need about 225,000 effects reads, so a part read as a whole is bounded too:
+  30 minutes, which the largest honest checkpoint meets at up to about 125 ms
+  per read. Past it the read is abandoned, the permit given back, and the
+  checkpoint refused at once for 10 minutes. Every part-read build, the
+  node's own included, waits at most 20 s for the permit, then fails as a
+  retriable `Network` error; a relayed request whose wait is most of its time
+  gets that answer before the relay client's 30 s deadline. Part-read builds
+  run in a task of their own: a relayed request's handler is dropped when the
+  client gives up at 30 s, and a part read tied to it used to be abandoned
+  with it, so a part read longer than that never completed over relays. Now
+  it finishes, within those bounds, and caches its tree for the next
+  request. At most 4 such tasks exist at once, waiting or reading; a request
+  past that is refused at once. Whole reads stay in the request, under the
+  relay server's inflight caps, and end with it. A checkpoint past an
+  object-state cap is remembered for the process's lifetime. The tree cache is
   weighed by object states, 32 million in all across the cached trees,
   about 220 bytes per state, so about 7 GB at most; trees from the whole
   read are weighed the same way. The cache evicts the least recently used

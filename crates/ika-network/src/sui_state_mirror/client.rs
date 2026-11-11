@@ -132,7 +132,28 @@ impl SuiMirrorPeers {
 
     /// Iterate peers, calling `op` against a fresh `SuiStateMirrorClient` for
     /// each. Returns the first `Ok`. Demotes peers that fail.
-    async fn try_peers<T, F>(&self, op_label: &'static str, mut op: F) -> Result<T, TransportError>
+    async fn try_peers<T, F>(&self, op_label: &'static str, op: F) -> Result<T, TransportError>
+    where
+        F: for<'a> FnMut(
+            &'a mut SuiStateMirrorClient<anemo::Peer>,
+        ) -> futures::future::BoxFuture<
+            'a,
+            Result<anemo::Response<T>, anemo::rpc::Status>,
+        >,
+    {
+        self.try_peers_from(op_label, None, op)
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// [`Self::try_peers`], leaving `skip` out of the pass, and returning the
+    /// peer that answered.
+    async fn try_peers_from<T, F>(
+        &self,
+        op_label: &'static str,
+        skip: Option<PeerId>,
+        mut op: F,
+    ) -> Result<(T, PeerId), TransportError>
     where
         F: for<'a> FnMut(
             &'a mut SuiStateMirrorClient<anemo::Peer>,
@@ -177,13 +198,17 @@ impl SuiMirrorPeers {
         // short-circuits the pass). The relay verdict is computed from these.
         let mut reached: Vec<PeerFailure> = Vec::new();
         for peer_id in peers {
+            if Some(peer_id) == skip {
+                debug!(?peer_id, "{op_label}: peer left out of this pass, skipping");
+                continue;
+            }
             let Some(peer) = self.network.peer(peer_id) else {
                 debug!(?peer_id, "{op_label}: peer not connected, skipping");
                 continue;
             };
             let mut client = SuiStateMirrorClient::new(peer);
             match tokio::time::timeout(RELAY_REQUEST_TIMEOUT, op(&mut client)).await {
-                Ok(Ok(resp)) => return Ok(resp.into_inner()),
+                Ok(Ok(resp)) => return Ok((resp.into_inner(), peer_id)),
                 Ok(Err(status)) if is_service_unimplemented(&status) => {
                     // The peer is connected but doesn't serve `SuiStateMirror`
                     // at all (anemo's router fallback for an unregistered
@@ -508,11 +533,40 @@ impl ProofProvider for SuiMirrorProofProvider {
 
 pub struct SuiMirrorTransport {
     peers: SuiMirrorPeers,
+    /// The relay that served the last changeset page.
+    last_changeset_source: parking_lot::Mutex<Option<PeerId>>,
+    /// A relay to leave out of the next changeset pass: one whose page failed
+    /// verification (see [`Self::reject_last_changeset_source`]).
+    skip_next_changeset: parking_lot::Mutex<Option<PeerId>>,
 }
 
 impl SuiMirrorTransport {
     pub fn new(peers: SuiMirrorPeers) -> Self {
-        Self { peers }
+        Self {
+            peers,
+            last_changeset_source: parking_lot::Mutex::new(None),
+            skip_next_changeset: parking_lot::Mutex::new(None),
+        }
+    }
+
+    /// Pass over the relay that served the last changeset page: the page
+    /// failed verification. The relay is demoted, which in automatic peer
+    /// mode moves every read off it, and is left out of the next changeset
+    /// pass, so in pinned mode too the next page comes from another relay.
+    /// Without this, a relay serving a bad entry for the next checkpoint would
+    /// keep being asked for it, and would win every pass that asks every
+    /// relay.
+    pub fn reject_last_changeset_source(&self) {
+        let Some(peer) = self.last_changeset_source.lock().take() else {
+            return;
+        };
+        warn!(
+            %peer,
+            "a relay served a changeset page that failed verification; demoting it and asking \
+             other relays"
+        );
+        self.peers.demote(peer);
+        *self.skip_next_changeset.lock() = Some(peer);
     }
 
     /// Pull a page of changesets (committee-signed summary + modified
@@ -531,13 +585,30 @@ impl SuiMirrorTransport {
         // gap is known (from verified gossip or this pass's retention floor),
         // probe every serving peer for the missing successor.
         let gap_detected = Arc::new(AtomicBool::new(known_gap));
+        let skip = self.skip_next_changeset.lock().take();
         let result = self
             .peers
-            .try_peers("changeset_page", move |c| {
+            .try_peers_from("changeset_page", skip, move |c| {
                 let gap_detected = gap_detected.clone();
                 let req = Request::new(ChangesetPageRequest { from_seq, limit });
                 Box::pin(async move {
-                    let response = c.changeset_page(req).await?;
+                    let response = match c.changeset_page(req).await {
+                        // An index that is bootstrapping may begin anywhere:
+                        // past a checkpoint this relay cannot serve, rather
+                        // than stopping at it for good. An index that needs
+                        // the checkpoint keeps the refusal.
+                        Err(status)
+                            if !require_contiguous
+                                && super::is_unservable_changeset(&status, from_seq) =>
+                        {
+                            c.changeset_page(Request::new(ChangesetPageRequest {
+                                from_seq: from_seq.saturating_add(1),
+                                limit,
+                            }))
+                            .await?
+                        }
+                        other => other?,
+                    };
                     let page = response.body();
                     if page.entries.len() > limit as usize {
                         return Err(Status::internal("changeset page exceeds requested limit"));
@@ -569,13 +640,19 @@ impl SuiMirrorTransport {
                 })
             })
             .await;
-        match result {
+        let (page, source) = match result {
+            Ok((page, source)) => (Ok(page), Some(source)),
             // Only unanimous data absence from the serving peers is caught-up.
-            Err(TransportError::NotFound(_)) if !known_gap => Ok(ChangesetPageResponse {
-                entries: Vec::new(),
-            }),
-            other => other,
-        }
+            Err(TransportError::NotFound(_)) if !known_gap => (
+                Ok(ChangesetPageResponse {
+                    entries: Vec::new(),
+                }),
+                None,
+            ),
+            Err(error) => (Err(error), None),
+        };
+        *self.last_changeset_source.lock() = source;
+        page
     }
 }
 
@@ -818,6 +895,10 @@ mod tests {
     #[derive(Default)]
     struct StubMirror {
         entries: Vec<ChangesetEntry>,
+        /// A checkpoint whose changeset this relay refuses as unservable.
+        unservable: Option<u64>,
+        /// Fail every changeset page.
+        fails: bool,
     }
 
     #[anemo::async_trait]
@@ -857,6 +938,15 @@ mod tests {
             request: Request<ChangesetPageRequest>,
         ) -> Result<anemo::Response<ChangesetPageResponse>, anemo::rpc::Status> {
             let request = request.into_body();
+            if self.fails {
+                return Err(anemo::rpc::Status::internal("relay unavailable"));
+            }
+            if self.unservable == Some(request.from_seq) {
+                return Err(anemo::rpc::Status::internal(format!(
+                    "{}: too large and its part read failed",
+                    crate::sui_state_mirror::unservable_changeset_prefix(request.from_seq)
+                )));
+            }
             Ok(anemo::Response::new(ChangesetPageResponse {
                 entries: self
                     .entries
@@ -969,6 +1059,7 @@ mod tests {
         let pruned = build_network(|router| {
             router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
                 entries: vec![changeset_entry(20)],
+                ..Default::default()
             }))
         });
         let empty = build_network(|router| {
@@ -977,6 +1068,7 @@ mod tests {
         let retaining = build_network(|router| {
             router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
                 entries: vec![entry],
+                ..Default::default()
             }))
         });
         let consumer = build_network(|router| router);
@@ -1060,6 +1152,7 @@ mod tests {
         let frozen = build_network(|router| {
             router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
                 entries: vec![changeset_entry(10)],
+                ..Default::default()
             }))
         });
         let ahead = build_network(|router| {
@@ -1069,6 +1162,7 @@ mod tests {
                     changeset_entry(11),
                     changeset_entry(12),
                 ],
+                ..Default::default()
             }))
         });
         let consumer = build_network(|router| router);
@@ -1102,6 +1196,119 @@ mod tests {
             2,
             "later plain polls go to the relay that is ahead"
         );
+    }
+
+    /// A relay that cannot serve checkpoint 11's changeset: an index that is
+    /// bootstrapping begins after it, from the same relay; an index that
+    /// needs checkpoint 11 gets the refusal.
+    #[tokio::test]
+    async fn a_bootstrapping_index_begins_after_an_unservable_checkpoint() {
+        let relay = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![changeset_entry(11), changeset_entry(12)],
+                unservable: Some(11),
+                ..Default::default()
+            }))
+        });
+        let consumer = build_network(|router| router);
+        let relay_id = consumer.connect(relay.local_addr()).await.unwrap();
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+        let transport =
+            SuiMirrorTransport::new(SuiMirrorPeers::new(consumer, vec![relay_id], metrics));
+
+        let bootstrap = transport
+            .changeset_page(11, 64, false, false)
+            .await
+            .unwrap();
+        assert_eq!(*bootstrap.entries[0].summary.sequence_number(), 12);
+        match transport.changeset_page(11, 64, true, false).await {
+            Err(TransportError::Network(reason)) => {
+                assert!(reason.contains("changeset 11 cannot be served"), "{reason}")
+            }
+            other => panic!("an index that needs 11 must get the refusal, got {other:?}"),
+        }
+    }
+
+    /// A relay whose page failed verification is passed over: rejected, it
+    /// is left out of the next pass, so with pinned peers too, where passes
+    /// rotate their start, the next page comes from the other relay.
+    #[tokio::test]
+    async fn a_rejected_relay_is_left_out_of_the_next_changeset_pass() {
+        let bad = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![changeset_entry(11)],
+                ..Default::default()
+            }))
+        });
+        let good = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![changeset_entry(11), changeset_entry(12)],
+                ..Default::default()
+            }))
+        });
+        let consumer = build_network(|router| router);
+        let bad_id = consumer.connect(bad.local_addr()).await.unwrap();
+        let good_id = consumer.connect(good.local_addr()).await.unwrap();
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+        let transport = SuiMirrorTransport::new(SuiMirrorPeers::new(
+            consumer,
+            vec![bad_id, good_id],
+            metrics,
+        ));
+
+        let first = transport.changeset_page(11, 64, true, false).await.unwrap();
+        assert_eq!(first.entries.len(), 1, "the pass starts at the bad relay");
+        transport.reject_last_changeset_source();
+        let next = transport.changeset_page(11, 64, true, false).await.unwrap();
+        assert_eq!(
+            next.entries.len(),
+            2,
+            "the next page comes from the other relay"
+        );
+    }
+
+    /// A pass that asks every relay for the next checkpoint answers
+    /// `NotFound` when every relay has nothing newer, and `Network` when any
+    /// relay fails: the receiver reads the first as "none ahead", the second
+    /// as a failed pass.
+    #[tokio::test]
+    async fn a_seek_pass_is_not_found_only_when_every_relay_is_caught_up() {
+        let empty = || {
+            build_network(|router| {
+                router.add_rpc_service(SuiStateMirrorServer::new(StubMirror::default()))
+            })
+        };
+        let (first, second) = (empty(), empty());
+        let failing = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                fails: true,
+                ..Default::default()
+            }))
+        });
+        let consumer = build_network(|router| router);
+        let first_id = consumer.connect(first.local_addr()).await.unwrap();
+        let second_id = consumer.connect(second.local_addr()).await.unwrap();
+        let failing_id = consumer.connect(failing.local_addr()).await.unwrap();
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+
+        let caught_up = SuiMirrorTransport::new(SuiMirrorPeers::new(
+            consumer.clone(),
+            vec![first_id, second_id],
+            metrics.clone(),
+        ));
+        assert!(matches!(
+            caught_up.changeset_page(11, 64, true, true).await,
+            Err(TransportError::NotFound(_))
+        ));
+        let one_failing = SuiMirrorTransport::new(SuiMirrorPeers::new(
+            consumer,
+            vec![first_id, failing_id],
+            metrics,
+        ));
+        assert!(matches!(
+            one_failing.changeset_page(11, 64, true, true).await,
+            Err(TransportError::Network(_))
+        ));
     }
 
     fn changeset_entry(seq: u64) -> ChangesetEntry {

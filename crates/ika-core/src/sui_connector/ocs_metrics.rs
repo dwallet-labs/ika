@@ -82,11 +82,13 @@ pub struct OcsMetrics {
     pub changeset_pending_depth: IntGauge,
     pub changeset_last_progress_timestamp_seconds: IntGauge,
     /// Unix time a relay last served this node a Sui checkpoint past its
-    /// changeset frontier. Set to the changeset receiver's start until the
-    /// first advance; 0 on a node that runs no receiver (sui-state-direct).
+    /// changeset frontier. On a sui-state-mirrored node it is stamped at boot,
+    /// before any Sui I/O, and stays so until the first advance; 0 on a node
+    /// that runs no receiver (sui-state-direct).
     /// Unlike `changeset_last_progress_timestamp_seconds`, which stays 0 until
-    /// the first advance, it ages from the receiver's start, so a node whose
-    /// relays never served it anything reads frozen too. Sui makes checkpoints
+    /// the first advance, it ages from boot, so a node whose relays never
+    /// served it anything, or whose receiver was never built, reads frozen
+    /// too. Sui makes checkpoints
     /// continuously, so `time() - this` past a few minutes means no relay this
     /// node can reach is advancing.
     pub changeset_upstream_last_advance_timestamp_seconds: IntGauge,
@@ -286,7 +288,7 @@ impl OcsMetrics {
             ).unwrap(),
             changeset_upstream_last_advance_timestamp_seconds: register_int_gauge_with_registry!(
                 "ika_ocs_changeset_upstream_last_advance_timestamp_seconds",
-                "Unix time a relay last served this node a Sui checkpoint past its changeset frontier (the changeset receiver's start until the first advance; 0 when no receiver runs); time() minus this is how long no relay has served this node anything new",
+                "Unix time a relay last served this node a Sui checkpoint past its changeset frontier (stamped at boot on sui-state-mirrored until the first advance; 0 when no receiver runs); time() minus this is how long no relay has served this node anything new",
                 registry,
             ).unwrap(),
             changeset_successor_seeks_total: register_int_counter_vec_with_registry!(
@@ -480,6 +482,23 @@ impl OcsMetrics {
                 .with_label_values(&[outcome]);
         }
         metrics
+    }
+
+    /// Start the changeset receiver's last-advance clock
+    /// ([`Self::changeset_upstream_last_advance_timestamp_seconds`]) at now,
+    /// unless it has started already. A sui-state-mirrored node calls it at
+    /// boot, before any Sui I/O, so a node whose receiver is never built ages
+    /// from boot rather than reading 0 like a node that runs no receiver; the
+    /// receiver calls it again when built, which keeps the boot start.
+    pub fn start_changeset_upstream_clock(&self) {
+        if self.changeset_upstream_last_advance_timestamp_seconds.get() == 0 {
+            self.changeset_upstream_last_advance_timestamp_seconds.set(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            );
+        }
     }
 
     /// Start the pusher's last-advance clock

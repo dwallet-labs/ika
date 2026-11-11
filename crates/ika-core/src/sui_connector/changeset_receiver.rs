@@ -33,9 +33,10 @@ pub type SharedChangesetIndex = Arc<RwLock<ChangesetIndex>>;
 /// receiver asks every relay for the next checkpoint instead of only the one
 /// it prefers. Sui makes checkpoints continuously and a healthy receiver
 /// advances on every poll, so half a minute without an advance means the
-/// preferred relay has nothing newer: it is frozen or behind. Otherwise such a
-/// relay is indistinguishable from being caught up, and in automatic peer mode
-/// the first relay that answers keeps being preferred.
+/// preferred relay has nothing newer: it has stopped, or cannot serve the next
+/// checkpoint. Otherwise such a relay is indistinguishable from being caught
+/// up, and in automatic peer mode the first relay that answers keeps being
+/// preferred. A relay that is behind but still advancing is not passed over.
 const SEEK_SUCCESSOR_AFTER: Duration = Duration::from_secs(30);
 /// While the frontier stays stalled, how often every relay is asked again.
 const SEEK_SUCCESSOR_INTERVAL: Duration = Duration::from_secs(30);
@@ -63,6 +64,10 @@ pub trait ChangesetSource: Send + Sync {
         require_contiguous: bool,
         known_gap: bool,
     ) -> Result<Vec<ChangesetEntry>, TransportError>;
+
+    /// Pass over the source of the last page: one of its entries failed
+    /// verification. The default does nothing.
+    fn reject_last_page(&self) {}
 }
 
 #[async_trait]
@@ -86,6 +91,10 @@ impl ChangesetSource for SuiMirrorTransport {
             .entries,
         )
     }
+
+    fn reject_last_page(&self) {
+        self.reject_last_changeset_source();
+    }
 }
 
 /// Pull the next contiguous page — from `contiguous head + 1`, or
@@ -99,8 +108,16 @@ impl ChangesetSource for SuiMirrorTransport {
 /// rather than taken as caught up. When none has anything newer, that is the
 /// answer, not a failure: the page is empty.
 ///
+/// A page with an entry that fails verification (committee signature,
+/// artifacts binding or chain link) has its source passed over
+/// ([`ChangesetSource::reject_last_page`]), so the next pull asks another
+/// relay.
+///
 /// BLS verification runs *outside* the index lock so the read path's currency
-/// queries aren't blocked on it; only the fold takes a brief write lock.
+/// queries aren't blocked on it; only the fold takes the write lock. The fold
+/// re-derives the entry's artifacts digest over every object state under that
+/// lock, so for a large part-read entry (up to 2 million states) the lock is
+/// held for as long as that takes.
 pub async fn pump_changesets(
     index: &SharedChangesetIndex,
     source: &dyn ChangesetSource,
@@ -162,13 +179,21 @@ pub async fn pump_changesets(
             return Err(ChangesetError::Gap { expected, received });
         }
         expected = Some(received.saturating_add(1));
-        committees
-            .verify_summary(entry.summary.clone())
-            .map_err(|e| ChangesetError::Unverified(e.to_string()))?;
-        if let AbsorbOutcome::Advanced { .. } =
-            index.write().absorb(&entry.summary, entry.object_states)?
-        {
-            advanced += 1;
+        if let Err(e) = committees.verify_summary(entry.summary.clone()) {
+            source.reject_last_page();
+            return Err(ChangesetError::Unverified(e.to_string()));
+        }
+        let absorbed = index.write().absorb(&entry.summary, entry.object_states);
+        match absorbed {
+            Ok(AbsorbOutcome::Advanced { .. }) => advanced += 1,
+            Ok(_) => {}
+            Err(
+                e @ (ChangesetError::ArtifactsMismatch(_) | ChangesetError::BrokenChain { .. }),
+            ) => {
+                source.reject_last_page();
+                return Err(e);
+            }
+            Err(e) => return Err(e),
         }
     }
     Ok(advanced)
@@ -220,9 +245,8 @@ impl ChangesetReceiver {
         poll_interval: Duration,
         metrics: Arc<OcsMetrics>,
     ) -> Self {
-        metrics
-            .changeset_upstream_last_advance_timestamp_seconds
-            .set(unix_now_secs());
+        // A node that started the clock at boot keeps that start.
+        metrics.start_changeset_upstream_clock();
         Self {
             index,
             source,
@@ -1126,5 +1150,136 @@ mod tests {
         );
         assert!(logs.lines_with(FROZEN).is_empty());
         assert!(logs.lines_with(RECOVERED).is_empty());
+    }
+
+    /// A relay that serves one fixed page, counting how often its pages are
+    /// rejected.
+    struct RejectCountingSource {
+        entries: Vec<ChangesetEntry>,
+        rejects: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ChangesetSource for RejectCountingSource {
+        async fn changeset_page(
+            &self,
+            from_seq: CheckpointSequenceNumber,
+            limit: u32,
+            _require_contiguous: bool,
+            _known_gap: bool,
+        ) -> Result<Vec<ChangesetEntry>, TransportError> {
+            Ok(self
+                .entries
+                .iter()
+                .filter(|entry| *entry.summary.sequence_number() >= from_seq)
+                .take(limit as usize)
+                .cloned()
+                .collect())
+        }
+
+        fn reject_last_page(&self) {
+            self.rejects
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// A page whose entry is signed by another committee, or does not chain
+    /// onto the frontier, fails verification and has its source rejected, so
+    /// the next pull asks another relay. A page that verifies does not.
+    #[tokio::test]
+    async fn a_page_that_fails_verification_rejects_its_source() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (foreign, foreign_keys) = Committee::new_simple_test_committee_of_size(7);
+        let (_dir, store) = committee_store(committee.clone());
+        let rejects = |source: &RejectCountingSource| {
+            source.rejects.load(std::sync::atomic::Ordering::SeqCst)
+        };
+
+        let (forged, _) = signed_entry(
+            &foreign,
+            &foreign_keys,
+            10,
+            None,
+            [modified(0xA1, 1)].into(),
+        );
+        let source = RejectCountingSource {
+            entries: vec![forged],
+            rejects: Default::default(),
+        };
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        assert!(matches!(
+            pump_changesets(&index, &source, &store, 64, 10, false).await,
+            Err(ChangesetError::Unverified(_))
+        ));
+        assert_eq!(rejects(&source), 1);
+
+        let (e10, _) = signed_entry(&committee, &keys, 10, None, [modified(0xA1, 1)].into());
+        let (unchained, _) = signed_entry(
+            &committee,
+            &keys,
+            11,
+            Some(CheckpointDigest::new([7; 32])),
+            [modified(0xB2, 1)].into(),
+        );
+        let source = RejectCountingSource {
+            entries: vec![e10, unchained],
+            rejects: Default::default(),
+        };
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        assert!(matches!(
+            pump_changesets(&index, &source, &store, 64, 10, false).await,
+            Err(ChangesetError::BrokenChain { seq: 11 })
+        ));
+        assert_eq!(rejects(&source), 1);
+        assert_eq!(index.read().highest_contiguous_seq(), Some(10));
+
+        let (good, _) = signed_entry(&committee, &keys, 10, None, [modified(0xA1, 1)].into());
+        let source = RejectCountingSource {
+            entries: vec![good],
+            rejects: Default::default(),
+        };
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        pump_changesets(&index, &source, &store, 64, 10, false)
+            .await
+            .unwrap();
+        assert_eq!(rejects(&source), 0);
+    }
+
+    /// A node that started the receiver's clock at boot keeps that start when
+    /// its receiver is built late; on its own the receiver starts the clock
+    /// when built.
+    #[tokio::test]
+    async fn a_receiver_built_late_keeps_the_boot_start_of_the_clock() {
+        let (committee, _keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee);
+        let gauge = |metrics: &OcsMetrics| {
+            metrics
+                .changeset_upstream_last_advance_timestamp_seconds
+                .get()
+        };
+        let build = |metrics: Arc<OcsMetrics>| {
+            ChangesetReceiver::new(
+                Arc::new(RwLock::new(ChangesetIndex::new())),
+                Arc::new(VecSource(vec![])),
+                store.clone(),
+                64,
+                10,
+                Duration::from_secs(2),
+                metrics,
+            )
+        };
+
+        let booted = OcsMetrics::new_for_testing();
+        booted.start_changeset_upstream_clock();
+        assert!(gauge(&booted) > 0);
+        booted
+            .changeset_upstream_last_advance_timestamp_seconds
+            .set(STALE_STAMP);
+        build(booted.clone());
+        assert_eq!(gauge(&booted), STALE_STAMP, "the boot start is kept");
+
+        let fresh = OcsMetrics::new_for_testing();
+        build(fresh.clone());
+        assert!(gauge(&fresh) > STALE_STAMP, "started when built");
     }
 }

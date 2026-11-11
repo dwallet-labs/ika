@@ -468,15 +468,27 @@ so the gap alert never fires. These families cover that case:
 
 - `ika_ocs_changeset_upstream_last_advance_timestamp_seconds` (gauge): Unix
   time a relay last served this node a checkpoint past its changeset
-  frontier. It is set to the receiver's start until the first advance, and it
-  is 0 on nodes that run no receiver (sui-state-direct), so gate on
-  `ika_ocs_role_info{role="sui_state_mirrored"} == 1`. Unlike
+  frontier. On sui-state-mirrored nodes it is stamped at boot, before any Sui
+  I/O, so a node whose receiver is never built ages from boot too; it is 0 on
+  nodes that run no receiver (sui-state-direct). So `> 0` means exactly "a
+  sui-state-mirrored node", from boot on: gate on it, not on
+  `ika_ocs_role_info{role="sui_state_mirrored"}`, which is set only once the
+  connector stack's first Sui reads have answered. Unlike
   `ika_ocs_changeset_last_progress_timestamp_seconds`, which is 0 until the
   first advance, it ages even when no relay ever served this node, so
   `time() - ika_ocs_changeset_upstream_last_advance_timestamp_seconds` is how
   long no relay has served the node anything new. It is evaluated once per
   receiver poll (2 s); measure its healthy peak across the fleet after
-  rollout before paging on it.
+  rollout before paging on it. Because it ages from boot, an alert also needs
+  the uptime condition, as for the pusher's gauge:
+
+  ```promql
+  max by (network, host) (
+    time() - (ika_ocs_changeset_upstream_last_advance_timestamp_seconds{metrics_source="ika-proxy"} > 0)
+  ) > THRESHOLD
+  and on (network, host)
+  max by (network, host) (uptime{process="validator",metrics_source="ika-proxy"}) > 600
+  ```
 - `ika_ocs_changeset_successor_seeks_total{outcome}` (counter, all three
   outcomes present from the start): once the frontier has stalled for 30 s,
   the receiver asks every relay for the next checkpoint, at most every 30 s.
@@ -487,9 +499,9 @@ so the gap alert never fires. These families cover that case:
 - `ika_ocs_serve_changeset_part_reads_total{outcome}` (counter, on the
   serving relay, both outcomes present from the start): changesets of
   checkpoints too large to read whole, served from their part read
-  (`served`), or refused with the reason (`failed`). Mirrored nodes reading
-  through a relay cannot advance past a `failed` checkpoint until it is
-  served.
+  (`served`), or refused with the reason (`failed`). Mirrored nodes that
+  need a `failed` checkpoint cannot advance past it through that relay until
+  it is served; one that is bootstrapping begins after it.
 
 The receiver logs one `ERROR` ("no Sui state relay is advancing") after five
 minutes without an advance, and one `INFO` when a relay serves a newer

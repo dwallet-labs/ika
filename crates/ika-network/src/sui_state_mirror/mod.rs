@@ -179,7 +179,11 @@ impl Server {
     /// the floor, and then only if `from_seq` is actually behind the head —
     /// ahead of the head means "nothing yet", which is not a gap to skip.
     async fn first_servable_seq(&self, from_seq: CheckpointSequenceNumber) -> Option<u64> {
-        if checkpoint_exists(&self.transport.get_full_checkpoint(from_seq).await) {
+        // A checkpoint known to be too large to read whole is there; it is not
+        // read whole again to find that out.
+        if self.provider.known_too_large(from_seq)
+            || checkpoint_exists(&self.transport.get_full_checkpoint(from_seq).await)
+        {
             return Some(from_seq);
         }
         let head = *self
@@ -243,12 +247,30 @@ impl Server {
                     );
                 }
                 Err(Status::internal(format!(
-                    "changeset {seq} cannot be served: the checkpoint is too large to read whole \
-                     and its part read failed: {error}"
+                    "{}: the checkpoint is too large to read whole and its part read failed: \
+                     {error}",
+                    unservable_changeset_prefix(seq)
                 )))
             }
         }
     }
+}
+
+/// The start of the message a relay refuses a changeset page with when it
+/// cannot serve checkpoint `seq`'s changeset.
+fn unservable_changeset_prefix(seq: CheckpointSequenceNumber) -> String {
+    format!("changeset {seq} cannot be served")
+}
+
+/// Whether `status` is a relay's refusal to serve checkpoint `seq`'s
+/// changeset. A receiver that is bootstrapping may begin after it; one that
+/// needs the checkpoint gets the refusal.
+pub(crate) fn is_unservable_changeset(status: &Status, seq: CheckpointSequenceNumber) -> bool {
+    status.status() == StatusCode::InternalServerError
+        && status
+            .headers()
+            .get(anemo::types::header::STATUS_MESSAGE)
+            .is_some_and(|message| message.starts_with(&unservable_changeset_prefix(seq)))
 }
 
 /// Whether a whole-checkpoint read shows the checkpoint is there: it was
@@ -374,6 +396,16 @@ impl SuiStateMirror for Server {
         };
         let mut entries = Vec::with_capacity(limit);
         for seq in start_seq..start_seq.saturating_add(limit as u64) {
+            // Too large to read whole: served from its part read, alone. A
+            // page ends before it, and the next page is just it, so an entry
+            // this large never shares a response. A checkpoint already known
+            // to be too large is not read whole again.
+            if self.provider.known_too_large(seq) {
+                if entries.is_empty() {
+                    entries.push(self.changeset_in_parts(seq).await?);
+                }
+                break;
+            }
             // Stop at the first unavailable checkpoint (head reached): a
             // short, contiguous prefix is exactly what the receiver folds.
             let checkpoint = match self.transport.get_full_checkpoint(seq).await {
@@ -630,6 +662,8 @@ mod tests {
         checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
         too_large: HashSet<CheckpointSequenceNumber>,
         head: CheckpointSequenceNumber,
+        /// Every whole read, in order.
+        whole_reads: Arc<parking_lot::Mutex<Vec<CheckpointSequenceNumber>>>,
     }
 
     impl Fullnode {
@@ -638,6 +672,7 @@ mod tests {
                 checkpoints: (10..=head).map(|seq| (seq, checkpoint(seq))).collect(),
                 too_large: too_large.iter().copied().collect(),
                 head,
+                whole_reads: Default::default(),
             }
         }
     }
@@ -662,6 +697,7 @@ mod tests {
             &self,
             seq: CheckpointSequenceNumber,
         ) -> Result<CheckpointData, TransportError> {
+            self.whole_reads.lock().push(seq);
             if self.too_large.contains(&seq) {
                 return Err(TransportError::TooLarge(format!(
                     "checkpoint {seq} is over the decode limit"
@@ -716,10 +752,13 @@ mod tests {
         }
     }
 
-    /// A provider whose part read answers `answer`, counting the reads.
+    /// A provider whose part read answers `answer`, counting the reads, and
+    /// which remembers the checkpoints it was asked to read in parts as too
+    /// large, as the real provider does.
     struct PartReader {
         answer: Result<CheckpointChangeset, TransportError>,
         reads: AtomicU32,
+        known_too_large: parking_lot::Mutex<HashSet<CheckpointSequenceNumber>>,
     }
 
     #[anemo::async_trait]
@@ -744,10 +783,15 @@ mod tests {
         }
         async fn checkpoint_changeset_in_parts(
             &self,
-            _seq: CheckpointSequenceNumber,
+            seq: CheckpointSequenceNumber,
         ) -> Result<CheckpointChangeset, TransportError> {
             self.reads.fetch_add(1, Ordering::SeqCst);
+            self.known_too_large.lock().insert(seq);
             self.answer.clone()
+        }
+
+        fn known_too_large(&self, seq: CheckpointSequenceNumber) -> bool {
+            self.known_too_large.lock().contains(&seq)
         }
     }
 
@@ -757,6 +801,7 @@ mod tests {
             Arc::new(PartReader {
                 answer,
                 reads: AtomicU32::new(0),
+                known_too_large: Default::default(),
             }),
             ProofProviderMetrics::new_for_testing(),
         )
@@ -827,6 +872,26 @@ mod tests {
             page(&server, 10).await.unwrap(),
             vec![10, 11],
             "the checkpoints before it are still served"
+        );
+    }
+
+    /// A checkpoint already known to be too large is not read whole again:
+    /// the next page of it goes straight to its (cached) part read.
+    #[tokio::test]
+    async fn a_checkpoint_known_too_large_is_not_read_whole_again() {
+        let changeset = (checkpoint(12).checkpoint_summary, BTreeMap::new());
+        let fullnode = Fullnode::new(14, &[12]);
+        let whole_reads = fullnode.whole_reads.clone();
+        let server = server(fullnode, Ok(changeset));
+
+        assert_eq!(page(&server, 12).await.unwrap(), vec![12]);
+        let after_first = whole_reads.lock().iter().filter(|seq| **seq == 12).count();
+        assert!(after_first > 0, "found too large by reading it whole");
+        assert_eq!(page(&server, 12).await.unwrap(), vec![12]);
+        assert_eq!(
+            whole_reads.lock().iter().filter(|seq| **seq == 12).count(),
+            after_first,
+            "not read whole again"
         );
     }
 }

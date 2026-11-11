@@ -2396,6 +2396,28 @@ mod tests {
         );
     }
 
+    /// The capped part read a relay serves changesets with honours the cap
+    /// it is given, below the tree cap.
+    #[tokio::test]
+    async fn the_part_read_up_to_a_cap_honours_it() {
+        let client = serve(Arc::new(mock_ledger())).await;
+        let Err(error) = client
+            .get_checkpoint_object_states_in_parts_up_to(1, 0)
+            .await
+        else {
+            panic!("a cap of zero must refuse the first state");
+        };
+        assert!(is_object_state_cap_error(&error), "{error}");
+        assert!(
+            error.to_string().contains("more than 0 object states"),
+            "{error}"
+        );
+        client
+            .get_checkpoint_object_states_in_parts_up_to(1, MAX_CHECKPOINT_OBJECT_STATES)
+            .await
+            .expect("under the cap, the part read succeeds");
+    }
+
     /// A summary for another checkpoint than the one asked for is refused
     /// before any effects read, so a cap refusal is only ever about the
     /// checkpoint asked for.
