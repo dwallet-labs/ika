@@ -668,15 +668,22 @@ dropping entries are layered:
   existing catch-up fast-forward jumps past it, and the objects of the
   skipped span stay missing from the cache, as for any fast-forward. The
   changeset page answers `internal`. A checkpoint whose fullnode read fails
-  as too large becomes a pending gap of the pusher; the pusher does not
-  repair such a gap from the checkpoint archive, which would read it whole
-  and build its full tree with no bound. The gap remembers that any of its
-  reads failed as too large for its whole life, so a later read that fails
-  as `Network` or `NotFound` does not send it to the archive either. The
-  gap is handled as without an archive: it is dropped at its 600 s
-  deadline, and the objects it wrote stay out of the verified cache. It is
-  not recorded as a lost checkpoint either, so the archive backfill never
-  reads it (below). The proof provider proves those entries itself.
+  as too large becomes a pending gap of the pusher. The pusher does not
+  read it whole from the fullnode again: a checkpoint never changes, and
+  each such read makes the fullnode load all of it. The gap goes to the
+  checkpoint archive, as a gap the fullnode refuses does. The archive read
+  has no size limit, so the pusher bounds every archive blob, for any gap
+  or lost checkpoint, with the part read's cap (`MAX_CHECKPOINT_OBJECT_STATES`,
+  below): it folds the blob's object states with the written-version check
+  and refuses the blob as soon as they pass the cap, before Sui's tree is
+  built. The folded states give the same tree as Sui's
+  `CheckpointArtifacts::from`. A gap whose archive blob is over the cap is
+  not fetched from the archive again. Like any gap still not repaired at its
+  600 s deadline, it is dropped, counted, and recorded as a lost checkpoint,
+  pinned and scheduled for the archive backfill (below), whose reads the
+  cap bounds the same way. Until a gap or a lost checkpoint is folded, an
+  object it wrote is served from the cache at the version cached before it,
+  as for any gap.
 
   The whole read also checks, before Sui's conversion of the checkpoint's
   object set, that every Move object's contents start with a 32-byte id.
@@ -722,8 +729,9 @@ dropping entries are layered:
   So the part read caps the folded object states at 32 million
   (`MAX_CHECKPOINT_OBJECT_STATES`), checked as each result is folded and
   before Sui's tree is built; past it the read stops with `Encoding`, and
-  the entry is skipped. The cap applies only to the part read; a checkpoint
-  read whole is under 128 MiB and holds at most a few million states. A
+  the entry is skipped. The cap also bounds the pusher's archive reads
+  (above); a checkpoint read whole from the fullnode is under 128 MiB and
+  holds at most a few million states. A
   checkpoint found over the cap is remembered (up to 1,024 of them, as long
   as a cached tree, 300 s; a checkpoint never changes) and refused at once
   afterwards, with the same error, before any read. The part read checks
@@ -749,8 +757,14 @@ dropping entries are layered:
   per part read, with 16 effects reads in flight at a time. The tree cache is
   weighed by object states, 32 million in all across the cached trees,
   about 220 bytes per state, so about 7 GB at most; trees from the whole
-  read are weighed the same way. A tree the cache evicts, or a new tree it
-  rejects, is not freed at once: moka removes it from its map but defers the
+  read are weighed the same way. The cache evicts the least recently used
+  trees to admit a new one (moka's LRU policy), so a tree up to the whole
+  capacity is kept and reused. moka's default policy admits an entry that
+  needs room only when it has been looked up more often than the entries it
+  would evict, which a tree just built never has: a large part-read tree was
+  dropped as soon as it was built, and every later proof against its
+  checkpoint read the parts and built the tree again. A tree the cache
+  evicts is not freed at once: moka removes it from its map but defers the
   drop through crossbeam-epoch (moka-0.12.16 `cht/map/bucket.rs:703`). moka
   flushes the crossbeam epoch after it initializes a value
   (`future/cache.rs:1798-1799`) and after its maintenance
@@ -763,7 +777,12 @@ dropping entries are layered:
   each under about 1 GB (a whole checkpoint is under 128 MiB). The estimate
   holds while no thread stays pinned in an older crossbeam epoch; a thread
   that stays pinned can keep more than one evicted tree unfreed. No way is
-  known for a user alone to cause such a pin.
+  known for a user alone to cause such a pin. The pusher's bounded archive
+  read is not part of this estimate: at the cap it peaks at about the same
+  11 to 14 GB as a part-read build (the fold's map, then the tree), plus the
+  checkpoint blob itself, which the cap does not bound. The pusher reads one
+  archive blob at a time, and that read can run while a part-read build
+  does.
 
   The remaining risk: a user who builds a checkpoint above the cap makes
   every entry defined in it unprovable by the part read, so the sessions it
@@ -1244,8 +1263,8 @@ any increase — each drop is a potential wedged epoch). A gap that keeps
 failing to *fold* is dropped at the same deadline, and a far-behind
 fast-forward drops every pending gap (they all sit below the old cursor,
 in the span the scan did reach; counted in the same metric). A dropped gap
-is no longer forgotten: each, except one too large to read whole (below),
-is **recorded as a lost checkpoint** and handed to the archive backfill (next paragraph), which keeps re-folding it
+is no longer forgotten: each is **recorded as a lost checkpoint** and
+handed to the archive backfill (next paragraph), which keeps re-folding it
 across restarts. The end-of-epoch retained store is written only after the
 fold's committee verification passes (`fold_checkpoint` verifies before
 `persist_end_of_epoch`), so no source — fullnode or archive — can
@@ -1291,15 +1310,15 @@ A direct node therefore re-folds checkpoints from the archive
   recovers it with no list in the release and no operator action. The span a
   fast-forward jumps over is *not* recorded: it was never fetched, it is
   unbounded, and sacrificing it is that path's purpose. Nothing is recorded
-  on a node with no archive, which could never re-fold it. A gap any of
-  whose fullnode reads failed as too large is not recorded either, whether
-  it is dropped at the deadline, after a fold failure, or by a
-  fast-forward. The backfill would read it whole from the archive
-  and build its full tree with no bound, which the gap retry refuses to do
-  (per-entry failure isolation, above). So it is dropped and counted in
-  `ika_ocs_pusher_gap_dropped_total`, with a warning naming the checkpoint,
-  and the objects it wrote stay out of the verified cache until a later
-  write.
+  on a node with no archive, which could never re-fold it. A gap the
+  fullnode answered as too large to read whole is recorded like any other:
+  the backfill's archive read is bounded by the object-state cap (per-entry
+  failure isolation, above). A blob over the cap is refused before its tree
+  is built, counted in `ika_ocs_pusher_backfill_failures_total` as
+  `over_state_cap` (not `verification`: an honest checkpoint that large is
+  refused the same way every time), and retried at the backoff; the record
+  stays, so objects it wrote keep their earlier cached versions until their
+  next mutation or a binary with a larger cap folds it.
 - **Recorded on the first decode or fold failure.** A pending gap that
   exists but this binary cannot read is recorded and pinned on its *first*
   such failure, not at the deadline: the gap is held only in memory behind a
@@ -1873,7 +1892,7 @@ The archive backfill exports `ika_ocs_pusher_backfill_outcomes_total{outcome}`
 `folded` / `already_cached` / `nothing_to_fold` / `abandoned`),
 `ika_ocs_pusher_backfill_failures_total{reason}` (`archive_not_found`,
 `archive_fetch`, `archive_timeout`, `missing_committee`, `verification`,
-`currency_lookup`) and the gauge `ika_ocs_pusher_backfill_pending` — the
+`over_state_cap`, `currency_lookup`) and the gauge `ika_ocs_pusher_backfill_pending` — the
 alert target: non-zero for long means the node still lacks objects it
 needs. The lost-checkpoint record exports the gauge
 `ika_ocs_pusher_lost_checkpoints` (records held: pending, or settled and
