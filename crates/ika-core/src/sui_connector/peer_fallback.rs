@@ -1200,6 +1200,7 @@ mod tests {
             fallback(&fx, fullnode.clone(), &node, FallbackBounds::default()),
         );
         assert!(mirrored.verified_object(x.id()).await.is_err());
+        assert!(mirrored.verified_objects(&[x.id()]).await.is_err());
         assert_eq!(
             requests.load(Ordering::Relaxed),
             0,
