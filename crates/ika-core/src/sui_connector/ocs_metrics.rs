@@ -10,6 +10,7 @@
 //!   `-1` when this node runs no ratchet at all.
 
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use prometheus::{
     Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, Registry,
@@ -61,17 +62,17 @@ pub struct OcsMetrics {
 
     pub pusher_lag_checkpoints: IntGauge,
     pub pusher_last_progress_timestamp_seconds: IntGauge,
-    /// Unix time the sui-state-direct pusher last saw its own fullnode's
-    /// checkpoint watermark advance: a probe answering higher than the
-    /// previous answer. Set to the pusher's start until the first advance; 0
-    /// on a node that runs no pusher. Left alone by a failed probe and by an
-    /// answer that does not advance, so `time() - this` keeps growing while
-    /// the fullnode is unreachable, hung or no longer syncing — the cases
-    /// where the lag gauges keep reading healthy. Sui certifies several
-    /// checkpoints a second, so minutes without an advance means this node's
-    /// view of Sui is frozen. The watermark is sampled once per tick, so a
-    /// tick held by slow checkpoint fetches ages it too: alert above the
-    /// longest healthy tick.
+    /// Unix time the sui-state-direct pusher last saw its own fullnode report
+    /// a checkpoint watermark above both its previous report and the scan
+    /// cursor. It measures the fullnode's reported watermark, sampled once per
+    /// pusher tick, not what the node has folded. On a sui-state-direct node
+    /// it is stamped at boot and again when the pusher is built if it was
+    /// not, so it ages from boot even when the pusher never starts; 0 on a
+    /// node that runs no pusher. Left alone by a failed probe and by an answer
+    /// that does not advance, so `time() - this` keeps growing while the
+    /// fullnode is unreachable, hung or no longer syncing, the cases where the
+    /// lag gauges keep reading healthy. A tick held by slow checkpoint fetches
+    /// ages it too.
     pub pusher_upstream_last_advance_timestamp_seconds: IntGauge,
     /// Pusher watermark probes that failed or passed their deadline (one per
     /// tick while the node's own fullnode does not answer).
@@ -240,7 +241,7 @@ impl OcsMetrics {
             ).unwrap(),
             pusher_upstream_last_advance_timestamp_seconds: register_int_gauge_with_registry!(
                 "ika_ocs_pusher_upstream_last_advance_timestamp_seconds",
-                "Unix time the sui-state-direct pusher last saw its own Sui fullnode's checkpoint watermark advance (the pusher's start until the first advance; 0 when no pusher runs); unchanged while the probe fails or answers the same height, so time() minus this is how long this node's view of Sui has been frozen",
+                "Unix time the sui-state-direct pusher last saw its own Sui fullnode report a checkpoint watermark above both its previous report and the scan cursor (stamped at boot on sui-state-direct until the first advance; 0 when no pusher runs); unchanged while the probe fails, hangs or answers no higher, so time() minus this is how long the fullnode has reported nothing new to the pusher",
                 registry,
             ).unwrap(),
             pusher_watermark_probe_failures_total: register_int_counter_with_registry!(
@@ -446,6 +447,23 @@ impl OcsMetrics {
         metrics.changeset_contiguous_head.set(-1);
         metrics.changeset_highest_seen.set(-1);
         metrics
+    }
+
+    /// Start the pusher's last-advance clock
+    /// ([`Self::pusher_upstream_last_advance_timestamp_seconds`]) at now,
+    /// unless it has started already. A sui-state-direct node calls it at
+    /// boot, so a pusher that never gets built ages from boot rather than
+    /// reading 0 like a node that runs no pusher; the pusher calls it again
+    /// when built, which keeps the boot start.
+    pub fn start_pusher_upstream_clock(&self) {
+        if self.pusher_upstream_last_advance_timestamp_seconds.get() == 0 {
+            self.pusher_upstream_last_advance_timestamp_seconds.set(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            );
+        }
     }
 
     pub fn new_for_testing() -> Arc<Self> {
