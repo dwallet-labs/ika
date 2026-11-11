@@ -61,6 +61,21 @@ pub struct OcsMetrics {
 
     pub pusher_lag_checkpoints: IntGauge,
     pub pusher_last_progress_timestamp_seconds: IntGauge,
+    /// Unix time the sui-state-direct pusher last saw its own fullnode's
+    /// checkpoint watermark advance: a probe answering higher than the
+    /// previous answer. Set to the pusher's start until the first advance; 0
+    /// on a node that runs no pusher. Left alone by a failed probe and by an
+    /// answer that does not advance, so `time() - this` keeps growing while
+    /// the fullnode is unreachable, hung or no longer syncing — the cases
+    /// where the lag gauges keep reading healthy. Sui certifies several
+    /// checkpoints a second, so minutes without an advance means this node's
+    /// view of Sui is frozen. The watermark is sampled once per tick, so a
+    /// tick held by slow checkpoint fetches ages it too: alert above the
+    /// longest healthy tick.
+    pub pusher_upstream_last_advance_timestamp_seconds: IntGauge,
+    /// Pusher watermark probes that failed or passed their deadline (one per
+    /// tick while the node's own fullnode does not answer).
+    pub pusher_watermark_probe_failures_total: IntCounter,
     pub changeset_contiguous_head: IntGauge,
     pub changeset_highest_seen: IntGauge,
     pub changeset_pending_depth: IntGauge,
@@ -219,6 +234,16 @@ impl OcsMetrics {
             pusher_last_progress_timestamp_seconds: register_int_gauge_with_registry!(
                 "ika_ocs_pusher_last_progress_timestamp_seconds",
                 "Unix time of the last scan cursor advance, including fast-forward; 0 before any advance; not proof of successful cache folding",
+                registry,
+            ).unwrap(),
+            pusher_upstream_last_advance_timestamp_seconds: register_int_gauge_with_registry!(
+                "ika_ocs_pusher_upstream_last_advance_timestamp_seconds",
+                "Unix time the sui-state-direct pusher last saw its own Sui fullnode's checkpoint watermark advance (the pusher's start until the first advance; 0 when no pusher runs); unchanged while the probe fails or answers the same height, so time() minus this is how long this node's view of Sui has been frozen",
+                registry,
+            ).unwrap(),
+            pusher_watermark_probe_failures_total: register_int_counter_with_registry!(
+                "ika_ocs_pusher_watermark_probe_failures_total",
+                "sui-state-direct pusher probes of its own Sui fullnode's checkpoint watermark that failed or passed their deadline",
                 registry,
             ).unwrap(),
             changeset_contiguous_head: register_int_gauge_with_registry!(

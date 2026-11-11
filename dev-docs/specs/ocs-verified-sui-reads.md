@@ -1104,6 +1104,26 @@ advance that cursor, so operators must inspect fetch failures, cache gaps
 and verified-read failures independently. None of these diagnostics change
 watermark admission or authorize state.
 
+**A frozen own fullnode.** Neither lag gauge can see the node's own fullnode
+stop. A failed probe ends the tick before they are written, so they keep their
+last healthy values, and a fullnode that answers but has stopped syncing is
+measured against its own frozen watermark, so the lag reads about 0. One
+testnet validator sat three Ika epochs behind for more than two days with
+`ika_ocs_pusher_stalled` at 0 and the lag at 1. The folder therefore records
+every probe before acting on it: a failure (including a probe past its 60 s
+deadline) counts in `ika_ocs_pusher_watermark_probe_failures_total`, and an
+answer above the previous answer stamps
+`ika_ocs_pusher_upstream_last_advance_timestamp_seconds` (the pusher's start
+until the first advance; 0 where no pusher runs). Sui certifies several
+checkpoints a second, so five minutes without an advance means the node's view
+of Sui is frozen, whether the probe fails, hangs or keeps answering the same
+height. The folder logs that once at `ERROR` (cursor, last watermark seen, time
+frozen, last probe error) and once at `INFO` when the watermark advances again.
+The check runs at the probe, so a tick held by a hung full-checkpoint fetch
+delays the log; the gauge keeps aging regardless, which makes
+`time() -` the gauge the alert signal. Apart from the probe deadline, nothing
+about admission, scanning or serving changes.
+
 The folder logs the watermark refusal as the stall reason once per stretch,
 then logs recovery. The reader logs refusals at most once per minute across
 all reads and refusal stretches. Both counters still count every refusal.
