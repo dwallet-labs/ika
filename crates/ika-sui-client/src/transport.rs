@@ -106,6 +106,10 @@ pub enum TransportError {
     NotFound(String),
     #[error("encoding: {0}")]
     Encoding(String),
+    /// The response was larger than the client's decode limit for that call.
+    /// The data exists upstream, but this read cannot receive it whole.
+    #[error("response too large: {0}")]
+    TooLarge(String),
 }
 
 /// Deterministically-derived `Field<u64, _>` child id for `(parent, version)`.

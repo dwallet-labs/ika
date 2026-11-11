@@ -601,7 +601,13 @@ dropping entries are layered:
   `ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total` and warned once
   per id per hour. Before this, one such child failed the whole page, and with
   it every walk of the collection: on mainnet a single undecodable checkpoint
-  starved the bag event pump of every session in the bag. A `Network` failure
+  starved the bag event pump of every session in the bag. A `TooLarge`
+  failure skips the child the same way, and counts in the same counter: the
+  response holding the child's defining checkpoint is over the client's
+  decode limit (128 MiB for a whole checkpoint). The gRPC client maps tonic's
+  own refusal of such a response to `TooLarge`, matched by status code and
+  tonic's message, and does not count it as a rate-limit answer from the
+  endpoint. A `Network` failure
   still fails the page, because it is a property of the source, not of the
   child, and the consumer must back off rather than act on a page that
   silently lost its entries.
@@ -1693,7 +1699,7 @@ and `ika_ocs_pusher_lost_checkpoints_overflow_total`; alert on
 any increase of the overflow counter or of `{outcome="abandoned"}` — each is
 a cache gap the backfill will not repair. Any `verification` failure means the archive served a blob that
 does not verify and is also logged as security-critical. A dynamic-field child
-skipped for an encoding error counts in
+skipped for an encoding error or a too-large defining checkpoint counts in
 `ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total`.
 
 Code anchors: `crates/ika-core/src/sui_connector/` — `verified_reader.rs`

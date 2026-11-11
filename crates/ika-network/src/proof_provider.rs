@@ -108,7 +108,8 @@ pub struct ProofProviderMetrics {
     pub dynamic_fields_walk_entries_skipped_transient_total: IntCounter,
     /// Children skipped because building their proof failed with an encoding
     /// error — e.g. the defining checkpoint holds a transaction this binary
-    /// cannot decode. The rest of the page is still served; the skipped id is
+    /// cannot decode — or because the defining checkpoint was too large to
+    /// fetch. The rest of the page is still served; the skipped id is
     /// reported to the consumer like a pruned one.
     pub dynamic_fields_walk_entries_skipped_encoding_total: IntCounter,
 
@@ -234,7 +235,7 @@ impl ProofProviderMetrics {
             .unwrap(),
             dynamic_fields_walk_entries_skipped_encoding_total: register_int_counter_with_registry!(
                 "ika_ocs_dynamic_fields_walk_entries_skipped_encoding_total",
-                "Children skipped because building their proof failed with an encoding error (e.g. an undecodable defining checkpoint); the rest of the page is still served",
+                "Children skipped because building their proof failed with an encoding error (e.g. an undecodable defining checkpoint) or a defining checkpoint too large to fetch; the rest of the page is still served",
                 registry,
             )
             .unwrap(),
@@ -434,6 +435,7 @@ fn record_proof_build_failure(metrics: &ProofProviderMetrics, kind: &str, err: &
         TransportError::NotFound(_) => "not_found",
         TransportError::Encoding(_) => "encoding",
         TransportError::Network(_) => "network",
+        TransportError::TooLarge(_) => "too_large",
     };
     metrics
         .proof_build_failures_total
@@ -462,6 +464,10 @@ struct ProvenDynamicFields {
 ///   halted the bag event pump outright. Warned once per id per
 ///   `UNPROVABLE_ENTRY_WARN_INTERVAL`, since the pump re-walks the bag many
 ///   times a second.
+/// - `TooLarge` skips the entry the same way: the response holding its
+///   defining checkpoint is over the client's decode limit. That is a
+///   property of this entry's checkpoint, not of the source, so failing the
+///   page would again hide every other child of the collection.
 /// - `Network` fails the page: the source itself is unreachable, and the
 ///   consumer must back off rather than read a page that silently lost every
 ///   entry.
@@ -516,7 +522,7 @@ where
                     .inc();
                 page.skipped_entry_ids.push(entry.object_id);
             }
-            Err(error @ TransportError::Encoding(_)) => {
+            Err(error @ (TransportError::Encoding(_) | TransportError::TooLarge(_))) => {
                 record_proof_build_failure(metrics, "dynamic_fields_page_entry", &error);
                 metrics
                     .dynamic_fields_walk_entries_skipped_encoding_total
@@ -529,8 +535,8 @@ where
                     warn!(
                         ?id,
                         %error,
-                        "dynamic-field child cannot be proven (encoding error); skipping it and \
-                         serving the rest of the page"
+                        "dynamic-field child cannot be proven; skipping it and serving the \
+                         rest of the page"
                     );
                 }
                 page.skipped_entry_ids.push(id);
@@ -1121,6 +1127,62 @@ mod tests {
                 .get(),
             0
         );
+    }
+
+    /// One child whose defining checkpoint is over the fetch's decode limit is
+    /// skipped and reported, and every other child of the page is served.
+    #[tokio::test]
+    async fn an_entry_whose_checkpoint_is_too_large_is_skipped_and_the_page_served() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let warned = unprovable_entry_cache();
+        let oversized = ObjectID::from_single_byte(0x02);
+        let prove = |id: ObjectID| {
+            let result = if id == oversized {
+                Err(TransportError::TooLarge(
+                    "Error, decoded message length too large: found 140000000 bytes, \
+                     the limit is: 134217728 bytes"
+                        .into(),
+                ))
+            } else {
+                proven(&committee, &keys, id, 41)
+            };
+            async move { result }
+        };
+
+        let page = prove_listed_dynamic_fields(
+            vec![listed(0x01), listed(0x02), listed(0x03)],
+            &metrics,
+            &warned,
+            prove,
+        )
+        .await
+        .expect("a too-large checkpoint of one entry must not fail the page");
+
+        let served: Vec<ObjectID> = page.entries.iter().map(|e| e.object.id()).collect();
+        assert_eq!(
+            served,
+            vec![
+                ObjectID::from_single_byte(0x01),
+                ObjectID::from_single_byte(0x03)
+            ]
+        );
+        assert_eq!(page.skipped_entry_ids, vec![oversized]);
+        assert_eq!(
+            metrics
+                .proof_build_failures_total
+                .with_label_values(&["dynamic_fields_page_entry", "too_large"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            metrics
+                .dynamic_fields_walk_entries_skipped_encoding_total
+                .get(),
+            1
+        );
+        assert_eq!(metrics.dynamic_fields_walk_entries_returned_total.get(), 2);
+        assert!(warned.contains_key(&oversized));
     }
 
     /// NotFound keeps its existing meaning: skipped and reported, not a page

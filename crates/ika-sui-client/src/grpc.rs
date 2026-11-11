@@ -187,7 +187,14 @@ impl SuiGrpcClient {
                 Ok(value)
             }
             Err(status) => {
-                self.gate.note_status(&status);
+                // A response over this client's decode limit is refused by
+                // the client itself, not by the endpoint, so it says nothing
+                // about the endpoint's rate limit. The decompression variant
+                // carries `ResourceExhausted`, which the gate would otherwise
+                // read as a rate-limit answer and slow every read on it.
+                if !Self::is_over_decode_limit(&status) {
+                    self.gate.note_status(&status);
+                }
                 Err(map_err(status))
             }
         }
@@ -499,8 +506,29 @@ impl SuiGrpcClient {
     fn rpc_status_err(status: tonic::Status) -> TransportError {
         if status.code() == tonic::Code::NotFound {
             TransportError::NotFound(status.message().to_string())
+        } else if Self::is_over_decode_limit(&status) {
+            TransportError::TooLarge(status.message().to_string())
         } else {
             TransportError::Network(status.to_string())
+        }
+    }
+
+    /// Whether `status` is tonic's own refusal of a response larger than the
+    /// call's `max_decoding_message_size`. tonic 0.14 raises two statuses for
+    /// it (`codec/decode.rs`): `OutOfRange` when the frame's declared length
+    /// is over the limit, and `ResourceExhausted` when a zstd-compressed frame
+    /// passes the limit while it is decompressed. Both the code and tonic's
+    /// message are matched, so an endpoint's own `OutOfRange` or
+    /// `ResourceExhausted` answer keeps its usual meaning.
+    fn is_over_decode_limit(status: &tonic::Status) -> bool {
+        match status.code() {
+            tonic::Code::OutOfRange => status
+                .message()
+                .starts_with("Error, decoded message length too large"),
+            tonic::Code::ResourceExhausted => status
+                .message()
+                .starts_with("Error decompressing: size limit"),
+            _ => false,
         }
     }
 
@@ -1460,6 +1488,43 @@ mod tests {
             match SuiGrpcClient::rpc_status_err(status) {
                 TransportError::Network(_) => {}
                 other => panic!("{code:?} must map to Network, got {other:?}"),
+            }
+        }
+    }
+
+    /// tonic's two refusals of a response over the decode limit map to
+    /// `TooLarge`, with the exact texts tonic 0.14 writes. The same codes
+    /// with any other message stay `Network`.
+    #[test]
+    fn rpc_status_err_maps_a_response_over_the_decode_limit_to_too_large() {
+        for status in [
+            tonic::Status::out_of_range(
+                "Error, decoded message length too large: found 140000000 bytes, \
+                 the limit is: 134217728 bytes",
+            ),
+            tonic::Status::resource_exhausted(
+                "Error decompressing: size limit, of 134217728 bytes, exceeded while \
+                 decompressing message",
+            ),
+        ] {
+            let code = status.code();
+            assert!(SuiGrpcClient::is_over_decode_limit(&status));
+            match SuiGrpcClient::rpc_status_err(status) {
+                TransportError::TooLarge(_) => {}
+                other => {
+                    panic!("{code:?} over the decode limit must map to TooLarge, got {other:?}")
+                }
+            }
+        }
+        for status in [
+            tonic::Status::out_of_range("checkpoint sequence out of range"),
+            tonic::Status::resource_exhausted("busy"),
+        ] {
+            let code = status.code();
+            assert!(!SuiGrpcClient::is_over_decode_limit(&status));
+            match SuiGrpcClient::rpc_status_err(status) {
+                TransportError::Network(_) => {}
+                other => panic!("{code:?} from the endpoint must map to Network, got {other:?}"),
             }
         }
     }

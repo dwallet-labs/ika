@@ -238,6 +238,7 @@ fn map_err(e: TransportError) -> Status {
         TransportError::NotFound(s) => Status::new_with_message(StatusCode::NotFound, s),
         TransportError::Network(s) => Status::internal(s),
         TransportError::Encoding(s) => Status::internal(s),
+        TransportError::TooLarge(s) => Status::internal(s),
     }
 }
 
