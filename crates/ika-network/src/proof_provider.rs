@@ -18,12 +18,13 @@
 //! responses into the same [`VerifiedObjectResponse`] shape; consumers see
 //! the same trait either way.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::future::{BoxFuture, FutureExt, Shared};
 use moka::future::Cache;
 use moka::policy::EvictionPolicy;
 use prometheus::{
@@ -42,7 +43,8 @@ use sui_types::messages_checkpoint::{
 use sui_types::object::Object;
 
 use ika_sui_client::grpc::{
-    MAX_CHECKPOINT_OBJECT_STATES, SuiGrpcClient, is_object_state_cap_error, object_state_cap_error,
+    MAX_CHECKPOINT_OBJECT_STATES, PartReadProgress, SuiGrpcClient, is_object_state_cap_error,
+    object_state_cap_error,
 };
 use ika_sui_client::transport::{
     CheckpointObjectStates, DynamicFieldEntry, SuiTransport, TransportError,
@@ -667,9 +669,17 @@ struct ProofCache {
     /// Slots of the part reads running in tasks of their own; see
     /// [`MAX_DETACHED_PART_READS`].
     detached_part_reads: Arc<Semaphore>,
-    /// Checkpoints whose part read passed [`PART_READ_TOTAL_DEADLINE`]:
-    /// refused at once for [`PART_READ_FAILURE_MEMORY`].
+    /// Checkpoints whose part read was abandoned (see
+    /// [`read_parts_watched`]): refused at once for
+    /// [`PART_READ_FAILURE_MEMORY`].
     part_read_failures: Cache<CheckpointSequenceNumber, ()>,
+    /// The reads the running part read has completed; one part read runs at
+    /// a time, under `part_read_builds`.
+    part_read_progress: Arc<PartReadProgress>,
+    /// Tree part reads running in tasks of their own, by checkpoint.
+    running_trees: RunningPartReads<Arc<CachedCheckpoint>>,
+    /// Changeset part reads running in tasks of their own, by checkpoint.
+    running_changesets: RunningPartReads<Arc<CheckpointChangeset>>,
     /// Changesets of checkpoints too large to read whole, read in parts and
     /// served to mirrored nodes. Weighed by object states, least recently
     /// used evicted first, like `trees`.
@@ -691,31 +701,101 @@ const TOO_LARGE_CHECKPOINTS_CAPACITY: u64 = 1_024;
 /// part-read build permit before failing as `Network`, a retriable error. It
 /// applies to every such read, the node's own included. Another checkpoint's
 /// part read can hold the permit for a long time (see
-/// [`PART_READ_TOTAL_DEADLINE`]); a read queued behind it no longer waits that
-/// long. A relayed request whose wait for the permit is most of its time gets
+/// [`PART_READ_NO_PROGRESS_DEADLINE`]); a read queued behind it no longer
+/// waits that long. A relayed request whose wait for the permit is most of its time gets
 /// this answer before the relay client's 30 s deadline, and tries another
 /// relay.
 const PART_READ_PERMIT_WAIT: Duration = Duration::from_secs(20);
 
-/// Bound on one part read as a whole. Each read in it has its own deadline
-/// (four tries of 60 s), but a checkpoint can need about 225,000 of them,
-/// which on a degraded fullnode would hold the single part-read build permit,
-/// and so every other part read, for hours. The largest honest checkpoint
-/// finishes within 30 minutes at 16 reads in flight and up to about 125 ms per
-/// read, several times a healthy fullnode's latency. On expiry the read is
-/// abandoned, the permit released, and the checkpoint refused at once for
-/// [`PART_READ_FAILURE_MEMORY`].
-const PART_READ_TOTAL_DEADLINE: Duration = Duration::from_secs(30 * 60);
+/// How long a part read may go without completing any of its reads before it
+/// is abandoned. Each read has its own deadline, up to about 4 minutes with
+/// its retries (four tries of 60 s), but a checkpoint can need about 225,000
+/// of them, so a part read on a degraded fullnode could hold the single
+/// part-read build permit, and so every other part read, for hours. A slow
+/// fullnode that keeps completing reads is never cut off by this; one that
+/// completes none for longer than any single read may take has stalled.
+const PART_READ_NO_PROGRESS_DEADLINE: Duration = Duration::from_secs(5 * 60);
 
-/// How long a checkpoint whose part read passed [`PART_READ_TOTAL_DEADLINE`]
-/// is refused at once, without reading.
+/// Backstop on one part read as a whole, however it progresses: about 225,000
+/// reads at 16 in flight finish within 6 hours at up to about 1.5 s per read,
+/// more than ten times a healthy fullnode's latency.
+const PART_READ_BACKSTOP: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// How often a running part read's progress is checked.
+const PART_READ_PROGRESS_CHECK: Duration = Duration::from_secs(10);
+
+/// How long a checkpoint whose part read was abandoned (no progress for
+/// [`PART_READ_NO_PROGRESS_DEADLINE`], or past [`PART_READ_BACKSTOP`]) is
+/// refused at once, without reading.
 const PART_READ_FAILURE_MEMORY: Duration = Duration::from_secs(10 * 60);
 
-/// How many part reads may run in tasks of their own at once, waiting for the
-/// permit or reading. A part read outlives a relayed request whose client gave
-/// up, so the requests a client abandons cannot leave more than this many
-/// behind; past it, a request gets a retriable `Network` error at once.
+/// How many part reads that relayed requests start may run in tasks of their
+/// own at once, waiting for the permit or reading. Such a part read outlives
+/// a request whose client gave up, so the requests clients abandon cannot
+/// leave more than this many behind; past it, a relayed request that would
+/// start another gets a retriable `Network` error at once. A request for a
+/// checkpoint whose part read is already running joins it without a slot,
+/// and the node's own requests (not relayed) need none.
 const MAX_DETACHED_PART_READS: usize = 4;
+
+tokio::task_local! {
+    /// Set while a request relayed from a peer is served; see
+    /// [`serve_relayed`].
+    static RELAYED: ();
+}
+
+/// Serve `request` as one relayed from a peer: a part read it starts takes
+/// one of the [`MAX_DETACHED_PART_READS`] slots. The relay server wraps every
+/// provider call in it; the node's own reads do not.
+pub async fn serve_relayed<F: Future>(request: F) -> F::Output {
+    RELAYED.scope((), request).await
+}
+
+fn is_relayed() -> bool {
+    RELAYED.try_with(|_| ()).is_ok()
+}
+
+/// A part read running in a task of its own, which requests for the same
+/// checkpoint join.
+type RunningPartRead<T> = Shared<BoxFuture<'static, Result<T, TransportError>>>;
+
+/// The part reads running in tasks of their own, by checkpoint.
+struct RunningPartReads<T> {
+    running: parking_lot::Mutex<HashMap<CheckpointSequenceNumber, RunningPartRead<T>>>,
+}
+
+impl<T> Default for RunningPartReads<T> {
+    fn default() -> Self {
+        Self {
+            running: parking_lot::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// Where the running part reads of one kind live in a [`ProofCache`].
+type RunningSelector<T> = fn(&ProofCache) -> &RunningPartReads<T>;
+
+fn running_trees(cache: &ProofCache) -> &RunningPartReads<Arc<CachedCheckpoint>> {
+    &cache.running_trees
+}
+
+fn running_changesets(cache: &ProofCache) -> &RunningPartReads<Arc<CheckpointChangeset>> {
+    &cache.running_changesets
+}
+
+/// Takes a part read out of its running set when its task ends, however it
+/// ends.
+struct LeaveRunning<T: 'static> {
+    cache: Arc<ProofCache>,
+    running: RunningSelector<T>,
+    seq: CheckpointSequenceNumber,
+}
+
+impl<T: 'static> Drop for LeaveRunning<T> {
+    fn drop(&mut self) {
+        (self.running)(&self.cache).running.lock().remove(&self.seq);
+    }
+}
 
 /// The most object states a changeset entry served to mirrored nodes carries.
 /// An entry ships about 72 bytes per state (id, version, digest), so the cap
@@ -742,11 +822,12 @@ trait CheckpointReads: Send + Sync + 'static {
     ) -> Result<CheckpointData, TransportError>;
 
     /// The summary and object states, read in parts, refused past
-    /// `max_states` states.
+    /// `max_states` states, counting each completed read in `progress`.
     async fn checkpoint_in_parts(
         &self,
         seq: CheckpointSequenceNumber,
         max_states: usize,
+        progress: Arc<PartReadProgress>,
     ) -> Result<CheckpointChangeset, TransportError>;
 }
 
@@ -763,8 +844,9 @@ impl CheckpointReads for SuiGrpcClient {
         &self,
         seq: CheckpointSequenceNumber,
         max_states: usize,
+        progress: Arc<PartReadProgress>,
     ) -> Result<CheckpointChangeset, TransportError> {
-        self.get_checkpoint_object_states_in_parts_up_to(seq, max_states)
+        self.get_checkpoint_object_states_in_parts_up_to(seq, max_states, &progress)
             .await
     }
 }
@@ -785,14 +867,14 @@ async fn acquire_part_read_permit(
             "part-read build permit: {error}"
         ))),
         Err(_) => Err(TransportError::Network(format!(
-            "checkpoint {seq}: another checkpoint's part read held the part-read build permit \
-             for {PART_READ_PERMIT_WAIT:?}; retry"
+            "checkpoint {seq}: waited {PART_READ_PERMIT_WAIT:?} for the part-read build permit, \
+             held by another part read; retry"
         ))),
     }
 }
 
 /// Refuse a part read of `seq` at once when it is remembered past `cap`
-/// (in `over_cap`) or past [`PART_READ_TOTAL_DEADLINE`].
+/// (in `over_cap`) or abandoned recently (see [`read_parts_watched`]).
 fn refuse_remembered_part_read(
     cache: &ProofCache,
     seq: CheckpointSequenceNumber,
@@ -804,18 +886,20 @@ fn refuse_remembered_part_read(
     }
     if cache.part_read_failures.contains_key(&seq) {
         return Err(TransportError::Network(format!(
-            "checkpoint {seq}: its part read passed the {PART_READ_TOTAL_DEADLINE:?} deadline \
-             recently; not read again for {PART_READ_FAILURE_MEMORY:?}"
+            "checkpoint {seq}: its part read was abandoned recently (no progress, or past its \
+             backstop); not read in parts again for {PART_READ_FAILURE_MEMORY:?}"
         )));
     }
     Ok(())
 }
 
-/// Run `read`, a part read, within [`PART_READ_TOTAL_DEADLINE`]. A read that
-/// passes the deadline is abandoned and remembered in
-/// `cache.part_read_failures`; one past the object-state cap is remembered in
-/// `over_cap`.
-async fn read_parts_within_deadline<T, Read, ReadFut>(
+/// Run `read`, a part read, while it progresses. Its progress is the count of
+/// reads completed in `cache.part_read_progress` (one part read runs at a
+/// time, under the permit). A part read that completes no read for
+/// [`PART_READ_NO_PROGRESS_DEADLINE`], or runs past [`PART_READ_BACKSTOP`], is
+/// abandoned and remembered in `cache.part_read_failures`; one past the
+/// object-state cap is remembered in `over_cap`.
+async fn read_parts_watched<T, Read, ReadFut>(
     cache: &ProofCache,
     seq: CheckpointSequenceNumber,
     over_cap: &Cache<CheckpointSequenceNumber, ()>,
@@ -825,65 +909,120 @@ where
     Read: FnOnce() -> ReadFut,
     ReadFut: Future<Output = Result<T, TransportError>>,
 {
-    match tokio::time::timeout(PART_READ_TOTAL_DEADLINE, read()).await {
-        Ok(Ok(read)) => Ok(read),
-        Ok(Err(error)) => {
-            if is_object_state_cap_error(&error) {
-                over_cap.insert(seq, ()).await;
+    let read = read();
+    tokio::pin!(read);
+    let started = tokio::time::Instant::now();
+    let mut completed = cache.part_read_progress.completed();
+    let mut progressed_at = started;
+    let mut check = tokio::time::interval(PART_READ_PROGRESS_CHECK);
+    check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let abandoned = loop {
+        tokio::select! {
+            result = &mut read => {
+                if let Err(error) = &result
+                    && is_object_state_cap_error(error)
+                {
+                    over_cap.insert(seq, ()).await;
+                }
+                return result;
             }
-            Err(error)
+            _ = check.tick() => {
+                let now = tokio::time::Instant::now();
+                let now_completed = cache.part_read_progress.completed();
+                if now_completed != completed {
+                    completed = now_completed;
+                    progressed_at = now;
+                }
+                if now.saturating_duration_since(progressed_at) >= PART_READ_NO_PROGRESS_DEADLINE {
+                    break format!("completed no read for {PART_READ_NO_PROGRESS_DEADLINE:?}");
+                }
+                if now.saturating_duration_since(started) >= PART_READ_BACKSTOP {
+                    break format!("ran past its {PART_READ_BACKSTOP:?} backstop");
+                }
+            }
         }
-        Err(_) => {
-            cache.part_read_failures.insert(seq, ()).await;
-            warn!(
-                seq,
-                deadline = ?PART_READ_TOTAL_DEADLINE,
-                "checkpoint part read passed its overall deadline; abandoned, and the checkpoint \
-                 is not read in parts again for a while"
-            );
-            Err(TransportError::Network(format!(
-                "checkpoint {seq}: part read passed its {PART_READ_TOTAL_DEADLINE:?} overall \
-                 deadline"
-            )))
-        }
-    }
+    };
+    cache.part_read_failures.insert(seq, ()).await;
+    warn!(
+        seq,
+        reason = %abandoned,
+        "checkpoint part read abandoned; the checkpoint is not read in parts again for a while"
+    );
+    Err(TransportError::Network(format!(
+        "checkpoint {seq}: part read {abandoned}"
+    )))
 }
 
 /// Run `task`, a part read and what is built from it, in a task of its own,
-/// holding one of [`MAX_DETACHED_PART_READS`] slots, and return its result. A
-/// relayed request's handler is dropped when the client gives up at its 30 s
-/// deadline; a part read tied to the handler was abandoned with it, and every
-/// retry started over, so a part read longer than that never completed over
-/// relays. Run apart, it finishes, bounded by the part-read build permit's
-/// wait, [`PART_READ_TOTAL_DEADLINE`] and the object-state cap, and caches
-/// its result for the next request.
-async fn spawn_part_read<T, Task, TaskFut>(
+/// and return its result. A relayed request's handler is dropped when the
+/// client gives up at its 30 s deadline; a part read tied to the handler was
+/// abandoned with it, and every retry started over, so a part read longer
+/// than that never completed over relays. Run apart, it finishes, bounded by
+/// the permit's wait, [`read_parts_watched`] and the object-state cap, and
+/// caches its result for the next request.
+///
+/// A request for a checkpoint whose part read of this kind (`running`) is
+/// already running joins it. A relayed request (see [`serve_relayed`]) that
+/// starts one takes one of [`MAX_DETACHED_PART_READS`] slots, or gets a
+/// retriable error at once; the node's own requests start one without a
+/// slot.
+async fn run_part_read<T, Task, TaskFut>(
     cache: &Arc<ProofCache>,
+    running: RunningSelector<T>,
     seq: CheckpointSequenceNumber,
     task: Task,
 ) -> Result<T, TransportError>
 where
-    T: Send + 'static,
+    T: Clone + Send + Sync + 'static,
     Task: FnOnce(Arc<ProofCache>) -> TaskFut + Send + 'static,
     TaskFut: Future<Output = Result<T, TransportError>> + Send + 'static,
 {
-    let slot = cache
-        .detached_part_reads
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
-            TransportError::Network(format!(
-                "checkpoint {seq}: {MAX_DETACHED_PART_READS} part reads are already running or \
-                 waiting; retry"
-            ))
-        })?;
-    let cache = cache.clone();
-    tokio::spawn(async move {
-        let _slot = slot;
-        task(cache).await
-    })
-    .await
-    .map_err(|error| TransportError::Network(format!("checkpoint {seq} part-read task: {error}")))?
+    let read = {
+        let mut reads = running(cache).running.lock();
+        match reads.get(&seq) {
+            Some(read) => read.clone(),
+            None => {
+                let slot = if is_relayed() {
+                    Some(
+                        cache
+                            .detached_part_reads
+                            .clone()
+                            .try_acquire_owned()
+                            .map_err(|_| {
+                                TransportError::Network(format!(
+                                    "checkpoint {seq}: {MAX_DETACHED_PART_READS} part reads \
+                                     relayed requests started are already running or waiting; \
+                                     retry"
+                                ))
+                            })?,
+                    )
+                } else {
+                    None
+                };
+                let leave = LeaveRunning {
+                    cache: cache.clone(),
+                    running,
+                    seq,
+                };
+                let task_cache = cache.clone();
+                let handle = tokio::spawn(async move {
+                    let _slot = slot;
+                    let _leave = leave;
+                    task(task_cache).await
+                });
+                let read: RunningPartRead<T> = async move {
+                    handle.await.map_err(|error| {
+                        TransportError::Network(format!("checkpoint {seq} part-read task: {error}"))
+                    })?
+                }
+                .boxed()
+                .shared();
+                reads.insert(seq, read.clone());
+                read
+            }
+        }
+    };
+    read.await
 }
 
 struct CachedCheckpoint {
@@ -899,7 +1038,8 @@ struct CachedCheckpoint {
 /// under the server's inflight caps and ends with the request.
 /// Simultaneous misses of the same checkpoint share one whole read. A
 /// checkpoint too large to read whole is built from its part read in a task
-/// of its own (see [`spawn_part_read`] and [`build_from_part_read`]). A hit
+/// of its own (see [`run_part_read`] and [`build_from_part_read`]), which
+/// simultaneous requests for that checkpoint join. A hit
 /// counts in `proof_tree_cache_hits_total`, a build in
 /// `proof_tree_cache_misses_total`, and a caller that waited for another's
 /// build in neither.
@@ -938,7 +1078,7 @@ where
                 &cache.over_state_cap_checkpoints,
                 MAX_CHECKPOINT_OBJECT_STATES,
             )?;
-            spawn_part_read(cache, seq, move |cache| async move {
+            run_part_read(cache, running_trees, seq, move |cache| async move {
                 build_from_part_read(seq, &cache, fetch_parts).await
             })
             .await
@@ -956,6 +1096,7 @@ async fn checkpoint_tree<R: CheckpointReads>(
     reads: &Arc<R>,
 ) -> Result<Arc<CachedCheckpoint>, TransportError> {
     let parts = reads.clone();
+    let progress = cache.part_read_progress.clone();
     get_or_build_checkpoint(
         cache,
         metrics,
@@ -963,7 +1104,7 @@ async fn checkpoint_tree<R: CheckpointReads>(
         || reads.whole_checkpoint(seq),
         move || async move {
             parts
-                .checkpoint_in_parts(seq, MAX_CHECKPOINT_OBJECT_STATES)
+                .checkpoint_in_parts(seq, MAX_CHECKPOINT_OBJECT_STATES, progress)
                 .await
         },
     )
@@ -1021,7 +1162,7 @@ where
 /// cache and the cache has applied its weight (evicting others), so at most
 /// one part-read build's peak memory is in use at once. A tree another build
 /// cached while this one waited is returned as is. The read is bounded by
-/// [`PART_READ_TOTAL_DEADLINE`]; a checkpoint past it, or past the
+/// [`read_parts_watched`]; a checkpoint whose read is abandoned, or past the
 /// object-state cap, is remembered and refused at once.
 async fn build_from_part_read<Parts, PartsFut>(
     seq: CheckpointSequenceNumber,
@@ -1043,8 +1184,7 @@ where
         return Ok(cached);
     }
     let (summary, states) =
-        read_parts_within_deadline(cache, seq, &cache.over_state_cap_checkpoints, fetch_parts)
-            .await?;
+        read_parts_watched(cache, seq, &cache.over_state_cap_checkpoints, fetch_parts).await?;
     if *summary.sequence_number() != seq {
         return Err(TransportError::Encoding(format!(
             "asked for checkpoint {seq}, got the summary of {}",
@@ -1065,7 +1205,7 @@ where
 /// Checkpoint `seq`'s changeset from `cache`, or read in parts by
 /// `read_parts` and cached. Like a part-read build: simultaneous requests
 /// share one read, under the part-read build permit (waited for at most
-/// [`PART_READ_PERMIT_WAIT`]) and within [`PART_READ_TOTAL_DEADLINE`]. A
+/// [`PART_READ_PERMIT_WAIT`]) and watched by [`read_parts_watched`]. A
 /// checkpoint past [`MAX_CHANGESET_ENTRY_OBJECT_STATES`], or past the tree
 /// cap, is remembered and refused at once, as is one whose read passed the
 /// deadline. `seq` is remembered as too large to read whole, so a relay
@@ -1099,8 +1239,7 @@ where
         .try_get_with(seq, async {
             let _held = acquire_part_read_permit(cache, seq).await?;
             let (summary, states) =
-                read_parts_within_deadline(cache, seq, &cache.changeset_over_cap, read_parts)
-                    .await?;
+                read_parts_watched(cache, seq, &cache.changeset_over_cap, read_parts).await?;
             if *summary.sequence_number() != seq {
                 return Err(TransportError::Encoding(format!(
                     "asked for checkpoint {seq}, got the summary of {}",
@@ -1115,7 +1254,7 @@ where
 
 /// Checkpoint `seq`'s changeset, read in parts from the node's own fullnode
 /// through `reads`, at most [`MAX_CHANGESET_ENTRY_OBJECT_STATES`] states, in
-/// a task of its own (see [`spawn_part_read`]).
+/// a task of its own that simultaneous requests join (see [`run_part_read`]).
 async fn checkpoint_changeset<R: CheckpointReads>(
     cache: &Arc<ProofCache>,
     seq: CheckpointSequenceNumber,
@@ -1128,9 +1267,10 @@ async fn checkpoint_changeset<R: CheckpointReads>(
         MAX_CHANGESET_ENTRY_OBJECT_STATES,
     )?;
     let reads = reads.clone();
-    spawn_part_read(cache, seq, move |cache| async move {
+    run_part_read(cache, running_changesets, seq, move |cache| async move {
+        let progress = cache.part_read_progress.clone();
         get_or_read_changeset(&cache, seq, || {
-            reads.checkpoint_in_parts(seq, MAX_CHANGESET_ENTRY_OBJECT_STATES)
+            reads.checkpoint_in_parts(seq, MAX_CHANGESET_ENTRY_OBJECT_STATES, progress)
         })
         .await
     })
@@ -1205,6 +1345,9 @@ impl ProofCache {
                 .max_capacity(TOO_LARGE_CHECKPOINTS_CAPACITY)
                 .time_to_live(PART_READ_FAILURE_MEMORY)
                 .build(),
+            part_read_progress: Arc::new(PartReadProgress::default()),
+            running_trees: RunningPartReads::default(),
+            running_changesets: RunningPartReads::default(),
             changesets: Cache::builder()
                 .max_capacity(2 * MAX_CHANGESET_ENTRY_OBJECT_STATES as u64)
                 .weigher(|_, changeset: &Arc<CheckpointChangeset>| {
@@ -2628,6 +2771,10 @@ mod tests {
     struct MockReads {
         whole: Option<Result<CheckpointData, TransportError>>,
         parts: Option<Result<CheckpointChangeset, TransportError>>,
+        /// The part read answers `parts` only this long after it starts.
+        parts_after: Option<Duration>,
+        /// Meanwhile it completes one read this often.
+        progress_every: Option<Duration>,
         whole_reads: AtomicU32,
         whole_in_flight: AtomicU32,
         part_reads: AtomicU32,
@@ -2661,12 +2808,27 @@ mod tests {
             &self,
             _seq: CheckpointSequenceNumber,
             max_states: usize,
+            progress: Arc<PartReadProgress>,
         ) -> Result<CheckpointChangeset, TransportError> {
             self.part_reads.fetch_add(1, Ordering::SeqCst);
             *self.max_states.lock().unwrap() = Some(max_states);
-            match &self.parts {
-                Some(answer) => answer.clone(),
-                None => std::future::pending().await,
+            let started = tokio::time::Instant::now();
+            loop {
+                if self
+                    .parts_after
+                    .is_none_or(|after| started.elapsed() >= after)
+                    && let Some(answer) = &self.parts
+                {
+                    return answer.clone();
+                }
+                match (self.progress_every, self.parts_after) {
+                    (Some(every), _) => {
+                        sleep(every).await;
+                        progress.complete_one();
+                    }
+                    (None, Some(after)) => tokio::time::sleep_until(started + after).await,
+                    (None, None) => std::future::pending::<()>().await,
+                }
             }
         }
     }
@@ -2779,9 +2941,11 @@ mod tests {
         );
     }
 
-    /// At most `MAX_DETACHED_PART_READS` part reads run in tasks of their own,
-    /// waiting or reading; a request past them is refused at once with a
-    /// retriable error, so abandoned requests cannot pile up tasks.
+    /// At most `MAX_DETACHED_PART_READS` part reads that relayed requests
+    /// started run in tasks of their own, waiting or reading; a relayed
+    /// request past them is refused at once with a retriable error, so
+    /// abandoned requests cannot pile up tasks. The node's own requests need
+    /// no slot.
     #[tokio::test(start_paused = true)]
     async fn detached_part_reads_are_bounded() {
         let cache = proof_cache();
@@ -2799,14 +2963,16 @@ mod tests {
         let waiting: Vec<_> = (1..=MAX_DETACHED_PART_READS as u64)
             .map(|seq| {
                 let (cache, metrics, reads) = (cache.clone(), metrics.clone(), reads.clone());
-                tokio::spawn(async move { checkpoint_tree(&cache, &metrics, seq, &reads).await })
+                tokio::spawn(serve_relayed(async move {
+                    checkpoint_tree(&cache, &metrics, seq, &reads).await
+                }))
             })
             .collect();
         sleep(Duration::from_secs(1)).await;
 
         let refused = timeout(
             Duration::from_secs(1),
-            checkpoint_tree(&cache, &metrics, 100, &reads),
+            serve_relayed(checkpoint_tree(&cache, &metrics, 100, &reads)),
         )
         .await
         .expect("refused at once");
@@ -2817,15 +2983,25 @@ mod tests {
             Err(other) => panic!("expected a retriable Network error, got {other:?}"),
             Ok(_) => panic!("expected a retriable Network error, got a tree"),
         }
+        let local = timeout(
+            Duration::from_secs(1),
+            checkpoint_tree(&cache, &metrics, 101, &reads),
+        )
+        .await;
+        assert!(
+            local.is_err(),
+            "the node's own part read is not refused for want of a slot: it waits for the permit"
+        );
         for task in waiting {
             assert!(task.await.unwrap().is_err(), "the permit stays held");
         }
     }
 
-    /// A part read that passes its overall deadline is abandoned, gives the
-    /// permit back, and is refused at once afterwards without another read.
+    /// A part read that completes no read for `PART_READ_NO_PROGRESS_DEADLINE`
+    /// is abandoned, gives the permit back, and is refused at once afterwards
+    /// without another read.
     #[tokio::test(start_paused = true)]
-    async fn a_part_read_past_its_overall_deadline_releases_the_permit_and_is_remembered() {
+    async fn a_part_read_that_stops_progressing_is_abandoned_and_remembered() {
         let cache = proof_cache();
         let metrics = ProofProviderMetrics::new_for_testing();
         let reads = Arc::new(MockReads {
@@ -2834,19 +3010,24 @@ mod tests {
         });
         let started = tokio::time::Instant::now();
         let first = timeout(
-            Duration::from_secs(3 * 3_600),
+            Duration::from_secs(3_600),
             checkpoint_tree(&cache, &metrics, 7, &reads),
         )
         .await
-        .expect("the part read must be bounded");
+        .expect("a part read with no progress must be abandoned");
         match first {
             Err(TransportError::Network(reason)) => {
-                assert!(reason.contains("overall deadline"), "{reason}")
+                assert!(reason.contains("completed no read"), "{reason}")
             }
-            Err(other) => panic!("expected the deadline error, got {other:?}"),
-            Ok(_) => panic!("expected the deadline error, got a tree"),
+            Err(other) => panic!("expected the no-progress error, got {other:?}"),
+            Ok(_) => panic!("expected the no-progress error, got a tree"),
         }
-        assert!(started.elapsed() >= PART_READ_TOTAL_DEADLINE);
+        let took = started.elapsed();
+        assert!(
+            took >= PART_READ_NO_PROGRESS_DEADLINE
+                && took < PART_READ_NO_PROGRESS_DEADLINE + 2 * PART_READ_PROGRESS_CHECK,
+            "{took:?}"
+        );
         assert!(
             cache.part_read_builds.clone().try_acquire_owned().is_ok(),
             "the permit is given back"
@@ -2860,6 +3041,117 @@ mod tests {
         .expect("refused at once");
         assert!(matches!(again, Err(TransportError::Network(_))));
         assert_eq!(reads.part_reads.load(Ordering::SeqCst), 1, "not read again");
+    }
+
+    /// A slow part read that keeps completing reads is not cut off, however
+    /// long it takes short of the backstop: here 40 minutes, one read every
+    /// two minutes.
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_part_read_that_keeps_progressing_finishes() {
+        let cache = proof_cache();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let reads = Arc::new(MockReads {
+            whole: Some(Err(too_large_error())),
+            parts: Some(Ok(
+                parts_of(&whole_checkpoint(7)).expect("the fixture folds")
+            )),
+            parts_after: Some(Duration::from_secs(40 * 60)),
+            progress_every: Some(Duration::from_secs(2 * 60)),
+            ..MockReads::default()
+        });
+        timeout(
+            Duration::from_secs(3_600),
+            checkpoint_tree(&cache, &metrics, 7, &reads),
+        )
+        .await
+        .expect("finishes within the test's bound")
+        .expect("a progressing part read builds the tree");
+        assert!(cache.trees.contains_key(&7));
+    }
+
+    /// A part read that keeps progressing but never ends is abandoned at
+    /// `PART_READ_BACKSTOP`.
+    #[tokio::test(start_paused = true)]
+    async fn a_part_read_past_its_backstop_is_abandoned() {
+        let cache = proof_cache();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let reads = Arc::new(MockReads {
+            whole: Some(Err(too_large_error())),
+            progress_every: Some(Duration::from_secs(60)),
+            ..MockReads::default()
+        });
+        let started = tokio::time::Instant::now();
+        let result = timeout(
+            PART_READ_BACKSTOP + Duration::from_secs(3_600),
+            checkpoint_tree(&cache, &metrics, 7, &reads),
+        )
+        .await
+        .expect("the backstop must end the part read");
+        match result {
+            Err(TransportError::Network(reason)) => {
+                assert!(reason.contains("backstop"), "{reason}")
+            }
+            Err(other) => panic!("expected the backstop error, got {other:?}"),
+            Ok(_) => panic!("expected the backstop error, got a tree"),
+        }
+        assert!(started.elapsed() >= PART_READ_BACKSTOP);
+    }
+
+    /// Simultaneous relayed requests for one too-large checkpoint share its
+    /// part read: one read, one slot, and none of them refused for want of a
+    /// slot. So do simultaneous requests for its changeset.
+    #[tokio::test(start_paused = true)]
+    async fn simultaneous_requests_for_one_checkpoint_share_its_part_read() {
+        let cache = proof_cache();
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let parts = parts_of(&whole_checkpoint(7)).expect("the fixture folds");
+        let reads = Arc::new(MockReads {
+            whole: Some(Err(too_large_error())),
+            parts: Some(Ok(parts)),
+            parts_after: Some(Duration::from_secs(60)),
+            ..MockReads::default()
+        });
+        let requests = 2 * MAX_DETACHED_PART_READS;
+        let trees: Vec<_> = (0..requests)
+            .map(|_| {
+                let (cache, metrics, reads) = (cache.clone(), metrics.clone(), reads.clone());
+                tokio::spawn(serve_relayed(async move {
+                    checkpoint_tree(&cache, &metrics, 7, &reads).await
+                }))
+            })
+            .collect();
+        sleep(Duration::from_secs(1)).await;
+        assert_eq!(
+            cache.detached_part_reads.available_permits(),
+            MAX_DETACHED_PART_READS - 1,
+            "the joiners take no slot"
+        );
+        for tree in trees {
+            tree.await.unwrap().expect("every request gets the tree");
+        }
+        assert_eq!(reads.part_reads.load(Ordering::SeqCst), 1);
+
+        let changesets: Vec<_> = (0..requests)
+            .map(|_| {
+                let (cache, reads) = (cache.clone(), reads.clone());
+                tokio::spawn(serve_relayed(async move {
+                    checkpoint_changeset(&cache, 7, &reads).await
+                }))
+            })
+            .collect();
+        sleep(Duration::from_secs(1)).await;
+        assert_eq!(
+            cache.detached_part_reads.available_permits(),
+            MAX_DETACHED_PART_READS - 1,
+            "the changeset joiners take no slot"
+        );
+        for changeset in changesets {
+            changeset
+                .await
+                .unwrap()
+                .expect("every request gets the changeset");
+        }
+        assert_eq!(reads.part_reads.load(Ordering::SeqCst), 2);
     }
 
     /// A changeset is read with the entry cap, not the tree cap, is cached,
@@ -2944,7 +3236,7 @@ mod tests {
         let read = || {
             let reads = reads.clone();
             let parts = parts.clone();
-            spawn_part_read(&cache, seq, move |cache| async move {
+            run_part_read(&cache, running_changesets, seq, move |cache| async move {
                 get_or_read_changeset(&cache, seq, || async move {
                     reads.fetch_add(1, Ordering::SeqCst);
                     sleep(Duration::from_secs(45)).await;

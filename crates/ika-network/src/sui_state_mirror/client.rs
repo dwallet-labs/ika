@@ -68,6 +68,9 @@ use super::{
 /// failover. Matches the 30s the push path already uses.
 const RELAY_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How often [`SuiMirrorTransport::reject_last_changeset_source`] warns.
+const REJECT_WARN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Clone)]
 pub struct SuiMirrorPeers {
     network: Network,
@@ -538,6 +541,8 @@ pub struct SuiMirrorTransport {
     /// A relay to leave out of the next changeset pass: one whose page failed
     /// verification (see [`Self::reject_last_changeset_source`]).
     skip_next_changeset: parking_lot::Mutex<Option<PeerId>>,
+    /// When the rejection warn last fired: it is rate limited.
+    last_reject_warn: parking_lot::Mutex<Option<std::time::Instant>>,
 }
 
 impl SuiMirrorTransport {
@@ -546,6 +551,7 @@ impl SuiMirrorTransport {
             peers,
             last_changeset_source: parking_lot::Mutex::new(None),
             skip_next_changeset: parking_lot::Mutex::new(None),
+            last_reject_warn: parking_lot::Mutex::new(None),
         }
     }
 
@@ -560,11 +566,17 @@ impl SuiMirrorTransport {
         let Some(peer) = self.last_changeset_source.lock().take() else {
             return;
         };
-        warn!(
-            %peer,
-            "a relay served a changeset page that failed verification; demoting it and asking \
-             other relays"
-        );
+        {
+            let mut last = self.last_reject_warn.lock();
+            if last.is_none_or(|at| at.elapsed() >= REJECT_WARN_INTERVAL) {
+                *last = Some(std::time::Instant::now());
+                warn!(
+                    %peer,
+                    "a relay served a changeset page that failed verification; demoting it and \
+                     asking other relays (logged at most once a minute)"
+                );
+            }
+        }
         self.peers.demote(peer);
         *self.skip_next_changeset.lock() = Some(peer);
     }

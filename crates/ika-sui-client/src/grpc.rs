@@ -113,6 +113,27 @@ pub fn is_object_state_cap_error(error: &TransportError) -> bool {
     )
 }
 
+/// How many of a part read's reads have completed: the digests read, the
+/// previous summary's read and each effects read. Lets a caller tell a slow
+/// part read, which keeps completing reads, from one that has stalled.
+#[derive(Debug, Default)]
+pub struct PartReadProgress {
+    completed: std::sync::atomic::AtomicU64,
+}
+
+impl PartReadProgress {
+    /// The reads completed so far.
+    pub fn completed(&self) -> u64 {
+        self.completed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Count one completed read.
+    pub fn complete_one(&self) {
+        self.completed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// How many times one part read is tried when it fails as `Network`.
 const PART_READ_ATTEMPTS: u32 = 4;
 
@@ -440,15 +461,18 @@ impl SuiGrpcClient {
     /// [`Self::get_checkpoint_object_states_in_parts`], refused as soon as the
     /// fold passes `max_states` object states (never more than
     /// [`MAX_CHECKPOINT_OBJECT_STATES`]).
+    /// Each read it completes counts in `progress`.
     pub async fn get_checkpoint_object_states_in_parts_up_to(
         &self,
         seq: CheckpointSequenceNumber,
         max_states: usize,
+        progress: &PartReadProgress,
     ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
-        self.get_checkpoint_object_states_in_parts_capped(
+        self.get_checkpoint_object_states_in_parts_counted(
             seq,
             max_states.min(MAX_CHECKPOINT_OBJECT_STATES),
             PART_READ_DEADLINE,
+            Some(progress),
         )
         .await
     }
@@ -462,10 +486,29 @@ impl SuiGrpcClient {
         max_states: usize,
         deadline: Duration,
     ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
+        self.get_checkpoint_object_states_in_parts_counted(seq, max_states, deadline, None)
+            .await
+    }
+
+    /// [`Self::get_checkpoint_object_states_in_parts_capped`], counting each
+    /// completed read in `progress`.
+    async fn get_checkpoint_object_states_in_parts_counted(
+        &self,
+        seq: CheckpointSequenceNumber,
+        max_states: usize,
+        deadline: Duration,
+        progress: Option<&PartReadProgress>,
+    ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
+        let completed = || {
+            if let Some(progress) = progress {
+                progress.complete_one();
+            }
+        };
         let (summary, digests) = retry_part_read(PART_READ_FIRST_DELAY, deadline, || {
             self.get_checkpoint_digests(seq)
         })
         .await?;
+        completed();
         // Checked first, so a refusal below, the object-state cap's included,
         // is about checkpoint `seq` and may be remembered for it.
         if summary.data().sequence_number != seq {
@@ -475,12 +518,14 @@ impl SuiGrpcClient {
             )));
         }
         let previous = match summary.data().previous_digest {
-            Some(previous_digest) => Some(
-                retry_part_read(PART_READ_FIRST_DELAY, deadline, || {
+            Some(previous_digest) => {
+                let previous = retry_part_read(PART_READ_FIRST_DELAY, deadline, || {
                     self.get_previous_checkpoint_summary(previous_digest)
                 })
-                .await?,
-            ),
+                .await?;
+                completed();
+                Some(previous)
+            }
             None => None,
         };
         check_transaction_count(
@@ -489,10 +534,17 @@ impl SuiGrpcClient {
             digests.len(),
         )?;
         let mut reads = stream::iter(digests)
-            .map(|digest| {
-                retry_part_read(PART_READ_FIRST_DELAY, deadline, move || {
+            .map(|digest| async move {
+                let read = retry_part_read(PART_READ_FIRST_DELAY, deadline, move || {
                     self.get_transaction_effects(digest)
                 })
+                .await;
+                // Counted as it completes, not as the in-order fold reaches
+                // it, so one slow read does not hide the others' progress.
+                if read.is_ok() {
+                    completed();
+                }
+                read
             })
             .buffered(CHECKPOINT_PART_CONCURRENCY);
         let mut states = CheckpointObjectStates::new();
@@ -2400,9 +2452,11 @@ mod tests {
     /// it is given, below the tree cap.
     #[tokio::test]
     async fn the_part_read_up_to_a_cap_honours_it() {
-        let client = serve(Arc::new(mock_ledger())).await;
+        let ledger = mock_ledger();
+        let effects_reads = ledger.digests.len();
+        let client = serve(Arc::new(ledger)).await;
         let Err(error) = client
-            .get_checkpoint_object_states_in_parts_up_to(1, 0)
+            .get_checkpoint_object_states_in_parts_up_to(1, 0, &PartReadProgress::default())
             .await
         else {
             panic!("a cap of zero must refuse the first state");
@@ -2412,10 +2466,16 @@ mod tests {
             error.to_string().contains("more than 0 object states"),
             "{error}"
         );
+        let progress = PartReadProgress::default();
         client
-            .get_checkpoint_object_states_in_parts_up_to(1, MAX_CHECKPOINT_OBJECT_STATES)
+            .get_checkpoint_object_states_in_parts_up_to(1, MAX_CHECKPOINT_OBJECT_STATES, &progress)
             .await
             .expect("under the cap, the part read succeeds");
+        assert!(
+            progress.completed() as usize > effects_reads,
+            "the digests read and every effects read count as progress: {}",
+            progress.completed()
+        );
     }
 
     /// A summary for another checkpoint than the one asked for is refused

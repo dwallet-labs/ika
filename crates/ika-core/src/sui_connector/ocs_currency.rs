@@ -146,6 +146,13 @@ pub enum ChangesetError {
         expected: CheckpointSequenceNumber,
         received: CheckpointSequenceNumber,
     },
+    /// The entry is for the epoch after the committee store's head, whose
+    /// committee is not installed yet: a wait, not a fault of the relay.
+    #[error("changeset at seq {seq} waits for Sui epoch {epoch}'s committee to be installed")]
+    AwaitingCommittee {
+        seq: CheckpointSequenceNumber,
+        epoch: u64,
+    },
     #[error("internal: {0}")]
     Internal(String),
 }

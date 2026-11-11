@@ -21,7 +21,9 @@ use ika_network::sui_state_mirror::{ChangesetEntry, SuiMirrorTransport};
 use ika_sui_client::transport::TransportError;
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 
-use crate::sui_connector::committee_store::CommitteeStore;
+use crate::sui_connector::committee_store::{
+    CommitteeStore, CommitteeTransition, SummaryVerifyError,
+};
 use crate::sui_connector::ocs_currency::{AbsorbOutcome, ChangesetError, ChangesetIndex};
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 
@@ -179,9 +181,34 @@ pub async fn pump_changesets(
             return Err(ChangesetError::Gap { expected, received });
         }
         expected = Some(received.saturating_add(1));
-        if let Err(e) = committees.verify_summary(entry.summary.clone()) {
-            source.reject_last_page();
-            return Err(ChangesetError::Unverified(e.to_string()));
+        match committees.verify_summary(entry.summary.clone()) {
+            Ok(_) => {}
+            // The next epoch's committee is not installed yet: at a Sui epoch
+            // boundary it arrives with the end-of-epoch checkpoint (installed
+            // below when this receiver folds it) or from the committee
+            // ratchet. A wait, not a fault of the relay.
+            Err(SummaryVerifyError::MissingCommittee(epoch))
+                if epoch == committees.head_epoch().saturating_add(1) =>
+            {
+                return Err(ChangesetError::AwaitingCommittee {
+                    seq: received,
+                    epoch,
+                });
+            }
+            // An epoch at or below the head without a committee is this
+            // node's own gap, not the relay's.
+            Err(e @ SummaryVerifyError::MissingCommittee(epoch))
+                if epoch <= committees.head_epoch() =>
+            {
+                return Err(ChangesetError::Unverified(e.to_string()));
+            }
+            // A bad signature, or a summary claiming an epoch two or more past
+            // the head (none can be signed yet): the relay served a forged
+            // entry.
+            Err(e) => {
+                source.reject_last_page();
+                return Err(ChangesetError::Unverified(e.to_string()));
+            }
         }
         let absorbed = index.write().absorb(&entry.summary, entry.object_states);
         match absorbed {
@@ -194,6 +221,27 @@ pub async fn pump_changesets(
                 return Err(e);
             }
             Err(e) => return Err(e),
+        }
+        // A folded end-of-epoch checkpoint carries the next epoch's committee:
+        // install it now, so the entries after it verify without waiting for
+        // the committee ratchet. The install is head-guarded and verifies the
+        // summary against the head committee itself; any other checkpoint is a
+        // no-op.
+        if entry.summary.end_of_epoch_data.is_some() {
+            match committees.install_next_from_summary(&entry.summary) {
+                Ok(CommitteeTransition::Installed(epoch)) => info!(
+                    epoch,
+                    seq = received,
+                    "installed the next Sui committee from a folded end-of-epoch changeset"
+                ),
+                Ok(CommitteeTransition::NotNextTransition) => {}
+                Err(error) => warn!(
+                    seq = received,
+                    %error,
+                    "could not install the next Sui committee from a folded end-of-epoch \
+                     changeset; the committee ratchet installs it"
+                ),
+            }
         }
     }
     Ok(advanced)
@@ -212,6 +260,9 @@ pub struct ChangesetReceiver {
     metrics: Arc<OcsMetrics>,
     /// When the tick-failure warn last fired (it is rate limited).
     last_warning: Option<Instant>,
+    /// The epoch whose missing committee was last logged as a wait, so a
+    /// wait logs once per epoch.
+    awaiting_committee_logged: Option<u64>,
     /// Whether the relays are still serving this node new checkpoints.
     frontier: FrontierWatch,
 }
@@ -256,6 +307,7 @@ impl ChangesetReceiver {
             poll_interval,
             metrics,
             last_warning: None,
+            awaiting_committee_logged: None,
             frontier: FrontierWatch {
                 advanced_at: tokio::time::Instant::now(),
                 last_seek: None,
@@ -320,6 +372,24 @@ impl ChangesetReceiver {
                     }
                     advanced_total += advanced;
                     debug!(advanced, "ChangesetReceiver folded changesets");
+                }
+                Err(e @ ChangesetError::AwaitingCommittee { .. }) => {
+                    // A wait: no failure counted, logged once per epoch.
+                    if seek {
+                        self.count_seek("none");
+                    }
+                    if let ChangesetError::AwaitingCommittee { seq, epoch } = &e
+                        && self.awaiting_committee_logged != Some(*epoch)
+                    {
+                        self.awaiting_committee_logged = Some(*epoch);
+                        info!(
+                            seq,
+                            epoch,
+                            "changeset waits for the next Sui epoch's committee to be installed"
+                        );
+                    }
+                    self.frontier.last_error = Some(e.to_string());
+                    break;
                 }
                 Err(e) => {
                     if seek {
@@ -1281,5 +1351,140 @@ mod tests {
         let fresh = OcsMetrics::new_for_testing();
         build(fresh.clone());
         assert!(gauge(&fresh) > STALE_STAMP, "started when built");
+    }
+
+    /// `signed_entry`, of the end of the committee's epoch: it commits to the
+    /// next epoch's committee (the same members).
+    fn signed_end_of_epoch_entry(
+        committee: &Committee,
+        keypairs: &[AuthorityKeyPair],
+        seq: u64,
+        previous: Option<CheckpointDigest>,
+    ) -> (ChangesetEntry, CheckpointDigest) {
+        let object_states = States::new();
+        let artifacts = CheckpointArtifacts::from_object_states(object_states.clone());
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: CheckpointContentsDigest::new([0; 32]),
+            previous_digest: previous,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::from(artifacts.digest().unwrap())],
+            end_of_epoch_data: Some(sui_types::messages_checkpoint::EndOfEpochData {
+                next_epoch_committee: committee.voting_rights.clone(),
+                next_epoch_protocol_version: sui_types::committee::ProtocolVersion::MIN,
+                epoch_commitments: vec![],
+            }),
+            version_specific_data: Vec::new(),
+        };
+        let digest = summary.digest();
+        let summary =
+            sui_types::messages_checkpoint::CertifiedCheckpointSummary::new_from_keypairs_for_testing(
+                summary, keypairs, committee,
+            );
+        (
+            ChangesetEntry {
+                summary,
+                object_states,
+            },
+            digest,
+        )
+    }
+
+    fn committee_at(committee: &Committee, epoch: u64) -> Committee {
+        Committee::new(epoch, committee.voting_rights.iter().cloned().collect())
+    }
+
+    /// An honestly signed entry of the epoch after the committee store's head,
+    /// whose committee is not installed yet, is a wait: the relay is not
+    /// rejected, and the receiver counts no fetch failure. An entry of an
+    /// epoch two past the head cannot be signed yet, so its relay is.
+    #[tokio::test]
+    async fn an_entry_for_the_next_epoch_waits_and_one_further_on_rejects_its_relay() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee.clone());
+        assert_eq!(store.head_epoch(), 0);
+        let rejects = |source: &RejectCountingSource| {
+            source.rejects.load(std::sync::atomic::Ordering::SeqCst)
+        };
+
+        let (next_epoch, _) = signed_entry(
+            &committee_at(&committee, 1),
+            &keys,
+            11,
+            None,
+            [modified(0xA1, 1)].into(),
+        );
+        let source = Arc::new(RejectCountingSource {
+            entries: vec![next_epoch],
+            rejects: Default::default(),
+        });
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        assert!(matches!(
+            pump_changesets(&index, source.as_ref(), &store, 64, 11, false).await,
+            Err(ChangesetError::AwaitingCommittee { seq: 11, epoch: 1 })
+        ));
+        assert_eq!(rejects(&source), 0, "an honest relay is not blamed");
+        let metrics = OcsMetrics::new_for_testing();
+        let mut receiver = ChangesetReceiver::new(
+            index.clone(),
+            source.clone(),
+            store.clone(),
+            64,
+            11,
+            Duration::from_secs(2),
+            metrics.clone(),
+        );
+        receiver.tick().await;
+        assert_eq!(metrics.changeset_fetch_failures_total.get(), 0);
+        assert_eq!(rejects(&source), 0);
+
+        let (far_future, _) = signed_entry(
+            &committee_at(&committee, 2),
+            &keys,
+            11,
+            None,
+            [modified(0xA1, 1)].into(),
+        );
+        let source = RejectCountingSource {
+            entries: vec![far_future],
+            rejects: Default::default(),
+        };
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        assert!(matches!(
+            pump_changesets(&index, &source, &store, 64, 11, false).await,
+            Err(ChangesetError::Unverified(_))
+        ));
+        assert_eq!(rejects(&source), 1);
+    }
+
+    /// Folding the end-of-epoch checkpoint installs the next epoch's
+    /// committee, so the entries after it verify in the same page, without
+    /// waiting for the committee ratchet.
+    #[tokio::test]
+    async fn a_folded_end_of_epoch_entry_installs_the_next_committee() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee.clone());
+        let (end_of_epoch, digest) = signed_end_of_epoch_entry(&committee, &keys, 10, None);
+        let (next_epoch, _) = signed_entry(
+            &committee_at(&committee, 1),
+            &keys,
+            11,
+            Some(digest),
+            [modified(0xA1, 1)].into(),
+        );
+        let source = RejectCountingSource {
+            entries: vec![end_of_epoch, next_epoch],
+            rejects: Default::default(),
+        };
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        let advanced = pump_changesets(&index, &source, &store, 64, 10, false)
+            .await
+            .expect("both entries fold");
+        assert_eq!(advanced, 2);
+        assert_eq!(store.head_epoch(), 1);
+        assert_eq!(index.read().highest_contiguous_seq(), Some(11));
     }
 }

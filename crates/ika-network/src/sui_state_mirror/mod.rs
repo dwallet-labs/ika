@@ -46,6 +46,7 @@ use sui_types::messages_checkpoint::{
 use crate::proof_provider::{
     BatchVerifiedObjectsResponse, ProofProvider, ProofProviderMetrics,
     VerifiedDynamicFieldsPageRequest, VerifiedDynamicFieldsPageResponse, VerifiedObjectResponse,
+    serve_relayed,
 };
 
 pub use client::{
@@ -219,7 +220,7 @@ impl Server {
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<ChangesetEntry, Status> {
-        match self.provider.checkpoint_changeset_in_parts(seq).await {
+        match serve_relayed(self.provider.checkpoint_changeset_in_parts(seq)).await {
             Ok((summary, object_states)) => {
                 self.metrics
                     .serve_changeset_part_reads_total
@@ -453,9 +454,7 @@ impl SuiStateMirror for Server {
         request: Request<VerifiedObjectRequest>,
     ) -> Result<Response<VerifiedObjectResponse>, Status> {
         let started = self.serve_start("verified_object", request.peer_id().copied());
-        let v = self
-            .provider
-            .verified_object(request.into_inner().id)
+        let v = serve_relayed(self.provider.verified_object(request.into_inner().id))
             .await
             .map_err(map_err)?;
         self.serve_end("verified_object", started);
@@ -466,9 +465,8 @@ impl SuiStateMirror for Server {
         request: Request<BatchVerifiedObjectsRequest>,
     ) -> Result<Response<BatchVerifiedObjectsResponse>, Status> {
         let started = self.serve_start("batch_verified_objects", request.peer_id().copied());
-        let v = self
-            .provider
-            .batch_verified_objects(&request.into_inner().ids)
+        let ids = request.into_inner().ids;
+        let v = serve_relayed(self.provider.batch_verified_objects(&ids))
             .await
             .map_err(map_err)?;
         self.serve_end("batch_verified_objects", started);
@@ -479,11 +477,12 @@ impl SuiStateMirror for Server {
         request: Request<VerifiedDynamicFieldsPageRequest>,
     ) -> Result<Response<VerifiedDynamicFieldsPageResponse>, Status> {
         let started = self.serve_start("verified_dynamic_fields_page", request.peer_id().copied());
-        let v = self
-            .provider
-            .verified_dynamic_fields_page(request.into_inner())
-            .await
-            .map_err(map_err)?;
+        let v = serve_relayed(
+            self.provider
+                .verified_dynamic_fields_page(request.into_inner()),
+        )
+        .await
+        .map_err(map_err)?;
         self.serve_end("verified_dynamic_fields_page", started);
         Ok(Response::new(v))
     }
