@@ -772,7 +772,16 @@ dropping entries are layered:
   fails as `Network` after 60 s (`PART_READ_DEADLINE`), so it is retried
   within its four tries and then fails the page, and the next walk tries
   again. So one build holds the permit for at most about 4 × 60 s + 1.75 s
-  per part read, with 16 effects reads in flight at a time. The tree cache is
+  per part read, with 16 effects reads in flight at a time. A build waits at
+  most 20 s for the permit, then fails as a retriable `Network` error, so a
+  relayed request queued behind another checkpoint's part read is answered
+  before the relay client's 30 s deadline instead of timing out. Builds run in
+  a task of their own: a relayed request's handler is dropped when the client
+  gives up at 30 s, and a build tied to it used to be abandoned with it, so a
+  part read longer than that never completed over relays. Now the build
+  finishes, bounded by the part reads' own deadlines, the object-state cap and
+  a 120 s deadline on the whole read, and caches its tree for the next
+  request; requests arriving meanwhile join it. The tree cache is
   weighed by object states, 32 million in all across the cached trees,
   about 220 bytes per state, so about 7 GB at most; trees from the whole
   read are weighed the same way. The cache evicts the least recently used

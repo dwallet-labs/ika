@@ -617,7 +617,8 @@ struct ProofCache {
     /// build's peak memory is in use at once. A build takes the permit for
     /// the part read and the tree build, and keeps it until its tree is in
     /// the cache and the cache has applied the tree's weight (evicting
-    /// others); a failed build gives it back when it ends.
+    /// others); a failed build gives it back when it ends. Waiting for it is
+    /// bounded by [`PART_READ_PERMIT_WAIT`].
     part_read_builds: Arc<Semaphore>,
 }
 
@@ -625,6 +626,43 @@ struct ProofCache {
 /// many checkpoint numbers over the object-state cap, each for the tree
 /// cache's lifetime (`ProofCacheConfig::tree_ttl`).
 const TOO_LARGE_CHECKPOINTS_CAPACITY: u64 = 1_024;
+
+/// How long a build waits for the part-read build permit before failing as
+/// `Network`, a retriable error. Another checkpoint's part read can hold the
+/// permit for minutes; without a bound a request queued behind it waited as
+/// long. The bound sits below the relay client's 30 s request deadline, so a
+/// relayed request gets an answer, and tries another relay, instead of timing
+/// out.
+const PART_READ_PERMIT_WAIT: Duration = Duration::from_secs(20);
+
+/// Bound on reading a whole checkpoint inside a build that runs in a task of
+/// its own (see [`get_or_build_checkpoint_detached`]). Such a build outlives a
+/// caller that gives up, so it needs its own end: the part read has its
+/// per-read deadlines and the object-state cap, and the whole read gets this.
+/// A whole read is at most `FULL_CHECKPOINT_DECODE_LIMIT` (128 MiB).
+const WHOLE_CHECKPOINT_READ_DEADLINE: Duration = Duration::from_secs(120);
+
+/// The part-read build permit, waited for at most [`PART_READ_PERMIT_WAIT`].
+async fn acquire_part_read_permit(
+    cache: &ProofCache,
+    seq: CheckpointSequenceNumber,
+) -> Result<OwnedSemaphorePermit, TransportError> {
+    match tokio::time::timeout(
+        PART_READ_PERMIT_WAIT,
+        cache.part_read_builds.clone().acquire_owned(),
+    )
+    .await
+    {
+        Ok(Ok(permit)) => Ok(permit),
+        Ok(Err(error)) => Err(TransportError::Network(format!(
+            "part-read build permit: {error}"
+        ))),
+        Err(_) => Err(TransportError::Network(format!(
+            "checkpoint {seq}: another checkpoint's part read held the part-read build permit \
+             for {PART_READ_PERMIT_WAIT:?}; retry"
+        ))),
+    }
+}
 
 struct CachedCheckpoint {
     summary: CertifiedCheckpointSummary,
@@ -680,6 +718,35 @@ where
         drop(permit);
     }
     built
+}
+
+/// [`get_or_build_checkpoint`] in a task of its own, so the build outlives its
+/// caller. A relayed request's handler is dropped when the client gives up at
+/// its deadline (30 s); a build tied to the handler was abandoned with it, and
+/// every retry started over, so a checkpoint whose part read takes longer than
+/// that deadline was never served over relays. Run apart, the build finishes,
+/// bounded by its reads' own deadlines and the object-state cap, and caches
+/// its tree for the next request; a request arriving meanwhile joins it.
+async fn get_or_build_checkpoint_detached<Full, FullFut, Parts, PartsFut>(
+    cache: Arc<ProofCache>,
+    metrics: Arc<ProofProviderMetrics>,
+    seq: CheckpointSequenceNumber,
+    fetch_full: Full,
+    fetch_parts: Parts,
+) -> Result<Arc<CachedCheckpoint>, TransportError>
+where
+    Full: FnOnce() -> FullFut + Send + 'static,
+    FullFut: Future<Output = Result<CheckpointData, TransportError>> + Send,
+    Parts: FnOnce() -> PartsFut + Send + 'static,
+    PartsFut: Future<
+            Output = Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError>,
+        > + Send,
+{
+    tokio::spawn(async move {
+        get_or_build_checkpoint(&cache, &metrics, seq, fetch_full, fetch_parts).await
+    })
+    .await
+    .map_err(|error| TransportError::Network(format!("checkpoint {seq} build task: {error}")))?
 }
 
 /// Build checkpoint `seq`'s summary and modified-object tree.
@@ -738,14 +805,7 @@ where
             if !remembered_too_large {
                 cache.too_large_checkpoints.insert(seq, ()).await;
             }
-            let held = cache
-                .part_read_builds
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|error| {
-                    TransportError::Network(format!("part-read build permit: {error}"))
-                })?;
+            let held = acquire_part_read_permit(cache, seq).await?;
             let (summary, states) = match fetch_parts().await {
                 Ok(parts) => parts,
                 Err(error) => {
@@ -853,7 +913,8 @@ pub struct LocalProofProvider {
     /// `SuiTransport` surface. A `LocalProofProvider` only ever runs on a
     /// sui-state-direct node over its own fullnode, so the concrete type fits.
     raw: Arc<SuiGrpcClient>,
-    cache: ProofCache,
+    /// Shared with the builds that run in tasks of their own.
+    cache: Arc<ProofCache>,
     proof_snapshot_cache: Option<Arc<dyn ProofSnapshotCache>>,
     metrics: Arc<ProofProviderMetrics>,
     /// Dynamic-field children recently warned about as unprovable, so a child
@@ -869,7 +930,7 @@ impl LocalProofProvider {
     ) -> Self {
         Self {
             raw,
-            cache: ProofCache::new(cfg),
+            cache: Arc::new(ProofCache::new(cfg)),
             proof_snapshot_cache: None,
             metrics,
             warned_unprovable_entries: Cache::builder()
@@ -888,12 +949,26 @@ impl LocalProofProvider {
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<Arc<CachedCheckpoint>, TransportError> {
-        get_or_build_checkpoint(
-            &self.cache,
-            &self.metrics,
+        let whole = self.raw.clone();
+        let parts = self.raw.clone();
+        get_or_build_checkpoint_detached(
+            self.cache.clone(),
+            self.metrics.clone(),
             seq,
-            || self.raw.get_full_checkpoint(seq),
-            || self.raw.get_checkpoint_object_states_in_parts(seq),
+            move || async move {
+                tokio::time::timeout(
+                    WHOLE_CHECKPOINT_READ_DEADLINE,
+                    whole.get_full_checkpoint(seq),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err(TransportError::Network(format!(
+                        "checkpoint {seq}: whole read passed its \
+                         {WHOLE_CHECKPOINT_READ_DEADLINE:?} deadline"
+                    )))
+                })
+            },
+            move || async move { parts.get_checkpoint_object_states_in_parts(seq).await },
         )
         .await
     }
@@ -2217,5 +2292,85 @@ mod tests {
             !cache.too_large_checkpoints.contains_key(&seq),
             "a retry of a remembered checkpoint must not renew its marker"
         );
+    }
+
+    // ---- part reads asked for over the relay ----
+
+    /// A build that cannot get the part-read permit within
+    /// `PART_READ_PERMIT_WAIT` fails as a retriable `Network` error, instead of
+    /// waiting behind another checkpoint's part read for as long as it takes.
+    #[tokio::test(start_paused = true)]
+    async fn a_build_waiting_too_long_for_the_part_read_permit_fails_retriably() {
+        let cache = proof_cache();
+        let _held = cache
+            .part_read_builds
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        let result = timeout(
+            Duration::from_secs(3_600),
+            build_cached_checkpoint(
+                7,
+                &cache,
+                || async { Err::<CheckpointData, _>(too_large_error()) },
+                no_parts,
+            ),
+        )
+        .await
+        .expect("the wait for the permit must be bounded");
+        match result {
+            Err(TransportError::Network(reason)) => {
+                assert!(reason.contains("part-read build permit"), "{reason}")
+            }
+            Err(other) => panic!("expected a retriable Network error, got {other:?}"),
+            Ok(_) => panic!("expected a retriable Network error, got a tree"),
+        }
+        let waited = started.elapsed();
+        assert!(
+            waited >= PART_READ_PERMIT_WAIT
+                && waited < PART_READ_PERMIT_WAIT + Duration::from_secs(1),
+            "{waited:?}"
+        );
+    }
+
+    /// A build whose caller gives up, as a relay request's handler does at the
+    /// client's deadline, still finishes and caches its tree: the next request
+    /// is a hit, with no second part read.
+    #[tokio::test(start_paused = true)]
+    async fn a_build_outlives_a_caller_that_gives_up() {
+        let cache = Arc::new(proof_cache());
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let part_reads = Arc::new(AtomicU32::new(0));
+        let seq = 7;
+        let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
+        let build = || {
+            let part_reads = part_reads.clone();
+            let parts = parts.clone();
+            get_or_build_checkpoint_detached(
+                cache.clone(),
+                metrics.clone(),
+                seq,
+                || async { Err::<CheckpointData, _>(too_large_error()) },
+                move || async move {
+                    part_reads.fetch_add(1, Ordering::SeqCst);
+                    sleep(Duration::from_secs(45)).await;
+                    Ok(parts)
+                },
+            )
+        };
+
+        assert!(
+            timeout(Duration::from_secs(30), build()).await.is_err(),
+            "the caller gives up before the part read ends"
+        );
+        sleep(Duration::from_secs(20)).await;
+        assert!(cache.trees.contains_key(&seq), "the build finished alone");
+        timeout(Duration::from_secs(1), build())
+            .await
+            .expect("served from the cache, at once")
+            .expect("the tree");
+        assert_eq!(part_reads.load(Ordering::SeqCst), 1);
     }
 }
