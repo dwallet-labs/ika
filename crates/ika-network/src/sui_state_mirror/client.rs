@@ -581,6 +581,17 @@ impl SuiMirrorTransport {
         *self.skip_next_changeset.lock() = Some(peer);
     }
 
+    /// Leave the relay that served the last changeset page out of the next
+    /// changeset pass, without demoting it: its page holds an entry that
+    /// cannot be checked yet (its epoch's committee is not installed here).
+    /// Another relay is asked next, so a relay serving such an entry cannot
+    /// hold the receiver on it, and an honest one keeps its place.
+    pub fn pass_over_last_changeset_source(&self) {
+        if let Some(peer) = self.last_changeset_source.lock().take() {
+            *self.skip_next_changeset.lock() = Some(peer);
+        }
+    }
+
     /// Pull a page of changesets (committee-signed summary + modified
     /// object-set per checkpoint) starting at `from_seq`, for a mirrored node
     /// to fold for currency. Not part of [`SuiTransport`] — a separate
@@ -1321,6 +1332,42 @@ mod tests {
             one_failing.changeset_page(11, 64, true, true).await,
             Err(TransportError::Network(_))
         ));
+    }
+
+    /// A relay passed over, its page not checkable yet, is left out of the
+    /// next pass only, and keeps its place in automatic mode: it is not
+    /// demoted.
+    #[tokio::test]
+    async fn a_passed_over_relay_is_skipped_once_and_keeps_its_place() {
+        let front = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![changeset_entry(11)],
+                ..Default::default()
+            }))
+        });
+        let other = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                entries: vec![changeset_entry(11), changeset_entry(12)],
+                ..Default::default()
+            }))
+        });
+        let consumer = build_network(|router| router);
+        let front_id = consumer.connect(front.local_addr()).await.unwrap();
+        let other_id = consumer.connect(other.local_addr()).await.unwrap();
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+        let peers = SuiMirrorPeers::new(consumer, vec![], metrics);
+        peers.snapshot();
+        peers.demote(other_id);
+        let transport = SuiMirrorTransport::new(peers.clone());
+
+        let first = transport.changeset_page(11, 64, true, false).await.unwrap();
+        assert_eq!(first.entries.len(), 1, "the front relay serves");
+        transport.pass_over_last_changeset_source();
+        let next = transport.changeset_page(11, 64, true, false).await.unwrap();
+        assert_eq!(next.entries.len(), 2, "the next pass asks the other relay");
+        assert_eq!(peers.snapshot().first(), Some(&front_id), "not demoted");
+        let after = transport.changeset_page(11, 64, true, false).await.unwrap();
+        assert_eq!(after.entries.len(), 1, "skipped once only");
     }
 
     fn changeset_entry(seq: u64) -> ChangesetEntry {

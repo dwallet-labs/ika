@@ -43,8 +43,8 @@ use sui_types::messages_checkpoint::{
 use sui_types::object::Object;
 
 use ika_sui_client::grpc::{
-    MAX_CHECKPOINT_OBJECT_STATES, PartReadProgress, SuiGrpcClient, is_object_state_cap_error,
-    object_state_cap_error,
+    MAX_CHECKPOINT_OBJECT_STATES, PART_READ_MAX_DURATION, PartReadProgress, SuiGrpcClient,
+    is_object_state_cap_error, object_state_cap_error,
 };
 use ika_sui_client::transport::{
     CheckpointObjectStates, DynamicFieldEntry, SuiTransport, TransportError,
@@ -709,12 +709,19 @@ const PART_READ_PERMIT_WAIT: Duration = Duration::from_secs(20);
 
 /// How long a part read may go without completing any of its reads before it
 /// is abandoned. Each read has its own deadline, up to about 4 minutes with
-/// its retries (four tries of 60 s), but a checkpoint can need about 225,000
+/// its retries (`PART_READ_MAX_DURATION`), but a checkpoint can need about 225,000
 /// of them, so a part read on a degraded fullnode could hold the single
 /// part-read build permit, and so every other part read, for hours. A slow
 /// fullnode that keeps completing reads is never cut off by this; one that
 /// completes none for longer than any single read may take has stalled.
 const PART_READ_NO_PROGRESS_DEADLINE: Duration = Duration::from_secs(5 * 60);
+
+// A part read must not be cut off while one of its reads may still be within
+// its own tries.
+const _: () = assert!(
+    PART_READ_NO_PROGRESS_DEADLINE.as_millis() > PART_READ_MAX_DURATION.as_millis(),
+    "the no-progress window must exceed one read's whole retry budget"
+);
 
 /// Backstop on one part read as a whole, however it progresses: about 225,000
 /// reads at 16 in flight finish within 6 hours at up to about 1.5 s per read,
@@ -977,10 +984,13 @@ where
     Task: FnOnce(Arc<ProofCache>) -> TaskFut + Send + 'static,
     TaskFut: Future<Output = Result<T, TransportError>> + Send + 'static,
 {
-    let read = {
+    // The task is spawned after the lock is released: a runtime that is
+    // shutting down drops a spawned future at once, and its `LeaveRunning`
+    // takes the same lock.
+    let (read, start) = {
         let mut reads = running(cache).running.lock();
         match reads.get(&seq) {
-            Some(read) => read.clone(),
+            Some(read) => (read.clone(), None),
             None => {
                 let slot = if is_relayed() {
                     Some(
@@ -999,29 +1009,34 @@ where
                 } else {
                     None
                 };
-                let leave = LeaveRunning {
-                    cache: cache.clone(),
-                    running,
-                    seq,
-                };
-                let task_cache = cache.clone();
-                let handle = tokio::spawn(async move {
-                    let _slot = slot;
-                    let _leave = leave;
-                    task(task_cache).await
-                });
+                let (sender, receiver) = tokio::sync::oneshot::channel();
                 let read: RunningPartRead<T> = async move {
-                    handle.await.map_err(|error| {
-                        TransportError::Network(format!("checkpoint {seq} part-read task: {error}"))
-                    })?
+                    receiver.await.unwrap_or_else(|_| {
+                        Err(TransportError::Network(format!(
+                            "checkpoint {seq}: its part-read task ended without a result"
+                        )))
+                    })
                 }
                 .boxed()
                 .shared();
                 reads.insert(seq, read.clone());
-                read
+                (read, Some((sender, slot)))
             }
         }
     };
+    if let Some((sender, slot)) = start {
+        let leave = LeaveRunning {
+            cache: cache.clone(),
+            running,
+            seq,
+        };
+        let task_cache = cache.clone();
+        tokio::spawn(async move {
+            let _slot = slot;
+            let _leave = leave;
+            let _ = sender.send(task(task_cache).await);
+        });
+    }
     read.await
 }
 

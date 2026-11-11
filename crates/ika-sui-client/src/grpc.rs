@@ -146,6 +146,15 @@ const PART_READ_FIRST_DELAY: Duration = Duration::from_millis(250);
 /// within about 4 × 60 s + 1.75 s.
 const PART_READ_DEADLINE: Duration = Duration::from_secs(60);
 
+/// The longest one part read can take with all its tries and the waits
+/// between them: [`PART_READ_ATTEMPTS`] × [`PART_READ_DEADLINE`] plus the
+/// doubling waits, about 4 × 60 s + 1.75 s. A part read as a whole that
+/// completes no read for longer than this has stalled.
+pub const PART_READ_MAX_DURATION: Duration = Duration::from_millis(
+    PART_READ_ATTEMPTS as u64 * PART_READ_DEADLINE.as_millis() as u64
+        + (2u64.pow(PART_READ_ATTEMPTS - 1) - 1) * PART_READ_FIRST_DELAY.as_millis() as u64,
+);
+
 /// Run one part read, and run it again, up to [`PART_READ_ATTEMPTS`] times
 /// in all, while it fails as `Network`, waiting `first_delay` and then twice
 /// as long before each retry. A try that takes longer than `deadline` fails

@@ -70,6 +70,11 @@ pub trait ChangesetSource: Send + Sync {
     /// Pass over the source of the last page: one of its entries failed
     /// verification. The default does nothing.
     fn reject_last_page(&self) {}
+
+    /// Leave the source of the last page out of the next pull, without
+    /// demoting it: one of its entries cannot be checked yet. The default
+    /// does nothing.
+    fn pass_over_last_page(&self) {}
 }
 
 #[async_trait]
@@ -96,6 +101,10 @@ impl ChangesetSource for SuiMirrorTransport {
 
     fn reject_last_page(&self) {
         self.reject_last_changeset_source();
+    }
+
+    fn pass_over_last_page(&self) {
+        self.pass_over_last_changeset_source();
     }
 }
 
@@ -183,28 +192,43 @@ pub async fn pump_changesets(
         expected = Some(received.saturating_add(1));
         match committees.verify_summary(entry.summary.clone()) {
             Ok(_) => {}
-            // The next epoch's committee is not installed yet: at a Sui epoch
-            // boundary it arrives with the end-of-epoch checkpoint (installed
-            // below when this receiver folds it) or from the committee
-            // ratchet. A wait, not a fault of the relay.
-            Err(SummaryVerifyError::MissingCommittee(epoch))
-                if epoch == committees.head_epoch().saturating_add(1) =>
-            {
-                return Err(ChangesetError::AwaitingCommittee {
-                    seq: received,
-                    epoch,
-                });
-            }
-            // An epoch at or below the head without a committee is this
-            // node's own gap, not the relay's.
-            Err(e @ SummaryVerifyError::MissingCommittee(epoch))
-                if epoch <= committees.head_epoch() =>
-            {
+            Err(e @ SummaryVerifyError::MissingCommittee(epoch)) => {
+                let store_head = committees.head_epoch();
+                // An epoch at or below the store's head without a committee
+                // is this node's own gap, not the relay's.
+                if epoch <= store_head {
+                    return Err(ChangesetError::Unverified(e.to_string()));
+                }
+                // The entry's epoch has no committee installed, so its
+                // signature cannot be checked. It is plausible only while the
+                // index is bootstrapping, when it may begin in a later epoch
+                // than the committee ratchet has reached, or right after the
+                // end-of-epoch checkpoint of the store's head epoch, when the
+                // next committee's install (below, or the ratchet's) is still
+                // to come. That is a wait: this relay is left out of the next
+                // pass without being demoted, so a relay serving an entry that
+                // cannot be checked yet cannot hold the receiver on it.
+                let (bootstrapping, head_ends_epoch) = {
+                    let index = index.read();
+                    (
+                        index.highest_contiguous_seq().is_none(),
+                        index.head_ends_epoch(),
+                    )
+                };
+                if bootstrapping || (epoch == store_head + 1 && head_ends_epoch == Some(store_head))
+                {
+                    source.pass_over_last_page();
+                    return Err(ChangesetError::AwaitingCommittee {
+                        seq: received,
+                        epoch,
+                    });
+                }
+                // Anything else claims an epoch the chain cannot have reached
+                // after the index head: the relay served a forged entry.
+                source.reject_last_page();
                 return Err(ChangesetError::Unverified(e.to_string()));
             }
-            // A bad signature, or a summary claiming an epoch two or more past
-            // the head (none can be signed yet): the relay served a forged
-            // entry.
+            // A bad signature: the relay served a forged entry.
             Err(e) => {
                 source.reject_last_page();
                 return Err(ChangesetError::Unverified(e.to_string()));
@@ -1227,6 +1251,7 @@ mod tests {
     struct RejectCountingSource {
         entries: Vec<ChangesetEntry>,
         rejects: std::sync::atomic::AtomicUsize,
+        passed_over: std::sync::atomic::AtomicUsize,
     }
 
     #[async_trait]
@@ -1251,6 +1276,29 @@ mod tests {
             self.rejects
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
+
+        fn pass_over_last_page(&self) {
+            self.passed_over
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl RejectCountingSource {
+        fn serving(entries: Vec<ChangesetEntry>) -> Self {
+            Self {
+                entries,
+                rejects: Default::default(),
+                passed_over: Default::default(),
+            }
+        }
+
+        fn rejects(&self) -> usize {
+            self.rejects.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn passed_over(&self) -> usize {
+            self.passed_over.load(std::sync::atomic::Ordering::SeqCst)
+        }
     }
 
     /// A page whose entry is signed by another committee, or does not chain
@@ -1272,10 +1320,7 @@ mod tests {
             None,
             [modified(0xA1, 1)].into(),
         );
-        let source = RejectCountingSource {
-            entries: vec![forged],
-            rejects: Default::default(),
-        };
+        let source = RejectCountingSource::serving(vec![forged]);
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
         assert!(matches!(
             pump_changesets(&index, &source, &store, 64, 10, false).await,
@@ -1291,10 +1336,7 @@ mod tests {
             Some(CheckpointDigest::new([7; 32])),
             [modified(0xB2, 1)].into(),
         );
-        let source = RejectCountingSource {
-            entries: vec![e10, unchained],
-            rejects: Default::default(),
-        };
+        let source = RejectCountingSource::serving(vec![e10, unchained]);
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
         assert!(matches!(
             pump_changesets(&index, &source, &store, 64, 10, false).await,
@@ -1304,10 +1346,7 @@ mod tests {
         assert_eq!(index.read().highest_contiguous_seq(), Some(10));
 
         let (good, _) = signed_entry(&committee, &keys, 10, None, [modified(0xA1, 1)].into());
-        let source = RejectCountingSource {
-            entries: vec![good],
-            rejects: Default::default(),
-        };
+        let source = RejectCountingSource::serving(vec![good]);
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
         pump_changesets(&index, &source, &store, 64, 10, false)
             .await
@@ -1397,19 +1436,148 @@ mod tests {
         Committee::new(epoch, committee.voting_rights.iter().cloned().collect())
     }
 
-    /// An honestly signed entry of the epoch after the committee store's head,
-    /// whose committee is not installed yet, is a wait: the relay is not
-    /// rejected, and the receiver counts no fetch failure. An entry of an
-    /// epoch two past the head cannot be signed yet, so its relay is.
+    /// While the index is bootstrapping, an entry of any later epoch than the
+    /// committee store's head cannot be checked yet, and is plausible (the
+    /// receiver may begin in a later epoch than the ratchet has reached): a
+    /// wait, with its relay left out of the next pass but not demoted, and no
+    /// fetch failure counted.
     #[tokio::test]
-    async fn an_entry_for_the_next_epoch_waits_and_one_further_on_rejects_its_relay() {
+    async fn a_bootstrapping_entry_of_a_later_epoch_waits_without_blaming_its_relay() {
         let (committee, keys) = Committee::new_simple_test_committee();
         let (_dir, store) = committee_store(committee.clone());
         assert_eq!(store.head_epoch(), 0);
-        let rejects = |source: &RejectCountingSource| {
-            source.rejects.load(std::sync::atomic::Ordering::SeqCst)
-        };
+        for epoch in [1, 3] {
+            let (later, _) = signed_entry(
+                &committee_at(&committee, epoch),
+                &keys,
+                11,
+                None,
+                [modified(0xA1, 1)].into(),
+            );
+            let source = Arc::new(RejectCountingSource::serving(vec![later]));
+            let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+            match pump_changesets(&index, source.as_ref(), &store, 64, 11, false).await {
+                Err(ChangesetError::AwaitingCommittee {
+                    seq: 11,
+                    epoch: waited,
+                }) => {
+                    assert_eq!(waited, epoch)
+                }
+                other => panic!("epoch {epoch}: expected a wait, got {other:?}"),
+            }
+            assert_eq!(
+                source.rejects(),
+                0,
+                "epoch {epoch}: an honest relay is not blamed"
+            );
+            assert_eq!(
+                source.passed_over(),
+                1,
+                "epoch {epoch}: asked elsewhere next"
+            );
 
+            let metrics = OcsMetrics::new_for_testing();
+            let mut receiver = ChangesetReceiver::new(
+                index.clone(),
+                source.clone(),
+                store.clone(),
+                64,
+                11,
+                Duration::from_secs(2),
+                metrics.clone(),
+            );
+            receiver.tick().await;
+            assert_eq!(metrics.changeset_fetch_failures_total.get(), 0);
+            assert_eq!(source.rejects(), 0);
+        }
+    }
+
+    /// Past the bootstrap, an entry whose epoch has no committee is plausible
+    /// only right after the end-of-epoch checkpoint of the store's head epoch
+    /// (the next committee's install is still to come): a wait, its relay
+    /// passed over without demotion. An entry labelled with the next epoch
+    /// after any other checkpoint is forged, whatever signs it: here a
+    /// foreign committee, which a lookup by the label alone would have left
+    /// unchecked. Its relay is rejected, as is one claiming an epoch two past
+    /// the head.
+    #[tokio::test]
+    async fn an_entry_of_an_epoch_without_a_committee_waits_only_after_the_epoch_ends() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee.clone());
+        let (foreign, foreign_keys) = Committee::new_simple_test_committee_of_size(7);
+
+        // The index head is an ordinary checkpoint of epoch 0.
+        let fresh_index = || {
+            let (e10, digest) =
+                signed_entry(&committee, &keys, 10, None, [modified(0xA1, 1)].into());
+            let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+            index
+                .write()
+                .absorb(&e10.summary, e10.object_states)
+                .unwrap();
+            (index, digest)
+        };
+        for (label, signer, signer_keys) in [
+            (1, committee_at(&foreign, 1), &foreign_keys),
+            (1, committee_at(&committee, 1), &keys),
+            (2, committee_at(&committee, 2), &keys),
+        ] {
+            let (index, digest) = fresh_index();
+            let (forged, _) = signed_entry(
+                &signer,
+                signer_keys,
+                11,
+                Some(digest),
+                [modified(0xB2, 1)].into(),
+            );
+            assert_eq!(forged.summary.epoch(), label);
+            let source = RejectCountingSource::serving(vec![forged]);
+            assert!(matches!(
+                pump_changesets(&index, &source, &store, 64, 10, false).await,
+                Err(ChangesetError::Unverified(_))
+            ));
+            assert_eq!(
+                source.rejects(),
+                1,
+                "epoch {label} after a mid-epoch head is forged"
+            );
+            assert_eq!(source.passed_over(), 0);
+        }
+
+        // The index head is the end of epoch 0, and the next committee is not
+        // installed (here: folded without the receiver's install, as if it
+        // failed).
+        let (end_of_epoch, digest) = signed_end_of_epoch_entry(&committee, &keys, 10, None);
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        index
+            .write()
+            .absorb(&end_of_epoch.summary, end_of_epoch.object_states)
+            .unwrap();
+        assert_eq!(store.head_epoch(), 0);
+        let (next_epoch, _) = signed_entry(
+            &committee_at(&committee, 1),
+            &keys,
+            11,
+            Some(digest),
+            [modified(0xB2, 1)].into(),
+        );
+        let source = RejectCountingSource::serving(vec![next_epoch]);
+        assert!(matches!(
+            pump_changesets(&index, &source, &store, 64, 10, false).await,
+            Err(ChangesetError::AwaitingCommittee { seq: 11, epoch: 1 })
+        ));
+        assert_eq!(source.rejects(), 0, "an honest relay is not blamed");
+        assert_eq!(source.passed_over(), 1, "but another relay is asked next");
+    }
+
+    /// A wait is handled as one in the poll: an INFO once per epoch, not the
+    /// rate-limited failure WARN, and a pass that asked every relay is
+    /// counted `none`, not `failed`.
+    #[tokio::test(start_paused = true)]
+    async fn a_committee_wait_is_logged_once_and_counted_as_no_successor() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee.clone());
         let (next_epoch, _) = signed_entry(
             &committee_at(&committee, 1),
             &keys,
@@ -1417,47 +1585,38 @@ mod tests {
             None,
             [modified(0xA1, 1)].into(),
         );
-        let source = Arc::new(RejectCountingSource {
-            entries: vec![next_epoch],
-            rejects: Default::default(),
-        });
-        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
-        assert!(matches!(
-            pump_changesets(&index, source.as_ref(), &store, 64, 11, false).await,
-            Err(ChangesetError::AwaitingCommittee { seq: 11, epoch: 1 })
-        ));
-        assert_eq!(rejects(&source), 0, "an honest relay is not blamed");
         let metrics = OcsMetrics::new_for_testing();
         let mut receiver = ChangesetReceiver::new(
-            index.clone(),
-            source.clone(),
-            store.clone(),
+            Arc::new(RwLock::new(
+                ChangesetIndex::new().with_metrics(metrics.clone()),
+            )),
+            Arc::new(RejectCountingSource::serving(vec![next_epoch])),
+            store,
             64,
             11,
             Duration::from_secs(2),
             metrics.clone(),
         );
-        receiver.tick().await;
-        assert_eq!(metrics.changeset_fetch_failures_total.get(), 0);
-        assert_eq!(rejects(&source), 0);
+        for _ in 0..20 {
+            receiver.tick().await;
+            tokio::time::advance(Duration::from_secs(2)).await;
+        }
 
-        let (far_future, _) = signed_entry(
-            &committee_at(&committee, 2),
-            &keys,
-            11,
-            None,
-            [modified(0xA1, 1)].into(),
-        );
-        let source = RejectCountingSource {
-            entries: vec![far_future],
-            rejects: Default::default(),
+        let seeks = |outcome: &str| {
+            metrics
+                .changeset_successor_seeks_total
+                .with_label_values(&[outcome])
+                .get()
         };
-        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
-        assert!(matches!(
-            pump_changesets(&index, &source, &store, 64, 11, false).await,
-            Err(ChangesetError::Unverified(_))
-        ));
-        assert_eq!(rejects(&source), 1);
+        assert!(seeks("none") > 0, "the stall's seek pass is counted");
+        assert_eq!(seeks("failed"), 0, "a wait is not a failed pass");
+        assert_eq!(
+            logs.lines_with("waits for the next Sui epoch's committee")
+                .len(),
+            1,
+            "once per epoch"
+        );
+        assert!(logs.lines_with("ChangesetReceiver tick failed").is_empty());
     }
 
     /// Folding the end-of-epoch checkpoint installs the next epoch's
@@ -1475,10 +1634,7 @@ mod tests {
             Some(digest),
             [modified(0xA1, 1)].into(),
         );
-        let source = RejectCountingSource {
-            entries: vec![end_of_epoch, next_epoch],
-            rejects: Default::default(),
-        };
+        let source = RejectCountingSource::serving(vec![end_of_epoch, next_epoch]);
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
         let advanced = pump_changesets(&index, &source, &store, 64, 10, false)
             .await

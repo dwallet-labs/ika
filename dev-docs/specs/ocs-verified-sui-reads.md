@@ -496,17 +496,23 @@ Sui I/O, so `time() -` it is the alert signal even on a node whose relays
 never served it or whose receiver was never built (an alert gates on it being
 above 0, with an uptime condition). A page with an entry that fails
 verification (a bad committee signature, an artifacts mismatch, a broken
-chain link, or a summary claiming an epoch two or more past the committee
-store's head, which no committee can have signed yet) passes its relay over:
-the relay is demoted and left out of the next pass, so it cannot keep winning
-passes with a forged entry. An honest entry of the epoch right after the
-head, whose committee is not installed yet, is a wait, not a fault of the
-relay: at every Sui epoch boundary that is the normal state until the
-committee arrives. The receiver installs it itself when it folds the
-end-of-epoch checkpoint that carries it (the same head-guarded install the
-committee follower uses), so the entries after it verify in the same page;
-otherwise the committee ratchet installs it. A wait counts no failure and
-logs once per epoch. Nothing about verification
+chain link, or an epoch the chain cannot have reached after the index head)
+passes its relay over: the relay is demoted and left out of the next pass, so
+it cannot keep winning passes with an entry this node can show is forged. An
+entry whose epoch has no committee installed here cannot be checked at all.
+It is plausible only while the index is bootstrapping (it may begin in a later
+epoch than the committee ratchet has reached) or right after the end-of-epoch
+checkpoint of the committee store's head epoch, which at every Sui epoch
+boundary is the normal state until the next committee arrives. Such an entry
+is a wait, not a fault: its relay is left out of the next pass without being
+demoted, so a relay serving it cannot hold the receiver on it, and an honest
+one keeps its place. Any other entry of an epoch without a committee claims
+an epoch the chain cannot have reached after the index head, so it is forged
+whatever signs it, and its relay is rejected. The receiver installs the next committee itself
+when it folds the end-of-epoch checkpoint that carries it (the same
+head-guarded install the committee follower uses), so the entries after it
+verify in the same page; otherwise the committee ratchet installs it. A wait
+counts no failure and logs once per epoch. Nothing about verification
 changes: every entry is still BLS- and artifacts-bound and folded only
 contiguously. A relay that is behind but still advancing is not passed over:
 the frontier then moves, slowly, and the stall measure does not see it.
