@@ -442,13 +442,23 @@ impl UpstreamWatch {
             |seq| seq.to_string(),
         );
         if frozen {
+            // Why nothing advanced. A tick running for the whole stretch ran no
+            // probe in it: a read inside the tick has not returned. Otherwise
+            // the last probe's error, or answers at or below the cursor.
+            let cause = match (tick_running_for, &progress.last_error) {
+                (Some(running), _) if running >= UPSTREAM_FROZEN_AFTER => format!(
+                    "none: a read of the fullnode in the current pusher tick has not returned \
+                     for {}s",
+                    running.as_secs()
+                ),
+                (_, Some(error)) => error.clone(),
+                (_, None) => "none: the fullnode answers, but not past the pusher's cursor".into(),
+            };
             error!(
                 cursor,
                 %last_seen_watermark,
                 frozen_secs = frozen_for.as_secs(),
-                last_probe_error = progress.last_error.as_deref().unwrap_or(
-                    "none: the fullnode answers, but not past the pusher's cursor"
-                ),
+                last_probe_error = %cause,
                 pusher_tick_running_secs = tick_running_for.map(|running| running.as_secs()),
                 "Sui fullnode is not advancing: this node's Sui fullnode has not reported a \
                  checkpoint past the checkpoint pusher's cursor for over 5 minutes, or has not \
@@ -5898,8 +5908,12 @@ mod tests {
         seqs: BTreeSet<CheckpointSequenceNumber>,
         error: fn(CheckpointSequenceNumber) -> TransportError,
         probe: WatermarkProbe,
-        /// Checkpoints whose fetch never answers, as on a hung fullnode.
+        /// Checkpoints whose fetch never answers, as on a hung fullnode —
+        /// until `release` is notified, when there is one.
         hang: BTreeSet<CheckpointSequenceNumber>,
+        release: Option<Arc<tokio::sync::Notify>>,
+        /// When set, what the watermark probe answers instead of `inner`.
+        height: Option<Arc<AtomicU64>>,
     }
 
     /// How a [`FailingFullnode`] answers the watermark probe.
@@ -5924,6 +5938,8 @@ mod tests {
             error,
             probe: WatermarkProbe::Answers,
             hang: BTreeSet::new(),
+            release: None,
+            height: None,
         })
     }
 
@@ -5938,6 +5954,8 @@ mod tests {
             error: timed_out,
             probe,
             hang: BTreeSet::new(),
+            release: None,
+            height: None,
         })
     }
 
@@ -5952,6 +5970,27 @@ mod tests {
             error: timed_out,
             probe: WatermarkProbe::Answers,
             hang: seqs.iter().copied().collect(),
+            release: None,
+            height: None,
+        })
+    }
+
+    /// `inner`, with its watermark probe answering `height`, and fetching any
+    /// of `seqs` waiting until `release` is notified.
+    fn fullnode_held_on(
+        inner: Arc<dyn SuiTransport>,
+        seqs: &[CheckpointSequenceNumber],
+        release: Arc<tokio::sync::Notify>,
+        height: Arc<AtomicU64>,
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(FailingFullnode {
+            inner,
+            seqs: BTreeSet::new(),
+            error: timed_out,
+            probe: WatermarkProbe::Answers,
+            hang: seqs.iter().copied().collect(),
+            release: Some(release),
+            height: Some(height),
         })
     }
 
@@ -5981,7 +6020,10 @@ mod tests {
             &self,
         ) -> Result<CheckpointSequenceNumber, TransportError> {
             match self.probe {
-                WatermarkProbe::Answers => self.inner.get_latest_checkpoint_sequence().await,
+                WatermarkProbe::Answers => match &self.height {
+                    Some(height) => Ok(height.load(Ordering::SeqCst)),
+                    None => self.inner.get_latest_checkpoint_sequence().await,
+                },
                 WatermarkProbe::Fails => Err(TransportError::Network(
                     "status: Unavailable, message: \"connection refused\"".to_owned(),
                 )),
@@ -5993,7 +6035,10 @@ mod tests {
             seq: CheckpointSequenceNumber,
         ) -> Result<CheckpointData, TransportError> {
             if self.hang.contains(&seq) {
-                return std::future::pending().await;
+                match &self.release {
+                    Some(release) => release.notified().await,
+                    None => return std::future::pending().await,
+                }
             }
             if self.seqs.contains(&seq) {
                 return Err((self.error)(seq));
@@ -7751,7 +7796,13 @@ mod tests {
                 "last_seen_watermark=101",
                 "frozen_secs=300",
                 "pusher_tick_running_secs=",
+                "in the current pusher tick has not returned for",
             ],
+        );
+        assert!(
+            !frozen[0].contains("the fullnode answers"),
+            "the fullnode answered past the cursor; a read is what is stuck: {}",
+            frozen[0]
         );
         assert!(*frozen_state.borrow());
     }
@@ -7776,6 +7827,7 @@ mod tests {
             &[
                 "ERROR",
                 "last_seen_watermark=none since this process started",
+                "in the current pusher tick has not returned for",
             ],
         );
         assert_eq!(fx.probe_failures(), 0, "the probe never ran");
@@ -7830,5 +7882,55 @@ mod tests {
         .expect("the first probe must be bounded");
         assert!(built.is_err());
         assert_eq!(fx.probe_failures(), 1);
+    }
+
+    /// A freeze the timer reported while a read hung clears once that read
+    /// returns and the fullnode advances: one ERROR, then one INFO from the
+    /// tick that sees the advance, and the frozen state goes back to false.
+    #[tokio::test(start_paused = true)]
+    async fn a_freeze_reported_during_a_hung_tick_clears_when_the_fullnode_advances() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = fresh_upstream_pusher().await;
+        let next = UPSTREAM_CURSOR + 1;
+        let release = Arc::new(tokio::sync::Notify::new());
+        let height = Arc::new(AtomicU64::new(next));
+        pusher.transport = fullnode_held_on(
+            transport_reporting(
+                &fx.committee,
+                &fx.keys,
+                next + 1,
+                HashMap::from([
+                    (next, plain_checkpoint(&fx.committee, &fx.keys, next)),
+                    (
+                        next + 1,
+                        plain_checkpoint(&fx.committee, &fx.keys, next + 1),
+                    ),
+                ]),
+            ),
+            &[next],
+            release.clone(),
+            height.clone(),
+        );
+        let frozen_state = pusher.upstream_frozen();
+        let running = tokio::spawn(pusher.run());
+
+        sleep(Duration::from_secs(305)).await;
+        assert_eq!(lines_with(&logs, FROZEN).len(), 1, "reported by the timer");
+        assert!(*frozen_state.borrow());
+
+        height.store(next + 1, Ordering::SeqCst);
+        release.notify_one();
+        // Under the timer's 10 s period: the recovery comes from the tick.
+        sleep(Duration::from_secs(2)).await;
+        running.abort();
+
+        assert_eq!(lines_with(&logs, FROZEN).len(), 1);
+        let recovered = lines_with(&logs, RECOVERED);
+        assert_eq!(recovered.len(), 1, "{recovered:?}");
+        assert_carries(&recovered[0], &["INFO", "last_seen_watermark=102"]);
+        assert!(
+            !*frozen_state.borrow(),
+            "cleared where the report latch flips"
+        );
     }
 }
