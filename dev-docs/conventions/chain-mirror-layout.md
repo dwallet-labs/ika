@@ -71,7 +71,10 @@ match wrapper.version {
 ```
 
 in `crates/ika-sui-client/src/lib.rs` and
-`crates/ika-core/src/sui_connector/verified_reader.rs`. That is an
+`crates/ika-core/src/sui_connector/verified_reader.rs` (where the arm is
+spelled `v if SINGLETON_ANCHOR_INNER_VERSIONS.contains(&v)` — the same
+constant decides which inner ids the verified cache pins against its retain
+window). That is an
 assertion that versions 1 and 2 share one layout. It happens to be true —
 the Move struct is a single unsuffixed declaration and the bump carried no
 layout change — but nothing tested it and nothing forces the next bump to
@@ -118,7 +121,10 @@ All of these move in the same PR:
 
 1. The Move struct and the Rust mirror.
 2. The version dispatch: a layout change means versions 1 and 2 no longer
-   share a layout, so the `1 | 2 =>` arm must stop claiming they do.
+   share a layout, so the `1 | 2 =>` arm must stop claiming they do. In
+   `verified_reader.rs` keep `SINGLETON_ANCHOR_INNER_VERSIONS` listing every
+   version the dispatch decodes: it is also the set of inner ids the
+   verified cache never evicts.
 3. The `const VERSION` bump plus `migrate()` that carries old state
    across.
 4. The golden tests, both names CI runs:

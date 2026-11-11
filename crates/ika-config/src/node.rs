@@ -799,10 +799,14 @@ pub struct SuiConnectorConfig {
     pub verified_cache_retention_checkpoints: Option<u64>,
 
     /// Sui checkpoint sequence numbers a `sui-state-direct` node re-folds from
-    /// the checkpoint archive at startup. For
-    /// a checkpoint whose Ika objects never entered the verified cache — its
-    /// fold failed and the fullnode has since pruned it — this is the only way
-    /// the node can prove those objects again. The checkpoint goes through the
+    /// the checkpoint archive at startup, for a checkpoint whose Ika objects
+    /// never entered the verified cache — its fold failed, or it was never
+    /// fetched, and the fullnode has since pruned it. The node records and
+    /// backfills every checkpoint its pusher gives up on by itself, across
+    /// restarts, and records a gap that fails to decode or fold on its first
+    /// failure; this list is for one it lost without recording (an older
+    /// binary, or a pending gap the fullnode never served, lost to a restart).
+    /// The checkpoint goes through the
     /// same verification as an archive-repaired gap (sequence binding,
     /// committee signature, artifacts digest over the whole object set), only
     /// the objects the node's own fullnode still reports at exactly that

@@ -15,9 +15,23 @@
 //! Bandwidth: scanning every Sui checkpoint requires a raw fetch; that cost
 //! is unchanged. Only Ika-touched objects (with their proofs) are kept; all
 //! non-Ika objects plus tx / effects are dropped.
+//!
+//! A checkpoint the scan cannot fold is retried as a pending gap
+//! (`pending_gaps`, in memory). One the pusher finally gives up on — dropped
+//! at the gap retry deadline, or sacrificed by a far-behind fast-forward — is
+//! recorded in the perpetual `sui_pusher_lost_checkpoints` table
+//! ([`LostCheckpoint`]) and re-folded from the checkpoint archive by the
+//! archive backfill, now and after every restart, with its snapshots pinned
+//! against the cache's retain window until they are superseded. A gap that
+//! exists but this binary cannot read — it fails to decode or to fold — is
+//! recorded earlier, on its first such failure, so a restart inside its retry
+//! window does not lose it. A later
+//! binary that can fold what this one could not therefore recovers it without a
+//! hardcoded list or an operator config change.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures::{StreamExt, stream};
@@ -26,6 +40,7 @@ use ika_sui_client::archive::{ArchiveError, CheckpointArchive};
 use ika_sui_client::transport::{SuiTransport, TransportError};
 use ika_types::error::error_chain;
 use ika_types::messages_dwallet_mpc::IkaPackageConfig;
+use serde::{Deserialize, Serialize};
 use sui_light_client::proof::ocs::ModifiedObjectTree;
 use sui_types::TypeTag;
 use sui_types::base_types::{ObjectID, ObjectRef};
@@ -39,7 +54,9 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
-use crate::sui_connector::committee_store::{CommitteeStore, CommitteeTransition};
+use crate::sui_connector::committee_store::{
+    CommitteeStore, CommitteeTransition, SummaryVerifyError,
+};
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use crate::sui_connector::watermark_guard::WatermarkGuard;
@@ -66,6 +83,98 @@ const ARCHIVE_BACKFILL_RETRY_MAX: Duration = Duration::from_secs(600);
 /// still current — one `get_object` per Ika object of the checkpoint, run
 /// inside the tick, so this caps how long one attempt can hold the scan.
 const ARCHIVE_BACKFILL_CURRENCY_TIMEOUT: Duration = Duration::from_secs(10);
+/// Archive-backfill fetches in flight at once. A due checkpoint beyond this
+/// waits for a slot on a later tick, so a burst of recorded lost checkpoints
+/// (a pruned-at-head window can drop thousands) rolls through the archive
+/// instead of hitting it all at once.
+const MAX_CONCURRENT_BACKFILL_FETCHES: usize = 4;
+/// Most lost checkpoints recorded at once (see [`LostCheckpoint`]). A
+/// pruned-at-head window followed by a fast-forward can give up on thousands
+/// of checkpoints at mainnet rates; most of them carry no Ika object and are
+/// collected on their first successful backfill, so the cap only binds when
+/// the archive cannot serve them either. A loss past the cap is not recorded:
+/// it warns and counts in `pusher_lost_checkpoints_overflow_total`.
+const MAX_LOST_CHECKPOINTS: usize = 1_024;
+/// How long a recorded lost checkpoint is retried after the archive first
+/// answered NotFound for it. NotFound is the store's definitive answer, and
+/// the public stores ingest a checkpoint within minutes, so a NotFound that
+/// persists this long means the store has expired it (ordinary checkpoints
+/// are kept ~30 days).
+/// The record is then abandoned loudly. Operator-listed checkpoints never give
+/// up.
+const ARCHIVE_NOT_FOUND_GIVE_UP_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+/// How often settled lost-checkpoint records are checked for collection: one
+/// pass over the cache for all of them.
+const LOST_CHECKPOINT_COLLECT_INTERVAL: Duration = Duration::from_secs(60);
+
+/// The persisted record of one Sui checkpoint the pusher gave up on, or is
+/// about to — in the perpetual `sui_pusher_lost_checkpoints` table, keyed by
+/// sequence number.
+///
+/// Written when the pusher gives up on a pending gap (the retry deadline, or a
+/// far-behind fast-forward), and earlier for a gap that exists but this binary
+/// cannot read — the fullnode served it and it failed to decode or to fold, or
+/// the archive served a verified blob that failed to fold: on its first such
+/// failure (see `record_failing_gap`). The pending gap itself is in
+/// memory while the scan cursor is already persisted past it, so without the
+/// early record a restart inside the gap's retry window — when operators
+/// restart and upgrade nodes — loses it for good. The early record is not
+/// scheduled for the backfill in that process: the live gap retry stays the
+/// only path for the seq until the deadline, which schedules it, or a repair,
+/// which deletes the record and releases the pin. Only a restart in between
+/// turns it into a backfill, from the boot path like any other record.
+///
+/// A record is just a pointer: the checkpoint is re-folded from the archive by
+/// the archive backfill, which runs the full archive verification
+/// (`verify_archive_checkpoint`, then `build_entries`) and folds only objects
+/// the node's own fullnode still reports at exactly the archived reference.
+/// While the record exists its checkpoint is pinned against the verified
+/// cache's retain window, from boot (the connector stack pins every record
+/// when it builds the cache) and from the moment it is recorded at runtime.
+///
+/// The value layout is part of the database's rollback contract (see the
+/// column family): never change it in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LostCheckpoint {
+    /// Not folded from the archive yet. Never collected: no snapshot from it
+    /// exists yet, which is exactly why it is kept.
+    Pending {
+        /// Unix seconds of the archive's first NotFound answer since it last
+        /// served the checkpoint — the clock of the give-up
+        /// (`ARCHIVE_NOT_FOUND_GIVE_UP_AFTER`).
+        archive_not_found_since: Option<u64>,
+    },
+    /// The backfill settled. Kept, and its snapshots pinned, until no snapshot
+    /// from the checkpoint is left in the cache — every object it folded has
+    /// been superseded by a newer version. Deleting it on the fold alone would
+    /// unpin it at the next boot, and the next sweep would drop exactly what
+    /// was recovered.
+    Settled,
+}
+
+impl LostCheckpoint {
+    const NEW: Self = Self::Pending {
+        archive_not_found_since: None,
+    };
+}
+
+/// The recorded lost checkpoints in `perpetual`. A table that cannot be read
+/// degrades to an empty set with a warn rather than failing the boot: the
+/// records are a recovery aid, and the pusher records new losses regardless.
+pub fn load_lost_checkpoints(
+    perpetual: &AuthorityPerpetualTables,
+) -> BTreeMap<CheckpointSequenceNumber, LostCheckpoint> {
+    perpetual
+        .load_sui_pusher_lost_checkpoints()
+        .unwrap_or_else(|e| {
+            warn!(
+                error = ?e,
+                "the recorded lost checkpoints could not be read; they are neither pinned nor \
+                 backfilled by this process"
+            );
+            BTreeMap::new()
+        })
+}
 
 pub struct IkaCheckpointPusher {
     /// Raw Sui transport used to fetch full checkpoints for proof
@@ -100,9 +209,14 @@ pub struct IkaCheckpointPusher {
     /// never regress state. A gap the fullnode keeps refusing is fetched
     /// from the checkpoint `archive` instead (same committee verification
     /// at fold time); only a gap that BOTH sources fail to serve until the
-    /// retry deadline is dropped with a loud warn. In-memory only: gaps are
-    /// lost on restart, where the on-chain uncompleted-session re-pull is
-    /// the backstop.
+    /// retry deadline is dropped with a loud warn. In-memory only, behind a
+    /// cursor already persisted past them: a gap is lost on restart, where
+    /// the on-chain uncompleted-session re-pull is the backstop — except one
+    /// that has failed to decode or fold, which is recorded in
+    /// `lost_checkpoints` on its first such failure, so the next boot
+    /// backfills it. A gap the pusher
+    /// gives up on is recorded (if it is not already) and handed to the
+    /// archive backfill.
     pending_gaps: BTreeMap<CheckpointSequenceNumber, PendingGap>,
     /// Verified-fallback source for gap checkpoints the fullnode pruned
     /// before the pusher could fetch them. The public Sui checkpoint stores
@@ -142,10 +256,34 @@ pub struct IkaCheckpointPusher {
     watermark_refusal_warned: bool,
     /// Checkpoints still to be re-folded from the archive (see
     /// [`Self::with_archive_backfill`]). Unlike `pending_gaps` these are
-    /// checkpoints far behind the cursor whose objects the node lost for good
-    /// — the fullnode pruned them before any fold succeeded — so they are
-    /// retried until they fold, never dropped.
+    /// checkpoints behind the cursor whose objects the node lost for good —
+    /// the fullnode pruned them before any fold succeeded — so they are
+    /// retried until they fold. Only a recorded lost checkpoint the archive no
+    /// longer holds is ever given up on (`ARCHIVE_NOT_FOUND_GIVE_UP_AFTER`).
     archive_backfill: BTreeMap<CheckpointSequenceNumber, BackfillState>,
+    /// The persisted lost-checkpoint records ([`LostCheckpoint`]), mirrored in
+    /// memory. Loaded at construction, added to when a pending gap first fails
+    /// to decode or fold and when the pusher gives up on a checkpoint, deleted
+    /// when a gap
+    /// recorded early is repaired, settled by the backfill and collected once
+    /// nothing from the checkpoint is left in the cache.
+    lost_checkpoints: BTreeMap<CheckpointSequenceNumber, LostCheckpoint>,
+    /// The operator's `sui-checkpoint-archive-backfill` list. Those seqs keep
+    /// the operator semantics even when also recorded: they never give up, and
+    /// collecting their record does not unpin them (the config pins them).
+    operator_backfill: BTreeSet<CheckpointSequenceNumber>,
+    /// When settled records were last checked for collection.
+    lost_checkpoints_collected_at: Instant,
+    /// Whether the record-full warn has fired for the current stretch at the
+    /// cap — the same transition latch as [`Self::stall_warned`]; the counter
+    /// carries the volume.
+    lost_overflow_warned: bool,
+    /// The Sui epoch (plus one; 0 = none yet) whose committee wait was last
+    /// logged ([`Self::log_committee_wait`]). A wait repeats on every retry
+    /// until the committee installs, and an installed committee never goes
+    /// missing again, so one line per epoch is the whole story. Atomic because
+    /// the fold path that logs it takes `&self`.
+    committee_wait_logged: AtomicU64,
 }
 
 /// Retry state of one scanned-but-unfetchable checkpoint.
@@ -166,6 +304,16 @@ struct BackfillState {
     /// The archive fetch, run in its own task so a slow store never holds back
     /// the scan; the pusher only folds its result, on the tick it finishes.
     in_flight: Option<ArchiveFetch>,
+}
+
+impl BackfillState {
+    fn due(now: Instant) -> Self {
+        Self {
+            failures: 0,
+            next_attempt: now,
+            in_flight: None,
+        }
+    }
 }
 
 /// Why one archive-backfill attempt failed; the metric label of
@@ -214,6 +362,9 @@ enum BackfillSettled {
     /// The checkpoint has no Ika object that is still current: none at all, or
     /// each was since modified, deleted or wrapped on chain.
     NothingToFold,
+    /// Given up: a recorded lost checkpoint the archive no longer holds (see
+    /// `ARCHIVE_NOT_FOUND_GIVE_UP_AFTER`). Nothing was folded.
+    Abandoned,
 }
 
 impl BackfillSettled {
@@ -222,6 +373,7 @@ impl BackfillSettled {
             Self::Folded => "folded",
             Self::AlreadyCached => "already_cached",
             Self::NothingToFold => "nothing_to_fold",
+            Self::Abandoned => "abandoned",
         }
     }
 }
@@ -279,6 +431,10 @@ impl IkaCheckpointPusher {
         // Seed the cache's processed head so the reader's staleness tripwire
         // doesn't spuriously fire before the first poll tick advances it.
         cache.note_processed(cursor);
+        let lost_checkpoints = load_lost_checkpoints(&perpetual);
+        metrics
+            .pusher_lost_checkpoints
+            .set(lost_checkpoints.len() as i64);
 
         Ok(Self {
             transport,
@@ -296,16 +452,28 @@ impl IkaCheckpointPusher {
             stall_warned: false,
             watermark_refusal_warned: false,
             archive_backfill: BTreeMap::new(),
+            lost_checkpoints,
+            operator_backfill: BTreeSet::new(),
+            lost_checkpoints_collected_at: Instant::now(),
+            lost_overflow_warned: false,
+            committee_wait_logged: AtomicU64::new(0),
         })
     }
 
-    /// Re-fold `seqs` from the checkpoint archive, without moving the cursor.
+    /// Re-fold `seqs` — the operator's `sui-checkpoint-archive-backfill` list —
+    /// and every recorded lost checkpoint ([`LostCheckpoint`]) from the
+    /// checkpoint archive, without moving the cursor.
     ///
-    /// Each listed checkpoint is one the node needs but never folded: the
-    /// fold failed while the fullnode still served it, and the fullnode has
-    /// since pruned it, so neither the scan, the pending-gap repair (in-memory,
-    /// minutes) nor the proof provider (fullnode or this cache only) can bring
-    /// its objects back. The archive retains ordinary checkpoints far longer.
+    /// Each checkpoint is one the node needs but never folded: the fold
+    /// failed while the fullnode still served it, or the fullnode never served
+    /// it, and the fullnode has since pruned it, so neither the scan, the
+    /// pending-gap repair (in-memory, minutes) nor the proof provider (fullnode
+    /// or this cache only) can bring its objects back. The archive retains
+    /// ordinary checkpoints far longer. Checkpoints the pusher gives up on
+    /// while running are recorded and scheduled the same way
+    /// (`give_up_on_checkpoint`), so a restart resumes them here — as it does a
+    /// pending gap recorded on its first decode or fold failure that the
+    /// restart cut off before its deadline (`record_failing_gap`).
     ///
     /// Every attempt runs the archive-gap verification unchanged
     /// (`verify_archive_checkpoint`, then the fold-time verification inside
@@ -325,49 +493,343 @@ impl IkaCheckpointPusher {
     /// archive resolved. A seq above the cursor waits until the scan has
     /// passed it — the scan may fold it, or a far-behind fast-forward may skip
     /// it — and folding it first would move the cache's processed head past
-    /// the cursor. Attempts run at the top of every tick and are retried with
-    /// capped exponential backoff until they settle.
+    /// the cursor. Attempts run at the top of every tick, at most
+    /// `MAX_CONCURRENT_BACKFILL_FETCHES` at a time, and are retried with capped
+    /// exponential backoff until they settle.
+    ///
+    /// A record that settled in an earlier run but has no snapshot left is
+    /// backfilled again rather than collected: this boot cannot tell whether
+    /// its objects were superseded (the backfill then settles with nothing to
+    /// fold and the record is collected) or evicted by something that did not
+    /// honour the pin, such as a rolled-back binary (the backfill folds them
+    /// again).
     pub fn with_archive_backfill(mut self, seqs: BTreeSet<CheckpointSequenceNumber>) -> Self {
-        if seqs.is_empty() {
+        self.operator_backfill = seqs.clone();
+        // The connector stack already pinned every record when it built the
+        // cache; idempotent here, for a cache built without them.
+        for seq in self.lost_checkpoints.keys() {
+            self.cache.pin_checkpoint(*seq);
+        }
+        let all: BTreeSet<CheckpointSequenceNumber> = seqs
+            .iter()
+            .chain(self.lost_checkpoints.keys())
+            .copied()
+            .collect();
+        if all.is_empty() {
             return self;
         }
         if self.archive.is_none() {
             info!(
                 ?seqs,
+                recorded = self.lost_checkpoints.len(),
                 "no Sui checkpoint archive is configured; skipping the archive backfill"
             );
             return self;
         }
+        let cached = self.cache.checkpoints_with_snapshots(&all);
         let now = Instant::now();
-        for seq in seqs {
-            let cached = self.cache.snapshots_from_checkpoint(seq);
-            if cached > 0 {
+        for seq in all {
+            let recorded = self.lost_checkpoints.get(&seq).copied();
+            if cached.contains(&seq) {
                 info!(
                     seq,
-                    cached, "archive backfill skipped: the checkpoint's objects are already cached"
+                    recorded = recorded.is_some(),
+                    "archive backfill skipped: the checkpoint's objects are already cached"
                 );
                 self.record_backfill_settled(BackfillSettled::AlreadyCached);
+                self.settle_lost_checkpoint(seq, BackfillSettled::AlreadyCached);
                 continue;
+            }
+            if recorded == Some(LostCheckpoint::Settled) {
+                self.update_lost_checkpoint(seq, LostCheckpoint::NEW);
             }
             info!(
                 seq,
                 cursor = self.cursor,
                 deferred_until_scanned = seq > self.cursor,
+                recorded = recorded.is_some(),
                 "archive backfill scheduled"
             );
-            self.archive_backfill.insert(
-                seq,
-                BackfillState {
-                    failures: 0,
-                    next_attempt: now,
-                    in_flight: None,
-                },
-            );
+            self.archive_backfill.insert(seq, BackfillState::due(now));
         }
         self.metrics
             .pusher_backfill_pending
             .set(self.archive_backfill.len() as i64);
         self
+    }
+
+    /// Record `seq` — a pending gap below the cursor — as lost: persist the
+    /// record and pin the checkpoint, before anything can fold it, so the
+    /// first sweep after the fold keeps it. Does NOT schedule the archive
+    /// backfill; that is [`Self::give_up_on_checkpoint`]. Persisted, so a
+    /// restart pins and backfills it (`with_archive_backfill`) even if this
+    /// process never gave up on it.
+    ///
+    /// Two callers: a pending gap's first failure that says this binary cannot
+    /// read a checkpoint that exists ([`Self::record_failing_gap`] — the live
+    /// gap retry keeps trying it, and stays the only path for the seq in this
+    /// process), and every give-up. Returns whether `seq` is recorded and not
+    /// scheduled for the backfill yet, by this call or an earlier one.
+    ///
+    /// Not recorded: anything when no archive resolved (nothing could re-fold
+    /// it, and a drop is already counted), a seq already scheduled (an
+    /// operator entry, which the backfill already owns), and a seq past the
+    /// cap (`MAX_LOST_CHECKPOINTS`), which warns and counts instead.
+    fn record_lost_checkpoint(
+        &mut self,
+        seq: CheckpointSequenceNumber,
+        cause: &'static str,
+    ) -> bool {
+        if self.archive.is_none() || self.archive_backfill.contains_key(&seq) {
+            return false;
+        }
+        if self.lost_checkpoints.contains_key(&seq) {
+            return true;
+        }
+        if self.lost_checkpoints.len() >= MAX_LOST_CHECKPOINTS {
+            self.metrics.pusher_lost_checkpoints_overflow_total.inc();
+            if !self.lost_overflow_warned {
+                warn!(
+                    seq,
+                    cause,
+                    cap = MAX_LOST_CHECKPOINTS,
+                    "the lost-checkpoint record is full: this checkpoint is NOT recorded and will \
+                     not be backfilled from the archive; further losses count in \
+                     ika_ocs_pusher_lost_checkpoints_overflow_total until records are collected \
+                     (logged once per stretch)"
+                );
+                self.lost_overflow_warned = true;
+            }
+            return false;
+        }
+        self.lost_overflow_warned = false;
+        if let Err(e) = self
+            .perpetual
+            .put_sui_pusher_lost_checkpoint(seq, LostCheckpoint::NEW)
+        {
+            warn!(
+                seq,
+                error = ?e,
+                "failed to persist the lost-checkpoint record; it is backfilled by this process only"
+            );
+        }
+        self.lost_checkpoints.insert(seq, LostCheckpoint::NEW);
+        // Before anything can fold it, so the first sweep after the fold keeps
+        // it.
+        self.cache.pin_checkpoint(seq);
+        self.metrics
+            .pusher_lost_checkpoints
+            .set(self.lost_checkpoints.len() as i64);
+        info!(
+            seq,
+            cause,
+            "recorded the checkpoint as lost: persisted and pinned, so a restart backfills it \
+             from the archive"
+        );
+        true
+    }
+
+    /// A pending gap failed in a way that says the checkpoint exists but this
+    /// binary cannot read it; the gap is retried until its deadline. Record it
+    /// now ([`Self::record_lost_checkpoint`]): the gap lives in memory behind a
+    /// persisted cursor, so a restart before the deadline would lose it. The
+    /// triggers (`cause`):
+    ///
+    /// - `first_fold_failure`: the fullnode served it and the fold failed;
+    /// - `first_decode_failure`: the fullnode served it and this binary could
+    ///   not decode it — `get_full_checkpoint` failed with
+    ///   [`TransportError::Encoding`], the shape that lost mainnet checkpoint
+    ///   342064089 (a `TransactionExpiration` variant v1.4.1 did not know).
+    ///   Recorded at the scan's first fetch, else at the first retry;
+    /// - `first_archive_fold_failure`: the archive served a blob that passed
+    ///   `verify_archive_checkpoint` and the fold still failed.
+    ///
+    /// Any other fetch failure — NotFound, a network error, a timeout, a rate
+    /// limit — keeps the deadline-only rule, so a slow or pruning fullnode
+    /// writes no records. A no-op once recorded, so only the first failure
+    /// writes. At the cap it is skipped quietly: the gap is not lost yet, and a
+    /// give-up at the deadline counts the overflow if it comes to that. For a
+    /// deterministic failure (a binary that cannot decode a new type fails on
+    /// every checkpoint carrying it) the early records are the ones the
+    /// deadline would write, only sooner, so the cap fills no faster and the
+    /// same losses overflow; a transient failure holds a slot it gives back on
+    /// repair, for at most the retry window.
+    fn record_failing_gap(&mut self, seq: CheckpointSequenceNumber, cause: &'static str) {
+        if self.lost_checkpoints.len() < MAX_LOST_CHECKPOINTS {
+            self.record_lost_checkpoint(seq, cause);
+        }
+    }
+
+    /// Give up on `seq` — a pending gap below the cursor, dropped at its
+    /// retry deadline or sacrificed by a far-behind fast-forward: record it
+    /// unless its first decode or fold failure already did, and schedule its
+    /// archive backfill, due at once (the scan has passed it).
+    fn give_up_on_checkpoint(&mut self, seq: CheckpointSequenceNumber, cause: &'static str) {
+        if !self.record_lost_checkpoint(seq, cause) {
+            return;
+        }
+        self.archive_backfill
+            .insert(seq, BackfillState::due(Instant::now()));
+        self.metrics
+            .pusher_backfill_pending
+            .set(self.archive_backfill.len() as i64);
+        info!(
+            seq,
+            cause, "gave up on the lost checkpoint; it is backfilled from the archive now"
+        );
+    }
+
+    /// A pending gap was repaired before its deadline — folded from the
+    /// fullnode or from the archive, as gaps were before lost checkpoints were
+    /// recorded at all. Delete the record its first decode or fold failure
+    /// wrote, if any, and release its pin unless the operator's list pins the
+    /// seq too:
+    /// the gap's snapshots are as current as anything the scan folds and age
+    /// with the window like them (the singleton anchors are pinned by id
+    /// anyway). Otherwise every transient fold failure — `MissingCommittee`
+    /// at each Sui epoch boundary — would leave a record and a pin behind.
+    fn forget_repaired_gap(&mut self, seq: CheckpointSequenceNumber) {
+        if self.lost_checkpoints.contains_key(&seq) {
+            self.forget_lost_checkpoint(seq);
+            info!(
+                seq,
+                "the gap was repaired: deleted the lost-checkpoint record its first failure wrote"
+            );
+        }
+    }
+
+    /// Persist a changed record.
+    fn update_lost_checkpoint(&mut self, seq: CheckpointSequenceNumber, record: LostCheckpoint) {
+        if self.lost_checkpoints.get(&seq) == Some(&record) {
+            return;
+        }
+        if let Err(e) = self.perpetual.put_sui_pusher_lost_checkpoint(seq, record) {
+            warn!(seq, error = ?e, "failed to persist a lost-checkpoint record update");
+        }
+        self.lost_checkpoints.insert(seq, record);
+    }
+
+    /// Delete a record and release its pin — unless the operator's list pins
+    /// the seq too.
+    fn forget_lost_checkpoint(&mut self, seq: CheckpointSequenceNumber) {
+        if self.lost_checkpoints.remove(&seq).is_none() {
+            return;
+        }
+        if let Err(e) = self.perpetual.delete_sui_pusher_lost_checkpoint(seq) {
+            warn!(seq, error = ?e, "failed to delete a lost-checkpoint record");
+        }
+        if !self.operator_backfill.contains(&seq) {
+            self.cache.unpin_checkpoint(seq);
+        }
+        self.metrics
+            .pusher_lost_checkpoints
+            .set(self.lost_checkpoints.len() as i64);
+    }
+
+    /// The backfill of `seq` settled: keep the record (now `Settled`) while a
+    /// snapshot from it is in the cache, collect it otherwise — nothing to
+    /// fold, or every object it would have kept is already cached at a newer
+    /// checkpoint. A no-op for a seq that is not recorded.
+    fn settle_lost_checkpoint(&mut self, seq: CheckpointSequenceNumber, settled: BackfillSettled) {
+        if !self.lost_checkpoints.contains_key(&seq) {
+            return;
+        }
+        if settled == BackfillSettled::NothingToFold
+            || self.cache.snapshots_from_checkpoint(seq) == 0
+        {
+            self.forget_lost_checkpoint(seq);
+            info!(
+                seq,
+                outcome = settled.label(),
+                "lost-checkpoint record collected: no snapshot from it is left to keep"
+            );
+        } else {
+            self.update_lost_checkpoint(seq, LostCheckpoint::Settled);
+        }
+    }
+
+    /// Collect every settled record none of whose snapshots is left in the
+    /// cache — each object it folded has been superseded by a newer version,
+    /// so its pin keeps nothing. One pass over the cache for all of them, at
+    /// most every `LOST_CHECKPOINT_COLLECT_INTERVAL`. A pending record is never
+    /// collected here: it has no snapshot because it has not folded yet.
+    fn collect_lost_checkpoints(&mut self) {
+        self.lost_checkpoints_collected_at = Instant::now();
+        let settled: BTreeSet<CheckpointSequenceNumber> = self
+            .lost_checkpoints
+            .iter()
+            .filter(|(_, record)| **record == LostCheckpoint::Settled)
+            .map(|(seq, _)| *seq)
+            .collect();
+        let still_cached = self.cache.checkpoints_with_snapshots(&settled);
+        for seq in settled.difference(&still_cached) {
+            self.forget_lost_checkpoint(*seq);
+            info!(
+                seq,
+                "lost-checkpoint record collected: every snapshot from it has been superseded"
+            );
+        }
+    }
+
+    /// Note a NotFound answer from the archive for `seq` and say whether the
+    /// record's give-up time has come. Only recorded, still-pending,
+    /// non-operator seqs ever give up.
+    fn archive_not_found_expired(&mut self, seq: CheckpointSequenceNumber) -> bool {
+        if self.operator_backfill.contains(&seq) {
+            return false;
+        }
+        let Some(LostCheckpoint::Pending {
+            archive_not_found_since,
+        }) = self.lost_checkpoints.get(&seq).copied()
+        else {
+            return false;
+        };
+        let now = unix_seconds_now();
+        match archive_not_found_since {
+            Some(since) => now.saturating_sub(since) >= ARCHIVE_NOT_FOUND_GIVE_UP_AFTER.as_secs(),
+            None => {
+                self.update_lost_checkpoint(
+                    seq,
+                    LostCheckpoint::Pending {
+                        archive_not_found_since: Some(now),
+                    },
+                );
+                false
+            }
+        }
+    }
+
+    /// The archive served `seq`: it holds the checkpoint, so restart the
+    /// give-up clock of its record.
+    fn note_archive_served(&mut self, seq: CheckpointSequenceNumber) {
+        if let Some(LostCheckpoint::Pending {
+            archive_not_found_since: Some(_),
+        }) = self.lost_checkpoints.get(&seq)
+        {
+            self.update_lost_checkpoint(seq, LostCheckpoint::NEW);
+        }
+    }
+
+    /// Give up on a recorded lost checkpoint the archive no longer holds: stop
+    /// the backfill, delete the record, release the pin. Loud — the objects
+    /// only that checkpoint wrote stay missing from the cache until their next
+    /// mutation.
+    fn abandon_lost_checkpoint(&mut self, seq: CheckpointSequenceNumber, detail: &str) {
+        self.archive_backfill.remove(&seq);
+        self.metrics
+            .pusher_backfill_pending
+            .set(self.archive_backfill.len() as i64);
+        self.record_backfill_settled(BackfillSettled::Abandoned);
+        self.forget_lost_checkpoint(seq);
+        warn!(
+            seq,
+            give_up_after = ?ARCHIVE_NOT_FOUND_GIVE_UP_AFTER,
+            error = detail,
+            "archive backfill abandoned: the archive has answered NotFound for this recorded lost \
+             checkpoint since longer than the give-up window, so it no longer holds it (public \
+             stores keep ordinary checkpoints about 30 days); objects only this checkpoint wrote \
+             stay missing from the verified cache until their next mutation"
+        );
     }
 
     pub async fn run(mut self) {
@@ -388,6 +850,9 @@ impl IkaCheckpointPusher {
         // its own task), so it runs ahead of everything that can end the tick.
         self.drive_archive_backfill().await;
         self.retry_pending_gaps().await;
+        if self.lost_checkpoints_collected_at.elapsed() >= LOST_CHECKPOINT_COLLECT_INTERVAL {
+            self.collect_lost_checkpoints();
+        }
 
         // Disarm the previous tick's fast-forward proposal HERE, before the
         // probe can fail and before a sample can be refused: confirmation must
@@ -538,16 +1003,23 @@ impl IkaCheckpointPusher {
                     .as_secs() as i64,
             );
             let _ = self.perpetual.put_sui_pusher_last_seq(new_cursor);
-            // Gaps inside the sacrificed span go with it (covered by the
-            // fast-forward warn above) — but each is still a permanent loss,
-            // so they count toward the drop alarm.
-            let gaps_before_sacrifice = self.pending_gaps.len();
-            self.pending_gaps.retain(|&seq, _| seq > new_cursor);
-            let sacrificed = gaps_before_sacrifice - self.pending_gaps.len();
-            if sacrificed > 0 {
+            // Pending gaps are given up on with the jump (covered by the
+            // fast-forward warn above). They sit below the old cursor, in the
+            // span the scan did reach, so each is a single known loss like a
+            // gap dropped at its deadline: counted toward the drop alarm and
+            // recorded (if a decode or fold failure has not already) and
+            // scheduled for the archive backfill. The skipped span itself was
+            // never fetched and is not recorded: it is the fast-forward's
+            // deliberate sacrifice, unbounded in size.
+            let kept = self.pending_gaps.split_off(&new_cursor.saturating_add(1));
+            let sacrificed = std::mem::replace(&mut self.pending_gaps, kept);
+            if !sacrificed.is_empty() {
                 self.metrics
                     .pusher_gap_dropped_total
-                    .inc_by(sacrificed as u64);
+                    .inc_by(sacrificed.len() as u64);
+                for seq in sacrificed.into_keys() {
+                    self.give_up_on_checkpoint(seq, "fast_forward");
+                }
             }
         }
 
@@ -563,9 +1035,10 @@ impl IkaCheckpointPusher {
             // fetches without advancing their cursors or caching their data.
             .buffered(MAX_CONCURRENT_CHECKPOINT_FETCHES);
         while let Some((seq, result)) = checkpoints.next().await {
-            match result {
+            let undecodable = match result {
                 Ok(data) => {
                     self.fold_checkpoint(seq, &data)?;
+                    false
                 }
                 Err(e) => {
                     self.metrics.pusher_fetch_failures_total.inc();
@@ -583,8 +1056,9 @@ impl IkaCheckpointPusher {
                         first_seen: Instant::now(),
                         last_archive_attempt: None,
                     });
+                    matches!(e, TransportError::Encoding(_))
                 }
-            }
+            };
             self.cursor = seq;
             self.metrics.pusher_cursor_seq.set(seq as i64);
             self.metrics.pusher_last_progress_timestamp_seconds.set(
@@ -595,6 +1069,13 @@ impl IkaCheckpointPusher {
             );
             if let Err(e) = self.perpetual.put_sui_pusher_last_seq(seq) {
                 warn!(seq, error = ?e, "failed to persist pusher cursor");
+            }
+            // The fullnode served the checkpoint and this binary could not
+            // decode it: the earliest moment it is known to be unreadable,
+            // recorded once the cursor has passed it (see
+            // `record_failing_gap`).
+            if undecodable {
+                self.record_failing_gap(seq, "first_decode_failure");
             }
         }
         // The cache reflects every checkpoint up to the cursor now — including
@@ -677,17 +1158,39 @@ impl IkaCheckpointPusher {
     /// instead (paced at `ARCHIVE_RETRY_INTERVAL`, capped per tick) and
     /// folded through the same committee verification. Only a gap that BOTH
     /// sources fail to serve until the deadline is dropped with a loud warn
-    /// and counted (`pusher_gap_dropped_total`) — a permanent cache gap
-    /// that can pin an epoch close (issue #2018). Fold failures stay
-    /// pending rather than dropping immediately because they are not all
-    /// deterministic: `verify_before_fold` fails with MissingCommittee
-    /// while the checkpoint's epoch committee hasn't installed yet (follower
-    /// lag at a Sui epoch boundary, or a restart near one) — exactly the
-    /// transient the in-order scan path retries by pinning its cursor. A
-    /// genuinely deterministic failure warns once per tick and expires at
-    /// the same deadline. After a drop, objects whose only mutation rode
-    /// the checkpoint stay missing from the cache until a later mutation or
-    /// a consumer's network fallback repairs them.
+    /// and counted (`pusher_gap_dropped_total`) — and recorded as a lost
+    /// checkpoint ([`LostCheckpoint`]) and scheduled for the archive backfill
+    /// (`give_up_on_checkpoint`), which keeps re-folding it, across restarts,
+    /// until it folds or the archive expires it; without that it is a
+    /// permanent cache gap that can pin an epoch close (issue #2018).
+    ///
+    /// Fold failures stay pending rather than dropping immediately because
+    /// they are not all deterministic: `verify_before_fold` fails with
+    /// MissingCommittee while the checkpoint's epoch committee hasn't
+    /// installed yet (follower lag at a Sui epoch boundary, or a restart near
+    /// one) — exactly the transient the in-order scan path retries by pinning
+    /// its cursor. A genuinely deterministic failure warns once per tick and
+    /// expires at the same deadline — and stays recorded, so a later binary
+    /// that can fold it recovers it from the archive. Until a backfill folds
+    /// it, objects whose only mutation rode the checkpoint stay missing from
+    /// the cache unless a later mutation or a consumer's network fallback
+    /// repairs them.
+    ///
+    /// The record of a gap that exists but this binary cannot read is written
+    /// on its FIRST such failure, not at the deadline (`record_failing_gap`):
+    /// a fullnode fold failure, a fullnode fetch that fails to DECODE
+    /// ([`TransportError::Encoding`] — the shape that lost mainnet checkpoint
+    /// 342064089; decoding happens inside `get_full_checkpoint`, so that
+    /// checkpoint never reached the fold), or a verified archive blob that
+    /// fails to fold. The scan cursor is already persisted past the gap, so a
+    /// restart inside the retry window — exactly when operators restart and
+    /// upgrade nodes — would otherwise lose it for good. Every other fetch
+    /// failure keeps the deadline-only rule. The record is not scheduled for
+    /// the backfill here, so the live retry stays the only path for the seq in
+    /// this process; the deadline schedules it, and the next boot schedules it
+    /// if a restart comes first. A gap repaired before its deadline — from the
+    /// fullnode or from the archive — deletes that record and releases its pin
+    /// (`forget_repaired_gap`), so a transient failure leaves nothing behind.
     async fn retry_pending_gaps(&mut self) {
         const GAP_RETRY_DEADLINE: Duration = Duration::from_secs(600);
         // How long to give the fullnode alone before consulting the archive.
@@ -735,6 +1238,7 @@ impl IkaCheckpointPusher {
                     Ok(()) => {
                         info!(seq, "late-materialized checkpoint folded — gap repaired");
                         self.pending_gaps.remove(&seq);
+                        self.forget_repaired_gap(seq);
                     }
                     Err(e) if expired => {
                         self.pending_gaps.remove(&seq);
@@ -742,8 +1246,10 @@ impl IkaCheckpointPusher {
                         warn!(
                             seq,
                             error = ?e,
-                            "gap checkpoint kept failing to fold until the retry deadline — dropping"
+                            "gap checkpoint kept failing to fold until the retry deadline — dropping \
+                             it from the gap retries and scheduling it for the archive backfill"
                         );
+                        self.give_up_on_checkpoint(seq, "fold_failed");
                     }
                     Err(e) => {
                         warn!(
@@ -751,6 +1257,7 @@ impl IkaCheckpointPusher {
                             error = %error_chain(&e),
                             "gap checkpoint fetched but failed to fold — will retry"
                         );
+                        self.record_failing_gap(seq, "first_fold_failure");
                     }
                 },
                 Err(fullnode_error) => {
@@ -766,6 +1273,12 @@ impl IkaCheckpointPusher {
                             continue;
                         }
                     }
+                    // Served, but not decodable by this binary: recorded now
+                    // (the scan usually did already), unlike a gap the
+                    // fullnode has not served (yet).
+                    if matches!(fullnode_error, TransportError::Encoding(_)) {
+                        self.record_failing_gap(seq, "first_decode_failure");
+                    }
                     if expired {
                         self.pending_gaps.remove(&seq);
                         self.metrics.pusher_gap_dropped_total.inc();
@@ -773,8 +1286,11 @@ impl IkaCheckpointPusher {
                             seq,
                             error = ?fullnode_error,
                             archive_configured = self.archive.is_some(),
-                            "checkpoint never materialized within the gap retry deadline — dropping"
+                            "checkpoint never materialized within the gap retry deadline — dropping \
+                             it from the gap retries (recorded for the archive backfill when an \
+                             archive is configured)"
                         );
+                        self.give_up_on_checkpoint(seq, "never_materialized");
                     }
                 }
             }
@@ -814,11 +1330,14 @@ impl IkaCheckpointPusher {
         match fetched {
             Ok(data) => {
                 if let Err(e) = self.verify_archive_checkpoint(seq, &data) {
-                    warn!(
-                        seq,
-                        error = %e,
-                        "archive served a checkpoint that failed verification — refusing it"
-                    );
+                    match awaited_committee_epoch(&e) {
+                        Some(epoch) => self.log_committee_wait(seq, epoch),
+                        None => warn!(
+                            seq,
+                            error = %e,
+                            "archive served a checkpoint that failed verification — refusing it"
+                        ),
+                    }
                     return false;
                 }
                 match self.fold_checkpoint(seq, &data) {
@@ -829,16 +1348,23 @@ impl IkaCheckpointPusher {
                         );
                         self.metrics.pusher_gap_archive_repairs_total.inc();
                         self.pending_gaps.remove(&seq);
+                        // An earlier decode or fold failure may have recorded it.
+                        self.forget_repaired_gap(seq);
                         true
                     }
                     Err(e) => {
                         // Same transient-vs-deterministic ambiguity as the
                         // fullnode fold path; the caller's deadline bounds it.
+                        // The blob passed the archive verification above, so
+                        // the checkpoint exists and this binary cannot fold
+                        // it: recorded like a fullnode fold failure. A blob
+                        // that fails verification is not.
                         warn!(
                             seq,
                             error = %error_chain(&e),
                             "archive checkpoint fetched but failed to fold — will retry"
                         );
+                        self.record_failing_gap(seq, "first_archive_fold_failure");
                         false
                     }
                 }
@@ -866,18 +1392,33 @@ impl IkaCheckpointPusher {
             return;
         };
         let seqs: Vec<CheckpointSequenceNumber> = self.archive_backfill.keys().copied().collect();
+        // Every started fetch holds its slot until its result is taken below.
+        let mut in_flight = self
+            .archive_backfill
+            .values()
+            .filter(|state| state.in_flight.is_some())
+            .count();
         for seq in seqs {
             let Some(state) = self.archive_backfill.get_mut(&seq) else {
                 continue;
             };
             let finished = match state.in_flight.take() {
-                Some(fetch) if fetch.is_finished() => fetch,
+                Some(fetch) if fetch.is_finished() => {
+                    in_flight -= 1;
+                    fetch
+                }
                 Some(fetch) => {
                     state.in_flight = Some(fetch);
                     continue;
                 }
-                // Not due, or not scanned yet (see `with_archive_backfill`).
-                None if Instant::now() < state.next_attempt || seq > self.cursor => continue,
+                // Not due, or not scanned yet (see `with_archive_backfill`),
+                // or every fetch slot is taken.
+                None if Instant::now() < state.next_attempt
+                    || seq > self.cursor
+                    || in_flight >= MAX_CONCURRENT_BACKFILL_FETCHES =>
+                {
+                    continue;
+                }
                 None => {
                     // The scan may have folded it since it was scheduled.
                     if self.cache.snapshots_from_checkpoint(seq) > 0 {
@@ -891,6 +1432,7 @@ impl IkaCheckpointPusher {
                             )
                             .await
                         }));
+                        in_flight += 1;
                     }
                     continue;
                 }
@@ -927,6 +1469,7 @@ impl IkaCheckpointPusher {
                         .pusher_backfill_outcomes_total
                         .with_label_values(&["fetched"])
                         .inc();
+                    self.note_archive_served(seq);
                     self.fold_backfill_checkpoint(seq, &data).await
                 }
                 Err(failure) => Err(failure),
@@ -950,6 +1493,7 @@ impl IkaCheckpointPusher {
             pending = self.archive_backfill.len(),
             "archive backfill settled"
         );
+        self.settle_lost_checkpoint(seq, settled);
     }
 
     /// Verify a backfill checkpoint served by the archive and fold its Ika
@@ -1090,6 +1634,10 @@ impl IkaCheckpointPusher {
             .pusher_backfill_failures_total
             .with_label_values(&[failure.label()])
             .inc();
+        if failure == BackfillFailure::ArchiveNotFound && self.archive_not_found_expired(seq) {
+            self.abandon_lost_checkpoint(seq, detail);
+            return;
+        }
         let Some(state) = self.archive_backfill.get_mut(&seq) else {
             return;
         };
@@ -1310,14 +1858,20 @@ impl IkaCheckpointPusher {
         let objects_with_proofs = match verified {
             Ok(objects_with_proofs) => objects_with_proofs,
             Err(e) => {
-                error!(
-                    security_critical = true,
-                    seq = checkpoint_seq,
-                    epoch = summary.epoch(),
-                    error = %e,
-                    "refusing to fold a checkpoint that failed committee verification — \
-                     own fullnode served state that does not verify against the committee"
-                );
+                // A committee that is not installed yet is a wait, not a
+                // verification failure: nothing was checked, and the caller
+                // retries. Everything else is the security event.
+                match awaited_committee_epoch(&e) {
+                    Some(epoch) => self.log_committee_wait(checkpoint_seq, epoch),
+                    None => error!(
+                        security_critical = true,
+                        seq = checkpoint_seq,
+                        epoch = summary.epoch(),
+                        error = %e,
+                        "refusing to fold a checkpoint that failed committee verification — \
+                         own fullnode served state that does not verify against the committee"
+                    ),
+                }
                 return Err(e);
             }
         };
@@ -1330,6 +1884,39 @@ impl IkaCheckpointPusher {
             .observe(started.elapsed().as_secs_f64());
 
         Ok(Some((summary.clone(), objects_with_proofs)))
+    }
+
+    /// Log that the checkpoint at `seq` waits for the committee of its Sui
+    /// `epoch`: it cannot be verified, and so is not folded, until that
+    /// committee is installed (follower lag at a Sui epoch boundary, or a
+    /// restart near one), and it is retried. Not a verification failure —
+    /// nothing was checked — so not `security_critical`. Once per epoch (see
+    /// `committee_wait_logged`). A committee missing below the committee head
+    /// is a hole in the persisted chain rather than a wait, and warns.
+    fn log_committee_wait(&self, seq: CheckpointSequenceNumber, epoch: u64) {
+        let latch = epoch.saturating_add(1);
+        if self.committee_wait_logged.swap(latch, Ordering::Relaxed) == latch {
+            return;
+        }
+        let committee_head = self.committees.head_epoch();
+        if epoch > committee_head {
+            info!(
+                seq,
+                epoch,
+                committee_head,
+                "checkpoint waits for its Sui epoch's committee to be installed — not folded \
+                 yet, will retry (logged once per epoch)"
+            );
+        } else {
+            warn!(
+                seq,
+                epoch,
+                committee_head,
+                "no committee for the checkpoint's Sui epoch although the committee head is past \
+                 it: the persisted committee chain has a hole — not folded, will retry (logged \
+                 once per epoch)"
+            );
+        }
     }
 
     /// Verify a checkpoint against its committee BEFORE its objects are folded
@@ -1349,8 +1936,10 @@ impl IkaCheckpointPusher {
     ///      its attested reference separately ([`attested_output`]).
     ///
     /// A failure means the fullnode served state that does not verify against
-    /// the committee: the caller refuses to fold it (propagating the error, so
-    /// the cursor stays put and a transient missing-committee self-heals on the
+    /// the committee — except a committee that is not installed yet
+    /// ([`awaited_committee_epoch`]), where nothing could be checked: the
+    /// caller refuses to fold it either way (propagating the error, so the
+    /// cursor stays put and a transient missing-committee self-heals on the
     /// next poll) rather than caching unverified state.
     fn verify_before_fold(
         &self,
@@ -1360,9 +1949,7 @@ impl IkaCheckpointPusher {
     ) -> anyhow::Result<()> {
         self.committees
             .verify_summary(summary.clone())
-            .map_err(|e| {
-                anyhow::anyhow!("checkpoint summary failed committee verification: {e}")
-            })?;
+            .map_err(|e| anyhow::Error::new(SummaryRejected(e)))?;
         if folding_objects {
             let signed = summary.data().checkpoint_artifacts_digest().map_err(|e| {
                 anyhow::anyhow!("summary carries no checkpoint-artifacts digest: {e}")
@@ -1433,6 +2020,34 @@ fn attested_output<'a>(attested: ObjectRef, outputs: &[&'a Object]) -> anyhow::R
                  {attested:?}: the source served object contents the committee did not attest"
             )
         })
+}
+
+/// A checkpoint summary `verify_before_fold` rejected, carried typed through
+/// `anyhow` so a caller can tell a committee that is not installed yet — a
+/// wait — from a summary that does not verify ([`awaited_committee_epoch`]).
+/// Displays exactly as the untyped error did.
+#[derive(Debug, thiserror::Error)]
+#[error("checkpoint summary failed committee verification: {0}")]
+struct SummaryRejected(SummaryVerifyError);
+
+/// The Sui epoch whose committee `error` is waiting for, when that is all it
+/// is: the summary could not be checked because the committee of its epoch is
+/// not in the committee store — a temporary state at every Sui epoch boundary
+/// while a gap is pending. `None` for every genuine verification failure: a
+/// bad signature, an artifacts-digest mismatch, or object contents that are
+/// not the attested ones.
+fn awaited_committee_epoch(error: &anyhow::Error) -> Option<u64> {
+    match error.downcast_ref::<SummaryRejected>() {
+        Some(SummaryRejected(SummaryVerifyError::MissingCommittee(epoch))) => Some(*epoch),
+        _ => None,
+    }
+}
+
+fn unix_seconds_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Delay before the next archive-backfill attempt after `failures`
@@ -4095,6 +4710,1259 @@ mod tests {
         assert!(pusher.archive_backfill.is_empty());
         assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
         assert_eq!(backfill_outcome(&fx.metrics, "already_cached"), 1);
+    }
+
+    // ---- lost checkpoints: recorded, backfilled, pinned, collected ----
+
+    /// The node's own fullnode at the fixture's cursor, serving exactly
+    /// `checkpoints` (every other seq pruned) and reporting `live` as current.
+    fn fullnode_at_cursor(
+        fx: &BackfillFixture,
+        checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
+        live: &[&Object],
+    ) -> Arc<dyn SuiTransport> {
+        fullnode_at(fx, BACKFILL_CURSOR, checkpoints, live)
+    }
+
+    /// [`fullnode_at_cursor`] with its head at `head`.
+    fn fullnode_at(
+        fx: &BackfillFixture,
+        head: CheckpointSequenceNumber,
+        checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
+        live: &[&Object],
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(MockTransport {
+            fetch_control: None,
+            latest_summary_pruned: false,
+            latest: plain_checkpoint(&fx.committee, &fx.keys, head).checkpoint_summary,
+            checkpoints,
+            eoe_seqs: HashMap::new(),
+            live_objects: live.iter().map(|o| (o.id(), (*o).clone())).collect(),
+        })
+    }
+
+    /// A pending gap at `seq`, first seen `age` ago.
+    fn gap_seen(pusher: &mut IkaCheckpointPusher, seq: CheckpointSequenceNumber, age: Duration) {
+        pusher.pending_gaps.insert(
+            seq,
+            PendingGap {
+                first_seen: Instant::now() - age,
+                last_archive_attempt: None,
+            },
+        );
+    }
+
+    /// A pending gap at `seq`, already past the gap retry deadline: the next
+    /// tick's retry is its last.
+    fn expired_gap(pusher: &mut IkaCheckpointPusher, seq: CheckpointSequenceNumber) {
+        gap_seen(pusher, seq, Duration::from_secs(601));
+    }
+
+    fn bag_entry(pusher: &IkaCheckpointPusher, byte: u8, version: u64) -> Object {
+        ika_object(
+            ika_package_of(pusher),
+            ObjectID::from_single_byte(byte),
+            version,
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into()),
+        )
+    }
+
+    /// The cache a restarted direct node builds: pinned, as the connector stack
+    /// pins it, from the operator list (empty here) and the recorded lost
+    /// checkpoints.
+    fn rebooted_cache(fx: &BackfillFixture) -> SharedVerifiedStateCache {
+        let recorded: Vec<CheckpointSequenceNumber> =
+            load_lost_checkpoints(&fx.perpetual).into_keys().collect();
+        durable_cache(fx, &recorded)
+    }
+
+    fn recorded(fx: &BackfillFixture) -> BTreeMap<CheckpointSequenceNumber, LostCheckpoint> {
+        fx.perpetual.load_sui_pusher_lost_checkpoints().unwrap()
+    }
+
+    /// The 342064089 shape, end to end: a gap neither the fullnode nor the
+    /// archive serves before the retry deadline is dropped — and recorded,
+    /// pinned and scheduled for the archive backfill instead of forgotten. A
+    /// restarted node (a later binary whose archive read succeeds) re-folds it
+    /// from the record alone, with no operator config, without moving the
+    /// cursor.
+    #[tokio::test]
+    async fn a_gap_dropped_at_the_deadline_is_refolded_from_the_archive_after_a_restart() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let checkpoint =
+            checkpoint_writing(&fx.committee, &fx.keys, 42, &[slice::from_ref(&entry)]);
+        pusher.transport = pruned_fullnode(&fx, &[&entry]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        expired_gap(&mut pusher, 42);
+
+        pusher.advance().await.unwrap();
+
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(42, LostCheckpoint::NEW)]),
+            "the dropped gap is persisted"
+        );
+        assert!(cache.is_checkpoint_pinned(42), "pinned before any fold");
+        assert!(pusher.archive_backfill.contains_key(&42));
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 1);
+        assert!(cache.get(entry.id()).is_none());
+        let packages = pusher.ika_packages.clone();
+        drop(pusher);
+        drop(cache);
+
+        let cache = rebooted_cache(&fx);
+        let mut restarted = backfill_pusher(&fx, cache.clone()).await;
+        restarted.ika_packages = packages;
+        restarted.transport = pruned_fullnode(&fx, &[&entry]);
+        restarted.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(42u64, checkpoint)]),
+            ..Default::default()
+        }));
+        let mut restarted = restarted.with_archive_backfill(BTreeSet::new());
+        assert!(
+            restarted.archive_backfill.contains_key(&42),
+            "the record alone schedules the backfill"
+        );
+        tick_backfill(&mut restarted).await;
+
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+        assert_eq!(restarted.cursor, BACKFILL_CURSOR);
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(42, LostCheckpoint::Settled)]),
+            "kept after the fold, now settled"
+        );
+        assert!(cache.is_checkpoint_pinned(42));
+    }
+
+    /// A gap the fullnode serves but the node cannot fold (here: a blob that
+    /// fails committee verification) is dropped at the deadline, recorded and
+    /// handed to the archive backfill in the same process — which folds the
+    /// genuine checkpoint once the archive serves it.
+    #[tokio::test]
+    async fn a_gap_that_keeps_failing_to_fold_is_recorded_and_backfilled() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let (foreign_committee, foreign_keys) = Committee::new_simple_test_committee_of_size(7);
+        let unfoldable = checkpoint_writing(
+            &foreign_committee,
+            &foreign_keys,
+            42,
+            &[slice::from_ref(&entry)],
+        );
+        pusher.transport = fullnode_at_cursor(&fx, HashMap::from([(42, unfoldable)]), &[&entry]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                42u64,
+                checkpoint_writing(&fx.committee, &fx.keys, 42, &[slice::from_ref(&entry)]),
+            )]),
+            ..Default::default()
+        }));
+        expired_gap(&mut pusher, 42);
+
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
+        assert_eq!(recorded(&fx), BTreeMap::from([(42, LostCheckpoint::NEW)]));
+        assert!(cache.get(entry.id()).is_none(), "the bad blob never folds");
+
+        tick_backfill(&mut pusher).await;
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(42, LostCheckpoint::Settled)])
+        );
+    }
+
+    /// The far-behind fast-forward gives up on every pending gap: each is
+    /// counted as dropped and recorded for the archive backfill. The span it
+    /// jumps over was never fetched and is not recorded.
+    #[tokio::test]
+    async fn a_far_behind_fast_forward_records_the_gaps_it_sacrifices() {
+        let fx = backfill_fixture();
+        let mut pusher = backfill_pusher(&fx, durable_cache(&fx, &[])).await;
+        pusher.transport = transport_reporting(
+            &fx.committee,
+            &fx.keys,
+            BACKFILL_CURSOR + 1_500,
+            HashMap::new(),
+        );
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        for seq in [50, 60] {
+            pusher.pending_gaps.insert(
+                seq,
+                PendingGap {
+                    first_seen: Instant::now(),
+                    last_archive_attempt: None,
+                },
+            );
+        }
+
+        // Propose, then confirm, the fast-forward.
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.cursor, BACKFILL_CURSOR);
+        pusher.advance().await.unwrap();
+
+        assert_eq!(pusher.cursor, BACKFILL_CURSOR + 1_500);
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 2);
+        assert_eq!(
+            recorded(&fx).into_keys().collect::<Vec<_>>(),
+            vec![50, 60],
+            "only the sacrificed pending gaps are recorded"
+        );
+        assert!(pusher.pending_gaps.keys().all(|seq| *seq > 1_000));
+    }
+
+    /// A recorded checkpoint stays pinned across restarts after its fold, and
+    /// its record is collected only once no snapshot from it is left — never
+    /// on the fold alone (the next boot would unpin it and the sweep would
+    /// drop what was recovered), and never while it is still pending.
+    #[tokio::test]
+    async fn recorded_checkpoints_stay_pinned_across_restarts_until_superseded() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        pusher.transport = pruned_fullnode(&fx, &[&entry]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(
+                42u64,
+                checkpoint_writing(&fx.committee, &fx.keys, 42, &[slice::from_ref(&entry)]),
+            )]),
+            // The gap repair's own archive attempt fails, so the gap drops.
+            failures_left: AtomicUsize::new(1),
+            ..Default::default()
+        }));
+        // 42 folds from the archive; 43 the archive cannot serve, so it stays
+        // pending with no snapshot.
+        expired_gap(&mut pusher, 42);
+        expired_gap(&mut pusher, 43);
+        pusher.advance().await.unwrap();
+        tick_backfill(&mut pusher).await;
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        let records = recorded(&fx);
+        assert_eq!(records.get(&42), Some(&LostCheckpoint::Settled));
+        assert!(matches!(
+            records.get(&43),
+            Some(LostCheckpoint::Pending { .. })
+        ));
+        let packages = pusher.ika_packages.clone();
+        drop(pusher);
+        drop(cache);
+
+        // Restart. The rebooted cache is pinned from the records before its
+        // first absorb, which sweeps far past the window: the backfilled
+        // snapshot survives.
+        let cache = rebooted_cache(&fx);
+        let filler = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0xF1),
+            SequenceNumber::from(1u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x01).into()),
+        );
+        let (summary, filler_entry) = signed_entry_at(&fx, 5_000, &filler);
+        cache.absorb_entries(&summary, &[filler_entry]);
+        assert!(
+            cache.get(entry.id()).is_some(),
+            "the recorded checkpoint is pinned across the restart"
+        );
+
+        let mut restarted = backfill_pusher(&fx, cache.clone()).await;
+        restarted.ika_packages = packages;
+        restarted.transport = pruned_fullnode(&fx, &[&entry]);
+        restarted.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        let mut restarted = restarted.with_archive_backfill(BTreeSet::new());
+        assert!(
+            !restarted.archive_backfill.contains_key(&42),
+            "cached: not fetched again"
+        );
+        assert!(restarted.archive_backfill.contains_key(&43));
+
+        // A collection pass keeps both: 42 still sources a snapshot, and 43
+        // has none only because it has not folded.
+        restarted.lost_checkpoints_collected_at = Instant::now() - LOST_CHECKPOINT_COLLECT_INTERVAL;
+        restarted.advance().await.unwrap();
+        assert_eq!(recorded(&fx).into_keys().collect::<Vec<_>>(), vec![42, 43]);
+
+        // A newer version of the object supersedes the backfilled snapshot:
+        // the next collection pass deletes the record and releases the pin.
+        let newer = bag_entry(&restarted, 0xE1, 8);
+        let (summary, newer_entry) = signed_entry_at(&fx, 5_001, &newer);
+        cache.absorb_entries(&summary, &[newer_entry]);
+        assert_eq!(cache.snapshots_from_checkpoint(42), 0);
+        restarted.lost_checkpoints_collected_at = Instant::now() - LOST_CHECKPOINT_COLLECT_INTERVAL;
+        restarted.advance().await.unwrap();
+        assert_eq!(recorded(&fx).into_keys().collect::<Vec<_>>(), vec![43]);
+        assert!(!cache.is_checkpoint_pinned(42));
+        assert!(cache.is_checkpoint_pinned(43));
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 1);
+    }
+
+    /// A record that settled earlier but has no snapshot left at boot is
+    /// backfilled again rather than collected: the boot cannot tell a
+    /// superseded snapshot from one a binary without the pin evicted. Still
+    /// current, it folds again; superseded, it settles with nothing to fold and
+    /// is collected.
+    #[tokio::test]
+    async fn a_settled_record_with_no_snapshot_left_is_reverified_at_boot() {
+        let fx = backfill_fixture();
+        fx.perpetual
+            .put_sui_pusher_lost_checkpoint(42, LostCheckpoint::Settled)
+            .unwrap();
+        fx.perpetual
+            .put_sui_pusher_lost_checkpoint(43, LostCheckpoint::Settled)
+            .unwrap();
+        let cache = rebooted_cache(&fx);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let evicted = bag_entry(&pusher, 0xE1, 7);
+        let superseded = bag_entry(&pusher, 0xE2, 7);
+        pusher.transport = pruned_fullnode(&fx, &[&evicted, &bag_entry(&pusher, 0xE2, 9)]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([
+                (
+                    42u64,
+                    checkpoint_writing(&fx.committee, &fx.keys, 42, &[slice::from_ref(&evicted)]),
+                ),
+                (
+                    43u64,
+                    checkpoint_writing(
+                        &fx.committee,
+                        &fx.keys,
+                        43,
+                        &[slice::from_ref(&superseded)],
+                    ),
+                ),
+            ]),
+            ..Default::default()
+        }));
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::new());
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(42, LostCheckpoint::NEW), (43, LostCheckpoint::NEW)]),
+            "back to pending until the backfill settles"
+        );
+        tick_backfill(&mut pusher).await;
+
+        assert_eq!(cache.get(evicted.id()).unwrap().source_checkpoint_seq, 42);
+        assert!(cache.get(superseded.id()).is_none());
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(42, LostCheckpoint::Settled)])
+        );
+        assert!(!cache.is_checkpoint_pinned(43));
+    }
+
+    /// The record is bounded: past `MAX_LOST_CHECKPOINTS` a lost checkpoint is
+    /// not recorded, persisted, pinned or scheduled — it counts in the
+    /// overflow metric (and warns once per stretch). Room frees as records are
+    /// collected.
+    #[tokio::test]
+    async fn the_lost_checkpoint_record_is_capped() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        // A full record (in memory: the cap counts the records this process
+        // holds).
+        for seq in 1_000_000..1_000_000 + MAX_LOST_CHECKPOINTS as u64 {
+            pusher.lost_checkpoints.insert(seq, LostCheckpoint::Settled);
+        }
+
+        expired_gap(&mut pusher, 42);
+        expired_gap(&mut pusher, 43);
+        pusher.advance().await.unwrap();
+
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 2);
+        assert_eq!(fx.metrics.pusher_lost_checkpoints_overflow_total.get(), 2);
+        assert!(
+            recorded(&fx).is_empty(),
+            "nothing past the cap is persisted"
+        );
+        assert!(!pusher.lost_checkpoints.contains_key(&42));
+        assert!(!pusher.archive_backfill.contains_key(&42));
+        assert!(!cache.is_checkpoint_pinned(42));
+
+        pusher.forget_lost_checkpoint(1_000_000);
+        expired_gap(&mut pusher, 44);
+        pusher.advance().await.unwrap();
+        assert_eq!(recorded(&fx).into_keys().collect::<Vec<_>>(), vec![44]);
+        assert_eq!(fx.metrics.pusher_lost_checkpoints_overflow_total.get(), 2);
+        assert_eq!(
+            fx.metrics.pusher_lost_checkpoints.get(),
+            MAX_LOST_CHECKPOINTS as i64
+        );
+    }
+
+    /// A recorded checkpoint the archive answers NotFound for is retried — the
+    /// first NotFound starts a persisted clock — and abandoned once the clock
+    /// passes `ARCHIVE_NOT_FOUND_GIVE_UP_AFTER`: loudly (the `abandoned`
+    /// outcome), with its record deleted and its pin released. An operator
+    /// entry never gives up.
+    #[tokio::test]
+    async fn a_recorded_checkpoint_the_archive_no_longer_holds_is_abandoned() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[44]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        // 44 is an operator entry, also recorded, with a long-expired clock.
+        let expired_clock = LostCheckpoint::Pending {
+            archive_not_found_since: Some(
+                unix_seconds_now() - ARCHIVE_NOT_FOUND_GIVE_UP_AFTER.as_secs() - 60,
+            ),
+        };
+        fx.perpetual
+            .put_sui_pusher_lost_checkpoint(44, expired_clock)
+            .unwrap();
+        pusher.lost_checkpoints.insert(44, expired_clock);
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([44]));
+        expired_gap(&mut pusher, 42);
+        pusher.advance().await.unwrap();
+        assert!(pusher.archive_backfill.contains_key(&42));
+
+        tick_backfill(&mut pusher).await;
+        assert_eq!(backfill_failures(&fx.metrics, "archive_not_found"), 2);
+        let Some(LostCheckpoint::Pending {
+            archive_not_found_since: Some(since),
+        }) = recorded(&fx).get(&42).copied()
+        else {
+            panic!("the first NotFound starts the persisted give-up clock");
+        };
+        assert!(pusher.archive_backfill.contains_key(&42), "still retried");
+
+        // The clock runs out; the next NotFound abandons it.
+        let expired = LostCheckpoint::Pending {
+            archive_not_found_since: Some(since - ARCHIVE_NOT_FOUND_GIVE_UP_AFTER.as_secs()),
+        };
+        pusher.lost_checkpoints.insert(42, expired);
+        for seq in [42, 44] {
+            pusher.archive_backfill.get_mut(&seq).unwrap().next_attempt = Instant::now();
+        }
+        tick_backfill(&mut pusher).await;
+
+        assert!(!pusher.archive_backfill.contains_key(&42));
+        assert!(!recorded(&fx).contains_key(&42));
+        assert!(!cache.is_checkpoint_pinned(42));
+        assert_eq!(backfill_outcome(&fx.metrics, "abandoned"), 1);
+        assert!(
+            pusher.archive_backfill.contains_key(&44),
+            "an operator entry never gives up"
+        );
+        assert!(cache.is_checkpoint_pinned(44));
+    }
+
+    /// A burst of due backfill checkpoints is fetched at most
+    /// `MAX_CONCURRENT_BACKFILL_FETCHES` at a time; the rest wait for a slot.
+    #[tokio::test]
+    async fn backfill_fetches_are_bounded_in_flight() {
+        let fx = backfill_fixture();
+        let mut pusher = backfill_pusher(&fx, durable_cache(&fx, &[])).await;
+        let archive = Arc::new(MockCheckpointArchive::default());
+        pusher.archive = Some(archive.clone());
+        let seqs: BTreeSet<CheckpointSequenceNumber> = (1..=10).collect();
+        let mut pusher = pusher.with_archive_backfill(seqs);
+        let in_flight = |pusher: &IkaCheckpointPusher| {
+            pusher
+                .archive_backfill
+                .values()
+                .filter(|state| state.in_flight.is_some())
+                .count()
+        };
+
+        pusher.advance().await.unwrap();
+        assert_eq!(in_flight(&pusher), MAX_CONCURRENT_BACKFILL_FETCHES);
+        // Each attempt fails (NotFound) and backs off, so every seq is fetched
+        // once while the slots roll through all ten.
+        for _ in 0..10 {
+            if archive.fetches.load(Ordering::Relaxed) == 10 {
+                break;
+            }
+            tick_backfill(&mut pusher).await;
+            assert!(in_flight(&pusher) <= MAX_CONCURRENT_BACKFILL_FETCHES);
+        }
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 10);
+        assert_eq!(
+            backfill_failures(&fx.metrics, "archive_not_found"),
+            10 - in_flight(&pusher) as u64
+        );
+    }
+
+    // ---- lost checkpoints: recorded on a gap's first fold failure ----
+
+    /// `entry`'s checkpoint at `seq`, signed by a committee the node does not
+    /// know: served by the fullnode, it fails to fold on every attempt.
+    fn unfoldable_checkpoint(seq: CheckpointSequenceNumber, entry: &Object) -> CheckpointData {
+        let (committee, keys) = Committee::new_simple_test_committee_of_size(7);
+        checkpoint_writing(&committee, &keys, seq, &[slice::from_ref(entry)])
+    }
+
+    /// The genuine checkpoint at `seq` writing `entry`.
+    fn genuine_checkpoint(
+        fx: &BackfillFixture,
+        seq: CheckpointSequenceNumber,
+        entry: &Object,
+    ) -> CheckpointData {
+        checkpoint_writing(&fx.committee, &fx.keys, seq, &[slice::from_ref(entry)])
+    }
+
+    /// A fold failure cut short by a restart: the scan passes a checkpoint
+    /// whose contents are not served yet (a pending gap, the cursor persisted
+    /// past it), the fullnode then serves it but this node cannot fold it, and
+    /// the node restarts before the gap's deadline. The first fold failure
+    /// records and pins it — without scheduling it, the live retry still owns
+    /// it — so the restart, which loses the in-memory gap, backfills it from
+    /// the record alone.
+    #[tokio::test]
+    async fn a_gap_that_fails_to_fold_is_backfilled_after_a_restart_before_its_deadline() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let seq = BACKFILL_CURSOR + 1;
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(seq, genuine_checkpoint(&fx, seq, &entry))]),
+            ..Default::default()
+        });
+        pusher.archive = Some(archive.clone());
+        pusher.transport = fullnode_at(&fx, seq, HashMap::new(), &[&entry]);
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.contains_key(&seq));
+        assert_eq!(
+            fx.perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(seq),
+            "the cursor is persisted past the pending gap"
+        );
+        assert!(recorded(&fx).is_empty(), "an unserved gap is not recorded");
+
+        pusher.transport = fullnode_at(
+            &fx,
+            seq,
+            HashMap::from([(seq, unfoldable_checkpoint(seq, &entry))]),
+            &[&entry],
+        );
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.contains_key(&seq), "still retried live");
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(seq, LostCheckpoint::NEW)]),
+            "recorded on the first fold failure"
+        );
+        assert!(cache.is_checkpoint_pinned(seq));
+        assert!(
+            pusher.archive_backfill.is_empty(),
+            "not scheduled: the live retry is the only path for the seq"
+        );
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 1);
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 0);
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 0);
+        let packages = pusher.ika_packages.clone();
+        drop(pusher);
+        drop(cache);
+
+        // Restart inside the retry window.
+        let cache = rebooted_cache(&fx);
+        assert!(cache.is_checkpoint_pinned(seq), "pinned at boot");
+        let mut restarted = backfill_pusher(&fx, cache.clone()).await;
+        assert_eq!(restarted.cursor, seq, "the scan never revisits the gap");
+        assert!(restarted.pending_gaps.is_empty(), "the gap itself is gone");
+        restarted.ika_packages = packages;
+        restarted.transport = fullnode_at(&fx, seq, HashMap::new(), &[&entry]);
+        restarted.archive = Some(archive.clone());
+        let mut restarted = restarted.with_archive_backfill(BTreeSet::new());
+        assert!(
+            restarted.archive_backfill.contains_key(&seq),
+            "the record alone schedules the backfill"
+        );
+        tick_backfill(&mut restarted).await;
+
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, seq);
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+        assert_eq!(restarted.cursor, seq);
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(seq, LostCheckpoint::Settled)])
+        );
+        assert!(cache.is_checkpoint_pinned(seq));
+    }
+
+    /// The transient every Sui epoch boundary produces: a gap in the next
+    /// epoch fails to fold with MissingCommittee until that epoch's committee
+    /// installs, then folds on a later live retry. Repaired as before records
+    /// existed, it leaves nothing behind: the early record is deleted, the pin
+    /// released, and no backfill was ever scheduled.
+    #[tokio::test]
+    async fn a_gap_recorded_on_a_fold_failure_is_forgotten_when_the_live_retry_folds_it() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        // Sui epoch 1, signed by its committee (epoch 0's members).
+        let next_committee =
+            Committee::new(1, fx.committee.voting_rights.iter().cloned().collect());
+        let checkpoint =
+            checkpoint_writing(&next_committee, &fx.keys, 42, &[slice::from_ref(&entry)]);
+        pusher.transport = fullnode_at_cursor(&fx, HashMap::from([(42, checkpoint)]), &[&entry]);
+        let archive = Arc::new(MockCheckpointArchive::default());
+        pusher.archive = Some(archive.clone());
+        gap_seen(&mut pusher, 42, Duration::ZERO);
+
+        let (logs, _guard) = CapturedLogs::start();
+        pusher.advance().await.unwrap();
+        assert!(
+            logs.text().contains("no Sui committee for epoch 1"),
+            "the fold fails for the missing committee: {}",
+            logs.text()
+        );
+        assert_eq!(recorded(&fx), BTreeMap::from([(42, LostCheckpoint::NEW)]));
+        assert!(cache.is_checkpoint_pinned(42));
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 1);
+
+        // Epoch 1's committee installs; the next retry folds the gap.
+        fx.committees
+            .install_next_from_checkpoint(&end_of_epoch_checkpoint(&fx.committee, &fx.keys, 41))
+            .unwrap();
+        pusher.advance().await.unwrap();
+
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        assert!(recorded(&fx).is_empty(), "the early record is deleted");
+        assert!(!cache.is_checkpoint_pinned(42), "and its pin released");
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 0);
+        assert!(pusher.archive_backfill.is_empty());
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 0);
+        assert_eq!(
+            archive.fetches.load(Ordering::Relaxed),
+            0,
+            "no backfill ever ran"
+        );
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 0);
+    }
+
+    /// A gap that fails to fold and is then pruned by the fullnode is repaired
+    /// from the archive by the gap retry — and that repair, too, deletes the
+    /// record its fold failure wrote.
+    #[tokio::test]
+    async fn a_gap_recorded_on_a_fold_failure_is_forgotten_when_the_archive_repairs_it() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        pusher.transport = fullnode_at_cursor(
+            &fx,
+            HashMap::from([(42, unfoldable_checkpoint(42, &entry))]),
+            &[&entry],
+        );
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(42u64, genuine_checkpoint(&fx, 42, &entry))]),
+            ..Default::default()
+        });
+        pusher.archive = Some(archive.clone());
+        // Past the fullnode-only grace, so the archive is consulted as soon as
+        // the fullnode stops serving the gap.
+        gap_seen(&mut pusher, 42, Duration::from_secs(6));
+
+        pusher.advance().await.unwrap();
+        assert_eq!(recorded(&fx), BTreeMap::from([(42, LostCheckpoint::NEW)]));
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 0);
+
+        pusher.transport = pruned_fullnode(&fx, &[&entry]);
+        pusher.advance().await.unwrap();
+
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(fx.metrics.pusher_gap_archive_repairs_total.get(), 1);
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        assert!(recorded(&fx).is_empty(), "the early record is deleted");
+        assert!(!cache.is_checkpoint_pinned(42));
+        assert!(pusher.archive_backfill.is_empty());
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 0);
+    }
+
+    /// A gap that keeps failing to fold is recorded on its first failure but
+    /// scheduled for the archive backfill only when it is dropped at its
+    /// deadline — exactly once, although the record already exists.
+    #[tokio::test]
+    async fn a_gap_that_fails_to_fold_until_its_deadline_is_scheduled_once() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        pusher.transport = fullnode_at_cursor(
+            &fx,
+            HashMap::from([(42, unfoldable_checkpoint(42, &entry))]),
+            &[&entry],
+        );
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(42u64, genuine_checkpoint(&fx, 42, &entry))]),
+            ..Default::default()
+        });
+        pusher.archive = Some(archive.clone());
+        gap_seen(&mut pusher, 42, Duration::ZERO);
+
+        for _ in 0..3 {
+            pusher.advance().await.unwrap();
+        }
+        assert_eq!(recorded(&fx), BTreeMap::from([(42, LostCheckpoint::NEW)]));
+        assert!(pusher.archive_backfill.is_empty());
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 0);
+
+        pusher.pending_gaps.get_mut(&42).unwrap().first_seen =
+            Instant::now() - Duration::from_secs(601);
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
+        assert!(
+            pusher.archive_backfill.contains_key(&42),
+            "the deadline schedules the recorded gap"
+        );
+        assert_eq!(fx.metrics.pusher_backfill_pending.get(), 1);
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 1);
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 0);
+
+        tick_backfill(&mut pusher).await;
+        assert_eq!(
+            archive.fetches.load(Ordering::Relaxed),
+            1,
+            "one backfill, one archive fetch"
+        );
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(42, LostCheckpoint::Settled)])
+        );
+        assert!(pusher.archive_backfill.is_empty());
+    }
+
+    /// An operator-listed seq keeps its pin when the record its fold failure
+    /// wrote is deleted on the repair: the config pins it, not the record.
+    /// (The operator entry's backfill has settled — the cache already holds a
+    /// snapshot from it — so its fold failure as a live gap records it like
+    /// any other.)
+    #[tokio::test]
+    async fn an_operator_listed_gap_repaired_after_a_fold_failure_stays_pinned() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[42]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let (summary, cached) = signed_entry_at(&fx, 42, &bag_entry(&pusher, 0xE2, 7));
+        cache.absorb_entries(&summary, &[cached]);
+        pusher.transport = fullnode_at_cursor(
+            &fx,
+            HashMap::from([(42, unfoldable_checkpoint(42, &entry))]),
+            &[&entry],
+        );
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        let mut pusher = pusher.with_archive_backfill(BTreeSet::from([42]));
+        assert!(
+            pusher.archive_backfill.is_empty(),
+            "the operator entry settled"
+        );
+        gap_seen(&mut pusher, 42, Duration::ZERO);
+
+        pusher.advance().await.unwrap();
+        assert_eq!(recorded(&fx), BTreeMap::from([(42, LostCheckpoint::NEW)]));
+
+        pusher.transport = fullnode_at_cursor(
+            &fx,
+            HashMap::from([(42, genuine_checkpoint(&fx, 42, &entry))]),
+            &[&entry],
+        );
+        pusher.advance().await.unwrap();
+
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        assert!(recorded(&fx).is_empty(), "the early record is deleted");
+        assert!(
+            cache.is_checkpoint_pinned(42),
+            "the operator's list still pins the seq"
+        );
+    }
+
+    /// At the record cap a fold failure records nothing and counts nothing —
+    /// the gap is not lost yet — and the give-up at its deadline counts the
+    /// overflow once, as for any loss past the cap.
+    #[tokio::test]
+    async fn at_the_cap_a_fold_failure_counts_no_overflow_before_the_deadline() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        pusher.transport = fullnode_at_cursor(
+            &fx,
+            HashMap::from([(42, unfoldable_checkpoint(42, &entry))]),
+            &[&entry],
+        );
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        for seq in 1_000_000..1_000_000 + MAX_LOST_CHECKPOINTS as u64 {
+            pusher.lost_checkpoints.insert(seq, LostCheckpoint::Settled);
+        }
+        gap_seen(&mut pusher, 42, Duration::ZERO);
+
+        for _ in 0..2 {
+            pusher.advance().await.unwrap();
+        }
+        assert_eq!(fx.metrics.pusher_lost_checkpoints_overflow_total.get(), 0);
+        assert!(!pusher.lost_checkpoints.contains_key(&42));
+        assert!(!cache.is_checkpoint_pinned(42));
+
+        pusher.pending_gaps.get_mut(&42).unwrap().first_seen =
+            Instant::now() - Duration::from_secs(601);
+        pusher.advance().await.unwrap();
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
+        assert_eq!(fx.metrics.pusher_lost_checkpoints_overflow_total.get(), 1);
+        assert!(recorded(&fx).is_empty());
+        assert!(!pusher.archive_backfill.contains_key(&42));
+    }
+
+    // ---- lost checkpoints: recorded on a gap's first decode failure ----
+
+    /// `inner`, except that fetching any of `seqs` fails with `error(seq)`:
+    /// with [`undecodable`], a fullnode serving checkpoints this binary cannot
+    /// decode, as `get_full_checkpoint` reports a conversion failure.
+    struct FailingFullnode {
+        inner: Arc<dyn SuiTransport>,
+        seqs: BTreeSet<CheckpointSequenceNumber>,
+        error: fn(CheckpointSequenceNumber) -> TransportError,
+    }
+
+    fn failing_fullnode(
+        inner: Arc<dyn SuiTransport>,
+        seqs: &[CheckpointSequenceNumber],
+        error: fn(CheckpointSequenceNumber) -> TransportError,
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(FailingFullnode {
+            inner,
+            seqs: seqs.iter().copied().collect(),
+            error,
+        })
+    }
+
+    /// What the gRPC transport returns for a checkpoint holding a
+    /// `TransactionExpiration` variant this binary does not know.
+    fn undecodable(seq: CheckpointSequenceNumber) -> TransportError {
+        TransportError::Encoding(format!(
+            "decode full checkpoint {seq}: invalid transaction.bcs: unknown variant index 3"
+        ))
+    }
+
+    /// What the gRPC transport returns for a fetch that ran out of time.
+    fn timed_out(seq: CheckpointSequenceNumber) -> TransportError {
+        TransportError::Network(format!(
+            "status: DeadlineExceeded, message: \"checkpoint {seq}\""
+        ))
+    }
+
+    #[async_trait]
+    impl SuiTransport for FailingFullnode {
+        async fn get_latest_checkpoint(
+            &self,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            self.inner.get_latest_checkpoint().await
+        }
+        async fn get_latest_checkpoint_sequence(
+            &self,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            self.inner.get_latest_checkpoint_sequence().await
+        }
+        async fn get_full_checkpoint(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointData, TransportError> {
+            if self.seqs.contains(&seq) {
+                return Err((self.error)(seq));
+            }
+            self.inner.get_full_checkpoint(seq).await
+        }
+        async fn get_chain_identifier(&self) -> Result<String, TransportError> {
+            self.inner.get_chain_identifier().await
+        }
+        async fn get_current_epoch(&self) -> Result<u64, TransportError> {
+            self.inner.get_current_epoch().await
+        }
+        async fn get_committee(&self, epoch: Option<u64>) -> Result<Committee, TransportError> {
+            self.inner.get_committee(epoch).await
+        }
+        async fn get_checkpoint_summary_by_digest(
+            &self,
+            digest: CheckpointDigest,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            self.inner.get_checkpoint_summary_by_digest(digest).await
+        }
+        async fn last_checkpoint_of_epoch(
+            &self,
+            epoch: u64,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            self.inner.last_checkpoint_of_epoch(epoch).await
+        }
+        async fn get_object(&self, id: ObjectID) -> Result<Object, TransportError> {
+            self.inner.get_object(id).await
+        }
+        async fn get_object_with_version(
+            &self,
+            id: ObjectID,
+            version: SequenceNumber,
+        ) -> Result<Object, TransportError> {
+            self.inner.get_object_with_version(id, version).await
+        }
+        async fn batch_get_objects(&self, ids: &[ObjectID]) -> Result<Vec<Object>, TransportError> {
+            self.inner.batch_get_objects(ids).await
+        }
+        async fn list_dynamic_fields(
+            &self,
+            parent: ObjectID,
+            page_size: Option<u32>,
+            page_token: Option<Vec<u8>>,
+        ) -> Result<DynamicFieldPage, TransportError> {
+            self.inner
+                .list_dynamic_fields(parent, page_size, page_token)
+                .await
+        }
+        async fn get_transaction(
+            &self,
+            tx: TransactionDigest,
+        ) -> Result<ExecutedTransaction, TransportError> {
+            self.inner.get_transaction(tx).await
+        }
+    }
+
+    /// The 342064089 shape cut short by a restart: the fullnode serves the
+    /// checkpoint but this binary cannot decode it, so its fetch fails with
+    /// `TransportError::Encoding` and it never reaches the fold. The scan
+    /// records and pins it the moment the fetch fails — without scheduling it —
+    /// and a restart before the deadline, which loses the in-memory gap behind
+    /// the persisted cursor, backfills it from the record alone (here the
+    /// archive's copy is one the restarted binary can fold).
+    #[tokio::test]
+    async fn an_undecodable_gap_is_backfilled_after_a_restart_before_its_deadline() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let seq = BACKFILL_CURSOR + 1;
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(seq, genuine_checkpoint(&fx, seq, &entry))]),
+            ..Default::default()
+        });
+        pusher.archive = Some(archive.clone());
+        pusher.transport = failing_fullnode(
+            fullnode_at(&fx, seq, HashMap::new(), &[&entry]),
+            &[seq],
+            undecodable,
+        );
+
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.contains_key(&seq));
+        assert_eq!(fx.perpetual.get_sui_pusher_last_seq().unwrap(), Some(seq));
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(seq, LostCheckpoint::NEW)]),
+            "recorded at the scan's first, undecodable, fetch"
+        );
+        assert!(cache.is_checkpoint_pinned(seq));
+        assert!(pusher.archive_backfill.is_empty(), "not scheduled");
+        pusher.advance().await.unwrap();
+        assert_eq!(recorded(&fx), BTreeMap::from([(seq, LostCheckpoint::NEW)]));
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 1);
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 0);
+        let packages = pusher.ika_packages.clone();
+        drop(pusher);
+        drop(cache);
+
+        let cache = rebooted_cache(&fx);
+        let mut restarted = backfill_pusher(&fx, cache.clone()).await;
+        assert_eq!(restarted.cursor, seq);
+        assert!(restarted.pending_gaps.is_empty());
+        restarted.ika_packages = packages;
+        restarted.transport = fullnode_at(&fx, seq, HashMap::new(), &[&entry]);
+        restarted.archive = Some(archive.clone());
+        let mut restarted = restarted.with_archive_backfill(BTreeSet::new());
+        assert!(restarted.archive_backfill.contains_key(&seq));
+        tick_backfill(&mut restarted).await;
+
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, seq);
+        assert_eq!(backfill_outcome(&fx.metrics, "folded"), 1);
+        assert_eq!(
+            recorded(&fx),
+            BTreeMap::from([(seq, LostCheckpoint::Settled)])
+        );
+        assert!(cache.is_checkpoint_pinned(seq));
+    }
+
+    /// The scan and the retries both fail to decode the same checkpoint: one
+    /// record is written, once — the scan's — and nothing more on the retries.
+    #[tokio::test]
+    async fn an_undecodable_checkpoint_is_recorded_once_across_the_scan_and_its_retries() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let seq = BACKFILL_CURSOR + 1;
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        pusher.transport = failing_fullnode(
+            fullnode_at(&fx, seq, HashMap::new(), &[]),
+            &[seq],
+            undecodable,
+        );
+
+        let (logs, _guard) = CapturedLogs::start();
+        for _ in 0..3 {
+            pusher.advance().await.unwrap();
+        }
+        let text = logs.text();
+        let writes: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("recorded the checkpoint as lost"))
+            .collect();
+        assert_eq!(writes.len(), 1, "one record write: {text}");
+        assert!(writes[0].contains("first_decode_failure"), "{}", writes[0]);
+        assert_eq!(recorded(&fx), BTreeMap::from([(seq, LostCheckpoint::NEW)]));
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 1);
+    }
+
+    /// A decode failure that a later fetch no longer has — the gap folds on a
+    /// live retry — leaves nothing behind, and the archive is never consulted.
+    #[tokio::test]
+    async fn an_undecodable_gap_is_forgotten_when_a_later_fetch_folds_it() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let served = || {
+            fullnode_at_cursor(
+                &fx,
+                HashMap::from([(42, genuine_checkpoint(&fx, 42, &entry))]),
+                &[&entry],
+            )
+        };
+        let archive = Arc::new(MockCheckpointArchive::default());
+        pusher.archive = Some(archive.clone());
+        pusher.transport = failing_fullnode(served(), &[42], undecodable);
+        gap_seen(&mut pusher, 42, Duration::ZERO);
+
+        pusher.advance().await.unwrap();
+        assert_eq!(recorded(&fx), BTreeMap::from([(42, LostCheckpoint::NEW)]));
+        assert!(cache.is_checkpoint_pinned(42));
+
+        pusher.transport = served();
+        pusher.advance().await.unwrap();
+
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(cache.get(entry.id()).unwrap().source_checkpoint_seq, 42);
+        assert!(recorded(&fx).is_empty(), "the early record is deleted");
+        assert!(!cache.is_checkpoint_pinned(42));
+        assert!(pusher.archive_backfill.is_empty());
+        assert_eq!(archive.fetches.load(Ordering::Relaxed), 0);
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 0);
+    }
+
+    /// A fetch that fails for any other reason — a pruned checkpoint
+    /// (NotFound) or a timeout — says nothing about whether this binary can
+    /// read the checkpoint: no early record, in the scan or in the retries, so
+    /// a slow or pruning fullnode writes none.
+    #[tokio::test]
+    async fn a_fetch_that_fails_without_a_decode_error_records_nothing_early() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let head = BACKFILL_CURSOR + 1;
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        // 42 is pruned (NotFound); 43 and the scanned head time out.
+        pusher.transport = failing_fullnode(
+            fullnode_at(&fx, head, HashMap::new(), &[]),
+            &[43, head],
+            timed_out,
+        );
+        gap_seen(&mut pusher, 42, Duration::ZERO);
+        gap_seen(&mut pusher, 43, Duration::from_secs(6));
+
+        for _ in 0..3 {
+            pusher.advance().await.unwrap();
+        }
+
+        assert_eq!(
+            pusher.pending_gaps.keys().copied().collect::<Vec<_>>(),
+            vec![42, 43, head]
+        );
+        assert!(recorded(&fx).is_empty());
+        assert!(pusher.lost_checkpoints.is_empty());
+        assert_eq!(fx.metrics.pusher_lost_checkpoints.get(), 0);
+        for seq in [42, 43, head] {
+            assert!(!cache.is_checkpoint_pinned(seq));
+        }
+    }
+
+    /// The archive serves a gap the fullnode pruned, the blob passes the
+    /// archive verification, and the fold still fails (here: one object's
+    /// contents are not the attested ones): the checkpoint exists and this
+    /// binary cannot fold it, so the first such failure records and pins it,
+    /// without scheduling it.
+    #[tokio::test]
+    async fn a_verified_archive_blob_that_fails_to_fold_is_recorded() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let package = ika_package_of(&pusher);
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let blob = with_contents_altered(genuine_checkpoint(&fx, 42, &entry), package, entry.id());
+        pusher
+            .verify_archive_checkpoint(42, &blob)
+            .expect("the blob passes the archive verification");
+        pusher.transport = pruned_fullnode(&fx, &[&entry]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(42u64, blob)]),
+            ..Default::default()
+        }));
+        gap_seen(&mut pusher, 42, Duration::from_secs(6));
+
+        pusher.advance().await.unwrap();
+
+        assert!(pusher.pending_gaps.contains_key(&42), "still retried");
+        assert_eq!(fx.metrics.pusher_gap_archive_repairs_total.get(), 0);
+        assert_eq!(recorded(&fx), BTreeMap::from([(42, LostCheckpoint::NEW)]));
+        assert!(cache.is_checkpoint_pinned(42));
+        assert!(pusher.archive_backfill.is_empty());
+    }
+
+    /// An archive blob that fails the archive verification — not signed by the
+    /// committee, or a genuine checkpoint of another seq — is refused and says
+    /// nothing about this checkpoint: no record.
+    #[tokio::test]
+    async fn an_archive_blob_that_fails_verification_records_nothing() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        pusher.transport = pruned_fullnode(&fx, &[&entry]);
+        pusher.archive = Some(Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([
+                (42u64, unfoldable_checkpoint(42, &entry)),
+                (43u64, genuine_checkpoint(&fx, 999, &entry)),
+            ]),
+            ..Default::default()
+        }));
+        gap_seen(&mut pusher, 42, Duration::from_secs(6));
+        gap_seen(&mut pusher, 43, Duration::from_secs(6));
+
+        pusher.advance().await.unwrap();
+
+        assert_eq!(
+            pusher.pending_gaps.keys().copied().collect::<Vec<_>>(),
+            vec![42, 43]
+        );
+        assert_eq!(fx.metrics.pusher_gap_archive_repairs_total.get(), 0);
+        assert!(recorded(&fx).is_empty());
+        assert!(!cache.is_checkpoint_pinned(42));
+        assert!(!cache.is_checkpoint_pinned(43));
+    }
+
+    /// At the record cap an undecodable checkpoint is skipped quietly by the
+    /// scan and the retries alike — the gap is not lost yet — and counts one
+    /// overflow, at its deadline.
+    #[tokio::test]
+    async fn at_the_cap_an_undecodable_gap_counts_one_overflow_at_its_deadline() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let seq = BACKFILL_CURSOR + 1;
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        pusher.transport = failing_fullnode(
+            fullnode_at(&fx, seq, HashMap::new(), &[]),
+            &[seq],
+            undecodable,
+        );
+        for filler in 1_000_000..1_000_000 + MAX_LOST_CHECKPOINTS as u64 {
+            pusher
+                .lost_checkpoints
+                .insert(filler, LostCheckpoint::Settled);
+        }
+
+        for _ in 0..2 {
+            pusher.advance().await.unwrap();
+        }
+        assert!(pusher.pending_gaps.contains_key(&seq));
+        assert_eq!(fx.metrics.pusher_lost_checkpoints_overflow_total.get(), 0);
+        assert!(!pusher.lost_checkpoints.contains_key(&seq));
+        assert!(!cache.is_checkpoint_pinned(seq));
+
+        pusher.pending_gaps.get_mut(&seq).unwrap().first_seen =
+            Instant::now() - Duration::from_secs(601);
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps.is_empty());
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
+        assert_eq!(fx.metrics.pusher_lost_checkpoints_overflow_total.get(), 1);
+        assert!(recorded(&fx).is_empty());
+    }
+
+    /// A checkpoint whose Sui epoch's committee is not installed yet is a wait,
+    /// not a verification failure: no security-critical error, and one info
+    /// line per epoch however often the retry hits it. A checkpoint that does
+    /// not verify — here, signed by another committee — is still refused at
+    /// `ERROR` with `security_critical`, on every attempt.
+    #[tokio::test]
+    async fn a_missing_committee_is_logged_as_a_wait_not_a_security_failure() {
+        let fx = backfill_fixture();
+        let cache = durable_cache(&fx, &[]);
+        let mut pusher = backfill_pusher(&fx, cache.clone()).await;
+        let entry = bag_entry(&pusher, 0xE1, 7);
+        let next_committee =
+            Committee::new(1, fx.committee.voting_rights.iter().cloned().collect());
+        pusher.transport = fullnode_at_cursor(
+            &fx,
+            HashMap::from([
+                (
+                    42,
+                    checkpoint_writing(&next_committee, &fx.keys, 42, &[slice::from_ref(&entry)]),
+                ),
+                (43, unfoldable_checkpoint(43, &bag_entry(&pusher, 0xE2, 7))),
+            ]),
+            &[],
+        );
+        gap_seen(&mut pusher, 42, Duration::ZERO);
+        gap_seen(&mut pusher, 43, Duration::ZERO);
+
+        let (logs, _guard) = CapturedLogs::start();
+        for _ in 0..2 {
+            pusher.advance().await.unwrap();
+        }
+        assert_eq!(
+            pusher.pending_gaps.keys().copied().collect::<Vec<_>>(),
+            vec![42, 43],
+            "neither folds"
+        );
+        let text = logs.text();
+        let security: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("security_critical=true"))
+            .collect();
+        assert_eq!(
+            security.len(),
+            2,
+            "the bad signature, once per attempt: {text}"
+        );
+        for line in &security {
+            assert!(line.contains("ERROR"), "{line}");
+            assert!(line.contains("seq=43"), "only the bad signature: {line}");
+            assert!(line.contains("refusing to fold a checkpoint"), "{line}");
+        }
+        let waits: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("waits for its Sui epoch's committee"))
+            .collect();
+        assert_eq!(waits.len(), 1, "once per epoch: {text}");
+        assert!(waits[0].contains("INFO"), "{}", waits[0]);
+        assert!(waits[0].contains("seq=42"), "{}", waits[0]);
+        assert!(waits[0].contains("epoch=1"), "{}", waits[0]);
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.contains("ERROR") && line.contains("seq=42")),
+            "{text}"
+        );
     }
 
     // ---- folded objects are the attested ones ----

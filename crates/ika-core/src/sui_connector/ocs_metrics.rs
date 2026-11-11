@@ -102,8 +102,10 @@ pub struct OcsMetrics {
     /// verification), `failed` (see `pusher_backfill_failures_total`). Per
     /// checkpoint, once settled: `folded`, `already_cached` (every current
     /// object was cached already, including a checkpoint skipped at startup for
-    /// that reason) or `nothing_to_fold` (no Ika object of it is still
-    /// current).
+    /// that reason), `nothing_to_fold` (no Ika object of it is still current)
+    /// or `abandoned` (a recorded lost checkpoint the archive kept answering
+    /// NotFound for past the give-up window — its objects stay missing; alert
+    /// on any increase).
     pub pusher_backfill_outcomes_total: IntCounterVec, // labels: ["outcome"]
     /// Failed archive-backfill attempts by reason: `archive_not_found`,
     /// `archive_fetch`, `archive_timeout`, `missing_committee`,
@@ -114,6 +116,18 @@ pub struct OcsMetrics {
     /// Archive-backfill checkpoints not settled yet. Non-zero for long means
     /// the node still lacks objects it was told it needs.
     pub pusher_backfill_pending: IntGauge,
+    /// Lost checkpoints this node has recorded and still tracks: checkpoints
+    /// the pusher gave up on (a gap dropped at its retry deadline or by a
+    /// far-behind fast-forward), pending their archive backfill or folded and
+    /// pinned while a snapshot from them is still current — plus pending gaps
+    /// that have failed to decode or fold, recorded on the first failure and
+    /// deleted if the gap is repaired before its deadline. Persisted across
+    /// restarts; bounded by the record cap.
+    pub pusher_lost_checkpoints: IntGauge,
+    /// Lost checkpoints NOT recorded because the record was at its cap: each
+    /// is a cache gap the archive backfill will not repair. Alert on any
+    /// increase.
+    pub pusher_lost_checkpoints_overflow_total: IntCounter,
 
     /// Latest-checkpoint watermark samples refused by the rate bound, by
     /// consumer (`folder` = the checkpoint folder's per-tick scan bound and
@@ -293,7 +307,7 @@ impl OcsMetrics {
             .unwrap(),
             pusher_backfill_outcomes_total: register_int_counter_vec_with_registry!(
                 "ika_ocs_pusher_backfill_outcomes_total",
-                "sui-state-direct archive backfill progress: per attempt fetched/verified/failed, per settled checkpoint folded/already_cached/nothing_to_fold",
+                "sui-state-direct archive backfill progress: per attempt fetched/verified/failed, per settled checkpoint folded/already_cached/nothing_to_fold/abandoned (abandoned = a recorded lost checkpoint the archive no longer holds; alert on any increase)",
                 &["outcome"],
                 registry,
             )
@@ -308,6 +322,18 @@ impl OcsMetrics {
             pusher_backfill_pending: register_int_gauge_with_registry!(
                 "ika_ocs_pusher_backfill_pending",
                 "Archive-backfill checkpoints this sui-state-direct node has not settled yet; non-zero for long means it still lacks objects it was told it needs",
+                registry,
+            )
+            .unwrap(),
+            pusher_lost_checkpoints: register_int_gauge_with_registry!(
+                "ika_ocs_pusher_lost_checkpoints",
+                "Checkpoints the sui-state-direct pusher gave up on that this node has recorded and still tracks (pending their archive backfill, or folded and pinned while still current), plus pending gaps that have failed to decode or fold (recorded on the first failure, deleted if repaired before the deadline); persisted across restarts",
+                registry,
+            )
+            .unwrap(),
+            pusher_lost_checkpoints_overflow_total: register_int_counter_with_registry!(
+                "ika_ocs_pusher_lost_checkpoints_overflow_total",
+                "Checkpoints the sui-state-direct pusher gave up on but could not record because the lost-checkpoint record was full; each is a cache gap the archive backfill will not repair — alert on any increase",
                 registry,
             )
             .unwrap(),
