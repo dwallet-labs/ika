@@ -657,7 +657,15 @@ dropping entries are layered:
   which Sui leaves `unimplemented!` for version 1 effects; either failure
   ends the process. The list comes from the endpoint and is not yet checked
   against the certified summary. A list that breaks either condition fails
-  that checkpoint as `Encoding`, so the child is skipped as above.
+  that checkpoint as `Encoding`, so the child is skipped as above. The
+  checkpoint pusher and the mirror server's changeset page run the same
+  check before they build artifacts from a checkpoint. The pusher's archive
+  verification and fold then fail with an error. A checkpoint the fold
+  refuses stops that node's scan at it, and the scan tries it again every
+  tick. Once the cursor is more than 1,000 checkpoints behind the head, the
+  existing catch-up fast-forward jumps past it, and the objects of the
+  skipped span stay missing from the cache, as for any fast-forward. The
+  changeset page answers `internal`.
 
   The whole read also checks, before Sui's conversion of the checkpoint's
   object set, that every Move object's contents start with a 32-byte id.
@@ -703,11 +711,30 @@ dropping entries are layered:
   So the part read caps the folded object states at 32 million
   (`MAX_CHECKPOINT_OBJECT_STATES`), checked as each result is folded and
   before Sui's tree is built; past it the read stops with `Encoding`, and
-  the entry is skipped. Memory a validator must have free for one part read
-  at the cap, by the same model: the map about 3.8 to 5.3 GB, the leaves
-  about 2.3 GB, the position map about 2.75 GB (2^26 buckets, briefly
-  4.1 GB while it grows) and the Merkle nodes about 2.0 GB, so a peak of
-  about 11 to 14 GB, and a cached tree of about 7 GB.
+  the entry is skipped. The cap applies only to the part read; a checkpoint
+  read whole is under 128 MiB and holds at most a few million states. A
+  checkpoint found over the cap is remembered (up to 1,024 of them; a
+  checkpoint never changes) and refused at once afterwards, with the same
+  error, before any read. One part-read build at the cap, by the same
+  model: the map about 3.8 to 5.3 GB, the leaves about 2.3 GB, the position
+  map about 2.75 GB (2^26 buckets, briefly 4.1 GB while it grows) and the
+  Merkle nodes about 2.0 GB, so a peak of about 11 to 14 GB, and a tree of
+  about 7 GB once built.
+
+  Only one part-read build runs at a time: a build takes a permit for the
+  part read and the tree build only, never for the whole read, and gives it
+  back when it ends, whether it succeeded or failed. Each try of each part
+  read (the digest read, the previous-summary read and each effects read)
+  fails as `Network` after 60 s (`PART_READ_DEADLINE`), so it is retried
+  within its four tries and then fails the page, and the next walk tries
+  again. So one build holds the permit for at most about 4 × 60 s + 1.75 s
+  per part read, with 16 effects reads in flight at a time. The tree cache is
+  weighed by object states, 32 million in all across the cached trees,
+  about 220 bytes per state, so about 7 GB at most; trees from the whole
+  read are weighed the same way. Memory a validator must have free for the
+  proof provider: the full cache, about 7 GB, plus one part-read build at
+  its peak, about 14 GB, so about 21 GB, plus the whole-read builds running
+  at the time, each under about 1 GB (a whole checkpoint is under 128 MiB).
 
   The remaining risk: a user who builds a checkpoint above the cap makes
   every entry defined in it unprovable by the part read, so the sessions it
@@ -727,15 +754,7 @@ dropping entries are layered:
   be wrapped first by earlier transactions, which costs about as much
   again. The computation actually charged for such a transaction is
   estimated, not measured; it may be well under the cap. The hardest part
-  is landing about 5,000 such transactions in one consensus commit. The
-  checkpoint pusher and the mirror server's changeset page run the same
-  check before they build artifacts from a checkpoint. The pusher's archive
-  verification and fold then fail with an error. A checkpoint the fold
-  refuses stops that node's scan at it, and the scan tries it again every
-  tick. Once the cursor is more than 1,000 checkpoints behind the head, the
-  existing catch-up fast-forward jumps past it, and the objects of the
-  skipped span stay missing from the cache, as for any fast-forward. The
-  changeset page answers `internal`. A `Network` failure
+  is landing about 5,000 such transactions in one consensus commit. A `Network` failure
   still fails the page, because it is a property of the source, not of the
   child, and the consumer must back off rather than act on a page that
   silently lost its entries.

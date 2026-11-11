@@ -46,7 +46,7 @@ use sui_types::object::{MoveObject, Object};
 use sui_types::signature::GenericSignature;
 use sui_types::sui_sdk_types_conversions::struct_tag_core_to_sdk;
 use sui_types::transaction::{Transaction, TransactionData};
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 use tonic::metadata::{Ascii, MetadataKey, MetadataValue};
 
 use crate::rate_limit::RateLimitGate;
@@ -96,6 +96,23 @@ const CHECKPOINT_PART_CONCURRENCY: usize = 16;
 /// 45 to 56 GB. The derivation is in the spec, `ocs-verified-sui-reads.md`.
 pub const MAX_CHECKPOINT_OBJECT_STATES: usize = 32_000_000;
 
+/// The `Encoding` error for checkpoint `seq` holding more than `max_states`
+/// object states.
+pub fn object_state_cap_error(seq: CheckpointSequenceNumber, max_states: usize) -> TransportError {
+    TransportError::Encoding(format!(
+        "checkpoint {seq} writes more than {max_states} object states"
+    ))
+}
+
+/// Whether `error` is an [`object_state_cap_error`].
+pub fn is_object_state_cap_error(error: &TransportError) -> bool {
+    matches!(
+        error,
+        TransportError::Encoding(reason)
+            if reason.contains(" writes more than ") && reason.ends_with(" object states")
+    )
+}
+
 /// How many times one part read is tried when it fails as `Network`.
 const PART_READ_ATTEMPTS: u32 = 4;
 
@@ -103,17 +120,27 @@ const PART_READ_ATTEMPTS: u32 = 4;
 /// retry, so one part read waits at most 1.75 s in all.
 const PART_READ_FIRST_DELAY: Duration = Duration::from_millis(250);
 
+/// How long one try of a part read may take before it fails as `Network`.
+/// With [`PART_READ_ATTEMPTS`] tries and their waits, one part read ends
+/// within about 4 × 60 s + 1.75 s.
+const PART_READ_DEADLINE: Duration = Duration::from_secs(60);
+
 /// Run one part read, and run it again, up to [`PART_READ_ATTEMPTS`] times
 /// in all, while it fails as `Network`, waiting `first_delay` and then twice
-/// as long before each retry. Any other outcome is returned at once.
-async fn retry_part_read<T, F, Fut>(first_delay: Duration, mut read: F) -> Result<T, TransportError>
+/// as long before each retry. A try that takes longer than `deadline` fails
+/// as `Network`. Any other outcome is returned at once.
+async fn retry_part_read<T, F, Fut>(
+    first_delay: Duration,
+    deadline: Duration,
+    mut read: F,
+) -> Result<T, TransportError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, TransportError>>,
 {
     let mut delay = first_delay;
     for _ in 1..PART_READ_ATTEMPTS {
-        match read().await {
+        match read_within(deadline, read()).await {
             Err(TransportError::Network(reason)) => {
                 tracing::debug!(reason, ?delay, "part read failed; retrying it");
                 sleep(delay).await;
@@ -122,7 +149,19 @@ where
             other => return other,
         }
     }
-    read().await
+    read_within(deadline, read()).await
+}
+
+/// `read`, failing as `Network` if it takes longer than `deadline`.
+async fn read_within<T>(
+    deadline: Duration,
+    read: impl Future<Output = Result<T, TransportError>>,
+) -> Result<T, TransportError> {
+    timeout(deadline, read).await.unwrap_or_else(|_| {
+        Err(TransportError::Network(format!(
+            "part read passed its {deadline:?} deadline"
+        )))
+    })
 }
 
 /// Refuse a digest list whose length is not the number of transactions the
@@ -391,22 +430,30 @@ impl SuiGrpcClient {
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
-        self.get_checkpoint_object_states_in_parts_capped(seq, MAX_CHECKPOINT_OBJECT_STATES)
-            .await
+        self.get_checkpoint_object_states_in_parts_capped(
+            seq,
+            MAX_CHECKPOINT_OBJECT_STATES,
+            PART_READ_DEADLINE,
+        )
+        .await
     }
 
     /// [`Self::get_checkpoint_object_states_in_parts`] with at most
-    /// `max_states` object states, refused as soon as the fold passes it.
+    /// `max_states` object states, refused as soon as the fold passes it,
+    /// and `deadline` on each try of each part read.
     async fn get_checkpoint_object_states_in_parts_capped(
         &self,
         seq: CheckpointSequenceNumber,
         max_states: usize,
+        deadline: Duration,
     ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
-        let (summary, digests) =
-            retry_part_read(PART_READ_FIRST_DELAY, || self.get_checkpoint_digests(seq)).await?;
+        let (summary, digests) = retry_part_read(PART_READ_FIRST_DELAY, deadline, || {
+            self.get_checkpoint_digests(seq)
+        })
+        .await?;
         let previous = match summary.data().previous_digest {
             Some(previous_digest) => Some(
-                retry_part_read(PART_READ_FIRST_DELAY, || {
+                retry_part_read(PART_READ_FIRST_DELAY, deadline, || {
                     self.get_previous_checkpoint_summary(previous_digest)
                 })
                 .await?,
@@ -420,7 +467,7 @@ impl SuiGrpcClient {
         )?;
         let mut reads = stream::iter(digests)
             .map(|digest| {
-                retry_part_read(PART_READ_FIRST_DELAY, move || {
+                retry_part_read(PART_READ_FIRST_DELAY, deadline, move || {
                     self.get_transaction_effects(digest)
                 })
             })
@@ -429,9 +476,7 @@ impl SuiGrpcClient {
         while let Some(read) = reads.next().await {
             fold_written_object_states(seq, &mut states, &read?)?;
             if states.len() > max_states {
-                return Err(TransportError::Encoding(format!(
-                    "checkpoint {seq} writes more than {max_states} object states"
-                )));
+                return Err(object_state_cap_error(seq, max_states));
             }
         }
         Ok((summary, states))
@@ -1902,7 +1947,12 @@ mod tests {
                 }
             }
         };
-        assert_eq!(retry_part_read(Duration::ZERO, read).await.unwrap(), 2);
+        assert_eq!(
+            retry_part_read(Duration::ZERO, PART_READ_DEADLINE, read)
+                .await
+                .unwrap(),
+            2
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 3);
 
         let calls = AtomicU32::new(0);
@@ -1911,7 +1961,7 @@ mod tests {
             async { Err::<(), _>(TransportError::NotFound("pruned".into())) }
         };
         assert!(matches!(
-            retry_part_read(Duration::ZERO, read).await,
+            retry_part_read(Duration::ZERO, PART_READ_DEADLINE, read).await,
             Err(TransportError::NotFound(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -1922,7 +1972,7 @@ mod tests {
             async { Err::<(), _>(TransportError::Network("refused".into())) }
         };
         assert!(matches!(
-            retry_part_read(Duration::ZERO, read).await,
+            retry_part_read(Duration::ZERO, PART_READ_DEADLINE, read).await,
             Err(TransportError::Network(_))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), PART_READ_ATTEMPTS);
@@ -2053,6 +2103,26 @@ mod tests {
         Object::immutable_with_id_for_testing(ObjectID::from_single_byte(0x0B))
     }
 
+    /// Effects of transaction `digest` that write [`mock_object`] at `version`.
+    fn mock_effects(digest: TransactionDigest, version: u64) -> TransactionEffects {
+        let object = mock_object();
+        TransactionEffects::new_from_execution_v2(
+            ExecutionStatus::Success,
+            0,
+            GasCostSummary::default(),
+            vec![],
+            digest,
+            SequenceNumber::from_u64(version),
+            BTreeMap::from([(
+                object.id(),
+                EffectsObjectChange::new(None, Some(&object), true, false),
+            )]),
+            None,
+            None,
+            vec![],
+        )
+    }
+
     /// As [`mock_ledger`], with checkpoint 1's summary naming its previous
     /// checkpoint only when `names_previous`. A summary that names none
     /// counts exactly its own three transactions, so the count alone would
@@ -2074,28 +2144,10 @@ mod tests {
         let mut digests: Vec<TransactionDigest> =
             (0..3).map(|_| TransactionDigest::random()).collect();
         digests.sort();
-        let object = mock_object();
         let answers: HashMap<TransactionDigest, TransactionEffects> = digests
             .iter()
             .zip(1u64..)
-            .map(|(digest, version)| {
-                let effects = TransactionEffects::new_from_execution_v2(
-                    ExecutionStatus::Success,
-                    0,
-                    GasCostSummary::default(),
-                    vec![],
-                    *digest,
-                    SequenceNumber::from_u64(version),
-                    BTreeMap::from([(
-                        object.id(),
-                        EffectsObjectChange::new(None, Some(&object), true, false),
-                    )]),
-                    None,
-                    None,
-                    vec![],
-                );
-                (*digest, effects)
-            })
+            .map(|(digest, version)| (*digest, mock_effects(*digest, version)))
             .collect();
         MockLedger {
             current,
@@ -2183,19 +2235,25 @@ mod tests {
     }
 
     /// An effects read answered with another transaction's effects is
-    /// refused, and so is a digest list whose length the summaries do not
-    /// allow.
+    /// refused, even when those effects write the expected version, and so
+    /// is a digest list whose length the summaries do not allow.
     #[tokio::test]
     async fn the_part_reader_refuses_wrong_effects_and_a_wrong_count() {
         let mut ledger = mock_ledger();
         let digests = ledger.digests.clone();
-        let other = ledger.answers[&digests[0]].clone();
-        ledger.answers.insert(digests[2], other);
+        ledger
+            .answers
+            .insert(digests[2], mock_effects(TransactionDigest::random(), 3));
         let client = serve(Arc::new(ledger)).await;
-        assert!(matches!(
-            client.get_checkpoint_object_states_in_parts(1).await,
-            Err(TransportError::Encoding(_))
-        ));
+        match client.get_checkpoint_object_states_in_parts(1).await {
+            Err(TransportError::Encoding(reason)) => {
+                assert!(reason.contains("belong to"), "{reason}")
+            }
+            other => panic!(
+                "an effects answer for another transaction must be refused, got {:?}",
+                other.map(|(summary, _)| *summary.digest())
+            ),
+        }
 
         let mut ledger = mock_ledger();
         ledger.digests.pop();
@@ -2295,11 +2353,34 @@ mod tests {
     async fn object_states_past_the_cap_are_refused() {
         let client = serve(Arc::new(mock_ledger())).await;
         let result = client
-            .get_checkpoint_object_states_in_parts_capped(1, 0)
+            .get_checkpoint_object_states_in_parts_capped(1, 0, PART_READ_DEADLINE)
             .await;
         let Err(TransportError::Encoding(reason)) = result else {
             panic!("the object-state cap must refuse one state over a cap of zero");
         };
         assert!(reason.contains("object states"), "{reason}");
+    }
+
+    /// An effects read that never answers fails as `Network` once each of
+    /// its tries has passed the deadline, and the part read ends with it.
+    #[tokio::test]
+    async fn a_part_read_that_never_answers_ends_as_network_at_its_deadline() {
+        let mut ledger = mock_ledger();
+        let digests = ledger.digests.clone();
+        ledger.delays.insert(digests[0], Duration::from_secs(10));
+        let client = serve(Arc::new(ledger)).await;
+        let started = Instant::now();
+        let result = client
+            .get_checkpoint_object_states_in_parts_capped(
+                1,
+                MAX_CHECKPOINT_OBJECT_STATES,
+                Duration::from_millis(100),
+            )
+            .await;
+        let Err(TransportError::Network(reason)) = result else {
+            panic!("a part read that never answers must end as Network");
+        };
+        assert!(reason.contains("deadline"), "{reason}");
+        assert!(started.elapsed() < Duration::from_secs(8));
     }
 }
