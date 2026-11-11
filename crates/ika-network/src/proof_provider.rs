@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSInclusionProof};
 use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::digests::TransactionDigest;
-use sui_types::effects::{TransactionEffects, TransactionEffectsAPI};
+use sui_types::effects::TransactionEffects;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
@@ -42,7 +42,10 @@ use sui_types::messages_checkpoint::{
 use sui_types::object::Object;
 
 use ika_sui_client::grpc::SuiGrpcClient;
-use ika_sui_client::transport::{DynamicFieldEntry, SuiTransport, TransportError};
+use ika_sui_client::transport::{
+    DynamicFieldEntry, SuiTransport, TransportError, check_checkpoint_written_versions_increase,
+    check_written_versions_increase,
+};
 use tracing::{debug, info, warn};
 
 /// Serving-side cap on the number of object ids one `BatchVerifiedObjects`
@@ -672,12 +675,7 @@ where
     };
     let (summary, artifacts) = match whole {
         Ok(data) => {
-            check_written_versions_increase(
-                seq,
-                data.transactions
-                    .iter()
-                    .map(|transaction| &transaction.effects),
-            )?;
+            check_checkpoint_written_versions_increase(&data)?;
             let artifacts = CheckpointArtifacts::from(&data);
             (data.checkpoint_summary, artifacts)
         }
@@ -702,35 +700,6 @@ where
     let tree = ModifiedObjectTree::new(&artifacts)
         .map_err(|e| TransportError::Encoding(format!("ModifiedObjectTree::new({seq}): {e}")))?;
     Ok(CachedCheckpoint { summary, tree })
-}
-
-/// Refuse checkpoint `seq` as `Encoding` unless each object's written
-/// versions strictly increase across `effects`, in order.
-///
-/// Sui's `CheckpointArtifacts::from` asserts this condition, and a failed
-/// assert ends the process. The effects come from the Sui endpoint, and
-/// nothing has checked their list against the certified summary yet. So the
-/// same condition is checked here first, and a list that breaks it fails only
-/// this checkpoint: a dynamic-field child defined in it is skipped, as for any
-/// other `Encoding` failure.
-fn check_written_versions_increase<'a>(
-    seq: CheckpointSequenceNumber,
-    effects: impl IntoIterator<Item = &'a TransactionEffects>,
-) -> Result<(), TransportError> {
-    effects
-        .into_iter()
-        .flat_map(|effects| effects.written())
-        .try_fold(
-            BTreeMap::new(),
-            |mut latest, (id, version, _)| match latest.insert(id, version) {
-                Some(previous) if previous >= version => Err(TransportError::Encoding(format!(
-                    "checkpoint {seq}: object {id} written at version {version} after \
-                     version {previous}"
-                ))),
-                _ => Ok(latest),
-            },
-        )
-        .map(|_| ())
 }
 
 impl ProofCache {
@@ -1027,6 +996,7 @@ mod tests {
     use sui_types::committee::Committee as SuiCommittee;
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::effects::TransactionEffectsAPI;
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::{
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,

@@ -37,7 +37,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use futures::{StreamExt, stream};
 use ika_network::proof_provider::VerifiedObjectEntry;
 use ika_sui_client::archive::{ArchiveError, CheckpointArchive};
-use ika_sui_client::transport::{SuiTransport, TransportError};
+use ika_sui_client::transport::{
+    SuiTransport, TransportError, check_checkpoint_written_versions_increase,
+};
 use ika_types::error::error_chain;
 use ika_types::messages_dwallet_mpc::IkaPackageConfig;
 use serde::{Deserialize, Serialize};
@@ -1146,6 +1148,7 @@ impl IkaCheckpointPusher {
                 summary.sequence_number()
             );
         }
+        check_checkpoint_written_versions_increase(data)?;
         let artifacts = CheckpointArtifacts::from(data);
         let tree = ModifiedObjectTree::new(&artifacts)
             .map_err(|e| anyhow::anyhow!("ModifiedObjectTree over archive blob: {e}"))?;
@@ -1795,6 +1798,7 @@ impl IkaCheckpointPusher {
 
         // Build the modified-objects tree once for the whole checkpoint;
         // each Ika-modified object's proof is then a cheap path lookup.
+        check_checkpoint_written_versions_increase(data)?;
         let artifacts = CheckpointArtifacts::from(data);
         let tree = ModifiedObjectTree::new(&artifacts)
             .map_err(|e| anyhow::anyhow!("ModifiedObjectTree: {e}"))?;
@@ -6536,5 +6540,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page_ids(direct), vec![entry.id()]);
+    }
+
+    /// A checkpoint whose effects write an object version twice is refused
+    /// with an error by the archive verification and by the fold's entry
+    /// builder, where Sui's `CheckpointArtifacts::from` would abort the
+    /// process.
+    #[tokio::test]
+    async fn a_checkpoint_whose_effects_repeat_a_version_is_refused_not_aborted() {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let pusher = backfill_pusher(&fx, cache).await;
+        let package = ika_package_of(&pusher);
+        let object = ika_object(
+            package,
+            ObjectID::from_single_byte(0xC3),
+            7,
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into()),
+        );
+        let seq = BACKFILL_CURSOR + 1;
+        let mut blob =
+            checkpoint_writing(&fx.committee, &fx.keys, seq, &[slice::from_ref(&object)]);
+        blob.transactions.push(blob.transactions[0].clone());
+
+        let Err(error) = pusher.verify_archive_checkpoint(seq, &blob) else {
+            panic!("the archive verification must refuse a repeated version");
+        };
+        assert!(error.to_string().contains("written at version"), "{error}");
+        let Err(error) = pusher.build_entries(&blob) else {
+            panic!("the fold must refuse a repeated version");
+        };
+        assert!(error.to_string().contains("written at version"), "{error}");
     }
 }

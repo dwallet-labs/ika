@@ -7,6 +7,7 @@
 //! - [`crate::grpc::SuiGrpcClient`]: direct gRPC to a Sui fullnode.
 //! - `SuiMirrorTransport` (in `ika-network`): peer-relayed reads via Ika p2p.
 
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -21,7 +22,7 @@ use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, Tra
 use sui_types::committee::Committee;
 use sui_types::digests::{ChainIdentifier, CheckpointDigest};
 use sui_types::dynamic_field::{DynamicFieldInfo, derive_dynamic_field_id};
-use sui_types::effects::{TransactionEffects, TransactionEvents};
+use sui_types::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEvents};
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::move_package::UpgradeCap;
@@ -110,6 +111,47 @@ pub enum TransportError {
     /// The data exists upstream, but this read cannot receive it whole.
     #[error("response too large: {0}")]
     TooLarge(String),
+}
+
+/// Refuse checkpoint `seq` as `Encoding` unless each object's written
+/// versions strictly increase across `effects`, in order.
+///
+/// Sui's `CheckpointArtifacts::from` asserts this condition, and a failed
+/// assert ends the process. Effects read from a Sui endpoint or a checkpoint
+/// archive are not yet checked against the certified summary when the
+/// artifacts are built from them. So every caller that builds artifacts from
+/// such effects checks the same condition first, and a list that breaks it
+/// fails only that checkpoint.
+pub fn check_written_versions_increase<'a>(
+    seq: CheckpointSequenceNumber,
+    effects: impl IntoIterator<Item = &'a TransactionEffects>,
+) -> Result<(), TransportError> {
+    effects
+        .into_iter()
+        .flat_map(|effects| effects.written())
+        .try_fold(
+            BTreeMap::new(),
+            |mut latest, (id, version, _)| match latest.insert(id, version) {
+                Some(previous) if previous >= version => Err(TransportError::Encoding(format!(
+                    "checkpoint {seq}: object {id} written at version {version} after \
+                     version {previous}"
+                ))),
+                _ => Ok(latest),
+            },
+        )
+        .map(|_| ())
+}
+
+/// [`check_written_versions_increase`] over every transaction of `data`.
+pub fn check_checkpoint_written_versions_increase(
+    data: &CheckpointData,
+) -> Result<(), TransportError> {
+    check_written_versions_increase(
+        data.checkpoint_summary.sequence_number,
+        data.transactions
+            .iter()
+            .map(|transaction| &transaction.effects),
+    )
 }
 
 /// Deterministically-derived `Field<u64, _>` child id for `(parent, version)`.
@@ -404,6 +446,8 @@ pub trait SuiWriter: Send + Sync {
 mod tests {
     use super::*;
 
+    use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
+
     fn wrapper_tag(inner: TypeTag) -> TypeTag {
         TypeTag::Struct(Box::new(DynamicFieldInfo::dynamic_object_field_wrapper(
             inner,
@@ -503,5 +547,30 @@ mod tests {
             "u64",
             &name_bcs,
         ));
+    }
+
+    /// A checkpoint whose effects write each object at increasing versions
+    /// passes. The same checkpoint with one transaction's effects listed twice
+    /// writes the same versions again and is refused as `Encoding`, where
+    /// Sui's `CheckpointArtifacts::from` would abort the process.
+    #[test]
+    fn effects_that_write_a_version_twice_are_refused() {
+        let mut builder = TestCheckpointBuilder::new(5)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .finish_transaction();
+        let mut data = CheckpointData::from(builder.build_checkpoint());
+        check_checkpoint_written_versions_increase(&data).expect("increasing versions pass");
+
+        data.transactions.push(data.transactions[1].clone());
+        match check_checkpoint_written_versions_increase(&data) {
+            Err(TransportError::Encoding(reason)) => {
+                assert!(reason.contains("checkpoint 5"), "{reason}")
+            }
+            other => panic!("a repeated version must be refused, got {other:?}"),
+        }
     }
 }

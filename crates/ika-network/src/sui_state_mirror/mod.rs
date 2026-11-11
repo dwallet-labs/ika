@@ -32,7 +32,9 @@ use std::sync::Arc;
 use anemo::codegen::InboundRequestLayer;
 use anemo::{PeerId, Request, Response, rpc::Status, types::response::StatusCode};
 use anemo_tower::inflight_limit;
-use ika_sui_client::transport::{SuiTransport, TransportError};
+use ika_sui_client::transport::{
+    SuiTransport, TransportError, check_checkpoint_written_versions_increase,
+};
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::{ObjectDigest, ObjectID, SequenceNumber};
 use sui_types::digests::CheckpointDigest;
@@ -325,6 +327,8 @@ impl SuiStateMirror for Server {
             // Ship only the modified object-set, not the bodies. The receiver
             // re-derives the artifacts digest and checks it against the
             // summary's commitment, so this is committee-bound on arrival.
+            check_checkpoint_written_versions_increase(&checkpoint)
+                .map_err(|e| Status::internal(e.to_string()))?;
             let object_states = CheckpointArtifacts::from(&checkpoint)
                 .object_states()
                 .map_err(|e| Status::internal(e.to_string()))?

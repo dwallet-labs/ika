@@ -634,7 +634,15 @@ dropping entries are layered:
   effects list, in order. Sui's tree builder asserts that condition, and a
   failed assert ends the process; the list comes from the endpoint and is not
   yet checked against the certified summary. A list that breaks it fails
-  that checkpoint as `Encoding`, so the child is skipped as above. A `Network` failure
+  that checkpoint as `Encoding`, so the child is skipped as above. The
+  checkpoint pusher and the mirror server's changeset page run the same
+  check before they build artifacts from a checkpoint. The pusher's archive
+  verification and fold then fail with an error. A checkpoint the fold
+  refuses stops that node's scan at it, and the scan tries it again every
+  tick. Once the cursor is more than 1,000 checkpoints behind the head, the
+  existing catch-up fast-forward jumps past it, and the objects of the
+  skipped span stay missing from the cache, as for any fast-forward. The
+  changeset page answers `internal`. A `Network` failure
   still fails the page, because it is a property of the source, not of the
   child, and the consumer must back off rather than act on a page that
   silently lost its entries.
