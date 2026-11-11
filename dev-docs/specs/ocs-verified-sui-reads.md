@@ -675,8 +675,8 @@ dropping entries are layered:
   an ordinary checkpoint needs, with at most 16 answers of up to 16 MiB
   held at once, and an object-state map as large as the effects it sends.
 
-  Memory a validator must have free to prove an entry of the largest honest
-  checkpoint Sui's limits allow (Sui 6a567fa):
+  Without a cap, proving an entry of the largest honest checkpoint Sui's
+  limits allow would need this much memory (Sui 6a567fa):
   - written object states: each user transaction's estimated effects are at
     most 512 KiB (`max_serialized_tx_effects_size_bytes`); the estimate
     charges 2,210 bytes fixed, 128 for each written or modified object, and
@@ -698,7 +698,36 @@ dropping entries are layered:
   - so the peak is about 45 to 56 GB, and a cached tree of such a
     checkpoint keeps about 29 GB.
   This is far above real checkpoints, whose effects are a few KiB per
-  transaction. The
+  transaction.
+
+  So the part read caps the folded object states at 32 million
+  (`MAX_CHECKPOINT_OBJECT_STATES`), checked as each result is folded and
+  before Sui's tree is built; past it the read stops with `Encoding`, and
+  the entry is skipped. Memory a validator must have free for one part read
+  at the cap, by the same model: the map about 3.8 to 5.3 GB, the leaves
+  about 2.3 GB, the position map about 2.75 GB (2^26 buckets, briefly
+  4.1 GB while it grows) and the Merkle nodes about 2.0 GB, so a peak of
+  about 11 to 14 GB, and a cached tree of about 7 GB.
+
+  The remaining risk: a user who builds a checkpoint above the cap makes
+  every entry defined in it unprovable by the part read, so the sessions it
+  defines wait, and the version 7 epoch switch waits with them, until an
+  operator acts. Reaching the cap takes about 4,900 to 5,800 maximal
+  transactions in one consensus commit: 32 million ÷ 5,486 object states
+  per user transaction, or ÷ 6,511 when each also emits 1,025 accumulator
+  updates that settlement writes. Estimated cost, at Sui 6a567fa's gas
+  schedule: computation is at most `max_gas_computation_bucket` (5,000,000)
+  gas units per transaction, so at most 5,000,000 × the reference gas price;
+  at mainnet's reference gas price of 100 MIST (read on 11 November 2026 at
+  Sui epoch 1308; it can change every epoch) that is at most 0.5 SUI per
+  transaction, about 2,450 to 2,900 SUI for 4,900 to 5,800 transactions. Each created object deposits
+  about 0.00076 SUI of storage (about 100 bytes × 100 units × 76 MIST), so
+  2,048 per transaction deposit about 1.6 SUI, about 7,600 to 9,100 SUI in
+  all, 99% refunded on deletion. The 2,048 deleted ids per transaction must
+  be wrapped first by earlier transactions, which costs about as much
+  again. The computation actually charged for such a transaction is
+  estimated, not measured; it may be well under the cap. The hardest part
+  is landing about 5,000 such transactions in one consensus commit. The
   checkpoint pusher and the mirror server's changeset page run the same
   check before they build artifacts from a checkpoint. The pusher's archive
   verification and fold then fail with an error. A checkpoint the fold

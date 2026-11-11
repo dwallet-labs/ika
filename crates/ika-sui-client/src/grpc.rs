@@ -88,6 +88,14 @@ pub const CHECKPOINT_PART_DECODE_LIMIT: usize = 16 * 1024 * 1024;
 /// How many per-transaction effects reads one checkpoint keeps in flight.
 const CHECKPOINT_PART_CONCURRENCY: usize = 16;
 
+/// The most object states one checkpoint's part read folds. Past it the
+/// read stops with `Encoding`, before Sui's tree is built, and the entry is
+/// skipped. At the cap the fold's map and Sui's `ModifiedObjectTree` need
+/// about 11 to 14 GB at their peak. Without it, the largest checkpoint
+/// Sui's limits allow (about 131 million object states) would need about
+/// 45 to 56 GB. The derivation is in the spec, `ocs-verified-sui-reads.md`.
+pub const MAX_CHECKPOINT_OBJECT_STATES: usize = 32_000_000;
+
 /// How many times one part read is tried when it fails as `Network`.
 const PART_READ_ATTEMPTS: u32 = 4;
 
@@ -383,6 +391,17 @@ impl SuiGrpcClient {
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
+        self.get_checkpoint_object_states_in_parts_capped(seq, MAX_CHECKPOINT_OBJECT_STATES)
+            .await
+    }
+
+    /// [`Self::get_checkpoint_object_states_in_parts`] with at most
+    /// `max_states` object states, refused as soon as the fold passes it.
+    async fn get_checkpoint_object_states_in_parts_capped(
+        &self,
+        seq: CheckpointSequenceNumber,
+        max_states: usize,
+    ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
         let (summary, digests) =
             retry_part_read(PART_READ_FIRST_DELAY, || self.get_checkpoint_digests(seq)).await?;
         let previous = match summary.data().previous_digest {
@@ -409,6 +428,11 @@ impl SuiGrpcClient {
         let mut states = CheckpointObjectStates::new();
         while let Some(read) = reads.next().await {
             fold_written_object_states(seq, &mut states, &read?)?;
+            if states.len() > max_states {
+                return Err(TransportError::Encoding(format!(
+                    "checkpoint {seq} writes more than {max_states} object states"
+                )));
+            }
         }
         Ok((summary, states))
     }
@@ -2263,5 +2287,19 @@ mod tests {
                 other.map(|(summary, _)| *summary.digest())
             ),
         }
+    }
+
+    /// The fold stops with `Encoding` as soon as it holds more object states
+    /// than the cap.
+    #[tokio::test]
+    async fn object_states_past_the_cap_are_refused() {
+        let client = serve(Arc::new(mock_ledger())).await;
+        let result = client
+            .get_checkpoint_object_states_in_parts_capped(1, 0)
+            .await;
+        let Err(TransportError::Encoding(reason)) = result else {
+            panic!("the object-state cap must refuse one state over a cap of zero");
+        };
+        assert!(reason.contains("object states"), "{reason}");
     }
 }
