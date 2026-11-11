@@ -451,6 +451,14 @@ impl SuiGrpcClient {
             self.get_checkpoint_digests(seq)
         })
         .await?;
+        // Checked first, so a refusal below, the object-state cap's included,
+        // is about checkpoint `seq` and may be remembered for it.
+        if summary.data().sequence_number != seq {
+            return Err(TransportError::Encoding(format!(
+                "asked for checkpoint {seq}, got the summary of {}",
+                summary.data().sequence_number
+            )));
+        }
         let previous = match summary.data().previous_digest {
             Some(previous_digest) => Some(
                 retry_part_read(PART_READ_FIRST_DELAY, deadline, || {
@@ -1991,6 +1999,8 @@ mod tests {
         delays: HashMap<TransactionDigest, Duration>,
         /// A digest whose first read is refused as `Unavailable`.
         refused_once: Option<TransactionDigest>,
+        /// Answer a checkpoint read of any sequence number with checkpoint 1.
+        answers_every_sequence: bool,
         reads: Mutex<HashMap<TransactionDigest, u32>>,
         masks: Mutex<Vec<(String, Vec<String>)>>,
         finished: Mutex<Vec<TransactionDigest>>,
@@ -2024,7 +2034,8 @@ mod tests {
             let request = request.into_inner();
             match request.checkpoint_id {
                 Some(CheckpointId::SequenceNumber(seq))
-                    if seq == self.current.data().sequence_number =>
+                    if seq == self.current.data().sequence_number
+                        || self.answers_every_sequence =>
                 {
                     self.record_mask(format!("checkpoint {seq}"), request.read_mask);
                     let mut checkpoint = Self::summary_proto(&self.current);
@@ -2156,6 +2167,7 @@ mod tests {
             answers,
             delays: HashMap::new(),
             refused_once: None,
+            answers_every_sequence: false,
             reads: Mutex::new(HashMap::new()),
             masks: Mutex::new(Vec::new()),
             finished: Mutex::new(Vec::new()),
@@ -2347,18 +2359,47 @@ mod tests {
         }
     }
 
-    /// The fold stops with `Encoding` as soon as it holds more object states
-    /// than the cap.
+    /// The fold stops with the cap error as soon as it holds more object
+    /// states than the cap: the first answer crosses a cap of zero, and the
+    /// error comes before the held third answer completes.
     #[tokio::test]
     async fn object_states_past_the_cap_are_refused() {
-        let client = serve(Arc::new(mock_ledger())).await;
+        let mut ledger = mock_ledger();
+        let digests = ledger.digests.clone();
+        ledger.delays.insert(digests[2], Duration::from_secs(3));
+        let client = serve(Arc::new(ledger)).await;
+        let started = Instant::now();
         let result = client
             .get_checkpoint_object_states_in_parts_capped(1, 0, PART_READ_DEADLINE)
             .await;
-        let Err(TransportError::Encoding(reason)) = result else {
+        let Err(error) = result else {
             panic!("the object-state cap must refuse one state over a cap of zero");
         };
-        assert!(reason.contains("object states"), "{reason}");
+        assert!(is_object_state_cap_error(&error), "{error}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the cap must stop the read before later answers arrive"
+        );
+    }
+
+    /// A summary for another checkpoint than the one asked for is refused
+    /// before any effects read, so a cap refusal is only ever about the
+    /// checkpoint asked for.
+    #[tokio::test]
+    async fn a_summary_for_another_checkpoint_is_refused_before_the_cap() {
+        let mut ledger = mock_ledger();
+        ledger.answers_every_sequence = true;
+        let client = serve(Arc::new(ledger)).await;
+        match client
+            .get_checkpoint_object_states_in_parts_capped(2, 0, PART_READ_DEADLINE)
+            .await
+        {
+            Err(TransportError::Encoding(reason)) if reason.contains("asked for checkpoint 2") => {}
+            other => panic!(
+                "a summary for another checkpoint must be refused before the cap, got {:?}",
+                other.map(|(summary, _)| *summary.digest())
+            ),
+        }
     }
 
     /// An effects read that never answers fails as `Network` once each of

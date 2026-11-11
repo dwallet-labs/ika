@@ -647,7 +647,8 @@ dropping entries are layered:
   checkpoint 0 counts all of its own. A part read that fails as `Network` is
   retried on its own, up to four tries with a 250 ms wait that doubles, so
   the parts already read are kept. A checkpoint found too large is
-  remembered (up to 1,024 of them), and its whole read is not tried again.
+  remembered (up to 1,024 of them, as long as a cached tree, 300 s), and
+  its whole read is not tried again.
   Simultaneous builds of one checkpoint's tree share one set of reads.
   Before either read's effects build the tree, the provider
   checks that every effects is version 2 and that each object's written
@@ -665,7 +666,14 @@ dropping entries are layered:
   tick. Once the cursor is more than 1,000 checkpoints behind the head, the
   existing catch-up fast-forward jumps past it, and the objects of the
   skipped span stay missing from the cache, as for any fast-forward. The
-  changeset page answers `internal`.
+  changeset page answers `internal`. A checkpoint whose fullnode read fails
+  as too large becomes a pending gap of the pusher; the pusher does not
+  repair such a gap from the checkpoint archive, which would read it whole
+  and build its full tree with no bound. The gap is handled as without an
+  archive: it is dropped at its 600 s deadline, and the objects it wrote
+  stay out of the verified cache. It is not recorded as a lost checkpoint
+  either, so the archive backfill never reads it (below). The proof
+  provider proves those entries itself.
 
   The whole read also checks, before Sui's conversion of the checkpoint's
   object set, that every Move object's contents start with a 32-byte id.
@@ -713,17 +721,24 @@ dropping entries are layered:
   before Sui's tree is built; past it the read stops with `Encoding`, and
   the entry is skipped. The cap applies only to the part read; a checkpoint
   read whole is under 128 MiB and holds at most a few million states. A
-  checkpoint found over the cap is remembered (up to 1,024 of them; a
-  checkpoint never changes) and refused at once afterwards, with the same
-  error, before any read. One part-read build at the cap, by the same
+  checkpoint found over the cap is remembered (up to 1,024 of them, as long
+  as a cached tree, 300 s; a checkpoint never changes) and refused at once
+  afterwards, with the same error, before any read. The part read checks
+  that the summary it got is the one asked for before anything else, so a
+  cap refusal, and what is remembered from it, is always about the
+  checkpoint asked for. One part-read build at the cap, by the same
   model: the map about 3.8 to 5.3 GB, the leaves about 2.3 GB, the position
   map about 2.75 GB (2^26 buckets, briefly 4.1 GB while it grows) and the
   Merkle nodes about 2.0 GB, so a peak of about 11 to 14 GB, and a tree of
   about 7 GB once built.
 
   Only one part-read build runs at a time: a build takes a permit for the
-  part read and the tree build only, never for the whole read, and gives it
-  back when it ends, whether it succeeded or failed. Each try of each part
+  part read and the tree build, never for the whole read. A build that
+  succeeds keeps the permit until its tree is in the cache and the cache
+  has applied the tree's weight, evicting others past the capacity; the
+  cache applies weights only at its maintenance, so without this two built
+  trees and a third build could be held at once. A build that fails gives
+  the permit back when it ends. Each try of each part
   read (the digest read, the previous-summary read and each effects read)
   fails as `Network` after 60 s (`PART_READ_DEADLINE`), so it is retried
   within its four tries and then fails the page, and the next walk tries
@@ -1215,8 +1230,8 @@ any increase — each drop is a potential wedged epoch). A gap that keeps
 failing to *fold* is dropped at the same deadline, and a far-behind
 fast-forward drops every pending gap (they all sit below the old cursor,
 in the span the scan did reach; counted in the same metric). A dropped gap
-is no longer forgotten: each is **recorded as a lost checkpoint** and
-handed to the archive backfill (next paragraph), which keeps re-folding it
+is no longer forgotten: each, except one too large to read whole (below),
+is **recorded as a lost checkpoint** and handed to the archive backfill (next paragraph), which keeps re-folding it
 across restarts. The end-of-epoch retained store is written only after the
 fold's committee verification passes (`fold_checkpoint` verifies before
 `persist_end_of_epoch`), so no source — fullnode or archive — can
@@ -1262,7 +1277,14 @@ A direct node therefore re-folds checkpoints from the archive
   recovers it with no list in the release and no operator action. The span a
   fast-forward jumps over is *not* recorded: it was never fetched, it is
   unbounded, and sacrificing it is that path's purpose. Nothing is recorded
-  on a node with no archive, which could never re-fold it.
+  on a node with no archive, which could never re-fold it. A gap whose
+  fullnode read still fails as too large when it is dropped at the deadline
+  is not recorded either. The backfill would read it whole from the archive
+  and build its full tree with no bound, which the gap retry refuses to do
+  (per-entry failure isolation, above). So it is dropped and counted in
+  `ika_ocs_pusher_gap_dropped_total`, with a warning naming the checkpoint,
+  and the objects it wrote stay out of the verified cache until a later
+  write.
 - **Recorded on the first decode or fold failure.** A pending gap that
   exists but this binary cannot read is recorded and pinned on its *first*
   such failure, not at the deadline: the gap is held only in memory behind a
