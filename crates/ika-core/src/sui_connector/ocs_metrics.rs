@@ -125,8 +125,10 @@ pub struct OcsMetrics {
     /// Failed archive-backfill attempts by reason: `archive_not_found`,
     /// `archive_fetch`, `archive_timeout`, `missing_committee`,
     /// `verification` (the archive served a blob that does not verify — logged
-    /// as security-critical, never folded) or `currency_lookup`. Every failure
-    /// is retried with capped backoff.
+    /// as security-critical, never folded), `over_state_cap` (the blob writes
+    /// more object states than `MAX_CHECKPOINT_OBJECT_STATES`, so its tree is
+    /// not built) or `currency_lookup`. Every failure is retried with capped
+    /// backoff.
     pub pusher_backfill_failures_total: IntCounterVec, // labels: ["reason"]
     /// Archive-backfill checkpoints not settled yet. Non-zero for long means
     /// the node still lacks objects it was told it needs.
@@ -339,7 +341,7 @@ impl OcsMetrics {
             .unwrap(),
             pusher_backfill_failures_total: register_int_counter_vec_with_registry!(
                 "ika_ocs_pusher_backfill_failures_total",
-                "Failed archive-backfill attempts by reason (archive_not_found, archive_fetch, archive_timeout, missing_committee, verification, currency_lookup); every failure is retried with capped backoff",
+                "Failed archive-backfill attempts by reason (archive_not_found, archive_fetch, archive_timeout, missing_committee, verification, over_state_cap, currency_lookup); every failure is retried with capped backoff",
                 &["reason"],
                 registry,
             )

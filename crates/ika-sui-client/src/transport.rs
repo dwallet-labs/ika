@@ -186,6 +186,28 @@ pub fn check_checkpoint_written_versions_increase(
     )
 }
 
+/// The object states the transactions of `data` write, folded in order by
+/// [`fold_written_object_states`]: the map Sui's `CheckpointArtifacts::from`
+/// builds, so `CheckpointArtifacts::from_object_states` of it gives the same
+/// artifacts and the same tree. Refused as `Encoding` when the fold refuses
+/// an effects, and with [`crate::grpc::object_state_cap_error`] as soon as it
+/// holds more than `max_states` states, before more memory goes to the map
+/// or to a tree built from it.
+pub fn fold_checkpoint_object_states(
+    data: &CheckpointData,
+    max_states: usize,
+) -> Result<CheckpointObjectStates, TransportError> {
+    let seq = data.checkpoint_summary.sequence_number;
+    let mut states = CheckpointObjectStates::new();
+    for transaction in &data.transactions {
+        fold_written_object_states(seq, &mut states, &transaction.effects)?;
+        if states.len() > max_states {
+            return Err(crate::grpc::object_state_cap_error(seq, max_states));
+        }
+    }
+    Ok(states)
+}
+
 /// Deterministically-derived `Field<u64, _>` child id for `(parent, version)`.
 /// This is how Sui's versioned-object pattern stores the inner struct: a
 /// dynamic field on the wrapper keyed by the wrapper's `version`.
@@ -639,6 +661,47 @@ mod tests {
         assert!(matches!(
             check_written_versions_increase(5, &decreasing),
             Err(TransportError::Encoding(_))
+        ));
+    }
+
+    /// The capped fold of a whole checkpoint gives Sui's object states, and
+    /// so Sui's artifacts digest, at a cap of exactly its state count, and is
+    /// refused with the cap error one below it. It refuses a repeated version
+    /// as the uncapped check does.
+    #[test]
+    fn the_checkpoint_fold_gives_sui_s_states_and_refuses_past_its_cap() {
+        let mut builder = TestCheckpointBuilder::new(5)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .create_owned_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .delete_object(2)
+            .create_owned_object(3)
+            .finish_transaction();
+        let mut data = CheckpointData::from(builder.build_checkpoint());
+        let whole = sui_types::messages_checkpoint::CheckpointArtifacts::from(&data);
+        let count = whole.object_states().expect("object states").len();
+        assert!(count >= 3, "the fixture writes several objects");
+
+        let states = fold_checkpoint_object_states(&data, count).expect("at the cap it folds");
+        assert_eq!(&states, whole.object_states().expect("object states"));
+        assert_eq!(
+            sui_types::messages_checkpoint::CheckpointArtifacts::from_object_states(states)
+                .digest()
+                .expect("artifacts digest"),
+            whole.digest().expect("artifacts digest")
+        );
+        match fold_checkpoint_object_states(&data, count - 1) {
+            Err(error) => assert!(crate::grpc::is_object_state_cap_error(&error), "{error}"),
+            Ok(_) => panic!("one state past the cap must be refused"),
+        }
+
+        data.transactions.push(data.transactions[1].clone());
+        assert!(matches!(
+            fold_checkpoint_object_states(&data, usize::MAX),
+            Err(TransportError::Encoding(reason)) if reason.contains("written at version")
         ));
     }
 
