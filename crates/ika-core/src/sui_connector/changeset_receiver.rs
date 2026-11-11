@@ -71,10 +71,14 @@ pub trait ChangesetSource: Send + Sync {
     /// verification. The default does nothing.
     fn reject_last_page(&self) {}
 
-    /// Leave the source of the last page out of the next pull, without
-    /// demoting it: one of its entries cannot be checked yet. The default
-    /// does nothing.
+    /// Leave the source of the last page out of the pulls until the frontier
+    /// advances, without demoting it: one of its entries cannot be checked
+    /// yet. The default does nothing.
     fn pass_over_last_page(&self) {}
+
+    /// The frontier advanced: sources passed over may be asked again. The
+    /// default does nothing.
+    fn frontier_advanced(&self) {}
 }
 
 #[async_trait]
@@ -105,6 +109,10 @@ impl ChangesetSource for SuiMirrorTransport {
 
     fn pass_over_last_page(&self) {
         self.pass_over_last_changeset_source();
+    }
+
+    fn frontier_advanced(&self) {
+        self.changeset_frontier_advanced();
     }
 }
 
@@ -205,9 +213,10 @@ pub async fn pump_changesets(
                 // than the committee ratchet has reached, or right after the
                 // end-of-epoch checkpoint of the store's head epoch, when the
                 // next committee's install (below, or the ratchet's) is still
-                // to come. That is a wait: this relay is left out of the next
-                // pass without being demoted, so a relay serving an entry that
-                // cannot be checked yet cannot hold the receiver on it.
+                // to come. That is a wait: this relay is left out of the pulls
+                // until the frontier advances, without being demoted, so
+                // relays serving entries that cannot be checked yet cannot hold
+                // the receiver on them while another relay can serve.
                 let (bootstrapping, head_ends_epoch) = {
                     let index = index.read();
                     (
@@ -267,6 +276,9 @@ pub async fn pump_changesets(
                 ),
             }
         }
+    }
+    if advanced > 0 {
+        source.frontier_advanced();
     }
     Ok(advanced)
 }
@@ -1252,6 +1264,7 @@ mod tests {
         entries: Vec<ChangesetEntry>,
         rejects: std::sync::atomic::AtomicUsize,
         passed_over: std::sync::atomic::AtomicUsize,
+        advances: std::sync::atomic::AtomicUsize,
     }
 
     #[async_trait]
@@ -1281,6 +1294,11 @@ mod tests {
             self.passed_over
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
+
+        fn frontier_advanced(&self) {
+            self.advances
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     impl RejectCountingSource {
@@ -1289,6 +1307,7 @@ mod tests {
                 entries,
                 rejects: Default::default(),
                 passed_over: Default::default(),
+                advances: Default::default(),
             }
         }
 
@@ -1642,5 +1661,10 @@ mod tests {
         assert_eq!(advanced, 2);
         assert_eq!(store.head_epoch(), 1);
         assert_eq!(index.read().highest_contiguous_seq(), Some(11));
+        assert_eq!(
+            source.advances.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "an advance tells the source, so relays passed over are asked again"
+        );
     }
 }

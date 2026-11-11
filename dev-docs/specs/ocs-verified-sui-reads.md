@@ -502,11 +502,17 @@ it cannot keep winning passes with an entry this node can show is forged. An
 entry whose epoch has no committee installed here cannot be checked at all.
 It is plausible only while the index is bootstrapping (it may begin in a later
 epoch than the committee ratchet has reached) or right after the end-of-epoch
-checkpoint of the committee store's head epoch, which at every Sui epoch
-boundary is the normal state until the next committee arrives. Such an entry
-is a wait, not a fault: its relay is left out of the next pass without being
-demoted, so a relay serving it cannot hold the receiver on it, and an honest
-one keeps its place. Any other entry of an epoch without a committee claims
+checkpoint of the committee store's head epoch when the next committee is not
+installed yet. Since the receiver installs that committee as it folds the
+end-of-epoch checkpoint, a normal epoch boundary has no wait; one remains only
+when that install failed, or while bootstrapping. Such an entry is a wait, not
+a fault: its relay is left out of the passes until the frontier advances,
+without being demoted. The relays left out form a set, so several relays
+serving such entries cannot take turns at the front and keep the others from
+being asked: they cannot hold the receiver on those entries while another
+relay can serve, and an honest one keeps its place. When no relay outside the
+set has a page to serve, the set is cleared and every relay is asked again.
+Any other entry of an epoch without a committee claims
 an epoch the chain cannot have reached after the index head, so it is forged
 whatever signs it, and its relay is rejected. The receiver installs the next committee itself
 when it folds the end-of-epoch checkpoint that carries it (the same

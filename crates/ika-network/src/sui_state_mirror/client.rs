@@ -26,6 +26,7 @@
 //! verified-read surface is checked by the consumer-side
 //! `OcsVerifiedReader` against `CommitteeStore`.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -144,17 +145,17 @@ impl SuiMirrorPeers {
             Result<anemo::Response<T>, anemo::rpc::Status>,
         >,
     {
-        self.try_peers_from(op_label, None, op)
+        self.try_peers_from(op_label, &HashSet::new(), op)
             .await
             .map(|(response, _)| response)
     }
 
-    /// [`Self::try_peers`], leaving `skip` out of the pass, and returning the
-    /// peer that answered.
+    /// [`Self::try_peers`], leaving the peers in `skip` out of the pass, and
+    /// returning the peer that answered.
     async fn try_peers_from<T, F>(
         &self,
         op_label: &'static str,
-        skip: Option<PeerId>,
+        skip: &HashSet<PeerId>,
         mut op: F,
     ) -> Result<(T, PeerId), TransportError>
     where
@@ -201,7 +202,7 @@ impl SuiMirrorPeers {
         // short-circuits the pass). The relay verdict is computed from these.
         let mut reached: Vec<PeerFailure> = Vec::new();
         for peer_id in peers {
-            if Some(peer_id) == skip {
+            if skip.contains(&peer_id) {
                 debug!(?peer_id, "{op_label}: peer left out of this pass, skipping");
                 continue;
             }
@@ -538,9 +539,15 @@ pub struct SuiMirrorTransport {
     peers: SuiMirrorPeers,
     /// The relay that served the last changeset page.
     last_changeset_source: parking_lot::Mutex<Option<PeerId>>,
-    /// A relay to leave out of the next changeset pass: one whose page failed
-    /// verification (see [`Self::reject_last_changeset_source`]).
-    skip_next_changeset: parking_lot::Mutex<Option<PeerId>>,
+    /// Relays left out of the changeset passes until the receiver's frontier
+    /// advances: those whose page failed verification
+    /// ([`Self::reject_last_changeset_source`]) or could not be checked yet
+    /// ([`Self::pass_over_last_changeset_source`]). A set, not one slot, so
+    /// several such relays cannot take turns at the front and keep the others
+    /// from being asked. Cleared when the frontier advances
+    /// ([`Self::changeset_frontier_advanced`]), and when a pass that leaves
+    /// them out finds no other relay to serve a page.
+    passed_over_changeset: parking_lot::Mutex<HashSet<PeerId>>,
     /// When the rejection warn last fired: it is rate limited.
     last_reject_warn: parking_lot::Mutex<Option<std::time::Instant>>,
 }
@@ -550,15 +557,16 @@ impl SuiMirrorTransport {
         Self {
             peers,
             last_changeset_source: parking_lot::Mutex::new(None),
-            skip_next_changeset: parking_lot::Mutex::new(None),
+            passed_over_changeset: parking_lot::Mutex::new(HashSet::new()),
             last_reject_warn: parking_lot::Mutex::new(None),
         }
     }
 
     /// Pass over the relay that served the last changeset page: the page
     /// failed verification. The relay is demoted, which in automatic peer
-    /// mode moves every read off it, and is left out of the next changeset
-    /// pass, so in pinned mode too the next page comes from another relay.
+    /// mode moves every read off it, and is left out of the changeset passes
+    /// until the frontier advances, so in pinned mode too the next page comes
+    /// from another relay.
     /// Without this, a relay serving a bad entry for the next checkpoint would
     /// keep being asked for it, and would win every pass that asks every
     /// relay.
@@ -578,18 +586,24 @@ impl SuiMirrorTransport {
             }
         }
         self.peers.demote(peer);
-        *self.skip_next_changeset.lock() = Some(peer);
+        self.passed_over_changeset.lock().insert(peer);
     }
 
-    /// Leave the relay that served the last changeset page out of the next
-    /// changeset pass, without demoting it: its page holds an entry that
-    /// cannot be checked yet (its epoch's committee is not installed here).
-    /// Another relay is asked next, so a relay serving such an entry cannot
-    /// hold the receiver on it, and an honest one keeps its place.
+    /// Leave the relay that served the last changeset page out of the
+    /// changeset passes until the frontier advances, without demoting it: its
+    /// page holds an entry that cannot be checked yet (its epoch's committee is
+    /// not installed here). Other relays are asked next, so relays serving
+    /// such entries cannot hold the receiver on them while another relay can
+    /// serve, and an honest one keeps its place.
     pub fn pass_over_last_changeset_source(&self) {
         if let Some(peer) = self.last_changeset_source.lock().take() {
-            *self.skip_next_changeset.lock() = Some(peer);
+            self.passed_over_changeset.lock().insert(peer);
         }
+    }
+
+    /// The receiver's frontier advanced: every relay may be asked again.
+    pub fn changeset_frontier_advanced(&self) {
+        self.passed_over_changeset.lock().clear();
     }
 
     /// Pull a page of changesets (committee-signed summary + modified
@@ -608,10 +622,10 @@ impl SuiMirrorTransport {
         // gap is known (from verified gossip or this pass's retention floor),
         // probe every serving peer for the missing successor.
         let gap_detected = Arc::new(AtomicBool::new(known_gap));
-        let skip = self.skip_next_changeset.lock().take();
+        let skip = self.passed_over_changeset.lock().clone();
         let result = self
             .peers
-            .try_peers_from("changeset_page", skip, move |c| {
+            .try_peers_from("changeset_page", &skip, move |c| {
                 let gap_detected = gap_detected.clone();
                 let req = Request::new(ChangesetPageRequest { from_seq, limit });
                 Box::pin(async move {
@@ -672,7 +686,14 @@ impl SuiMirrorTransport {
                 }),
                 None,
             ),
-            Err(error) => (Err(error), None),
+            Err(error) => {
+                // Nothing but the relays left out had a page to serve: ask
+                // every relay again on the next pass.
+                if !skip.is_empty() {
+                    self.passed_over_changeset.lock().clear();
+                }
+                (Err(error), None)
+            }
         };
         *self.last_changeset_source.lock() = source;
         page
@@ -1335,10 +1356,10 @@ mod tests {
     }
 
     /// A relay passed over, its page not checkable yet, is left out of the
-    /// next pass only, and keeps its place in automatic mode: it is not
-    /// demoted.
+    /// passes until the frontier advances, and keeps its place in automatic
+    /// mode: it is not demoted.
     #[tokio::test]
-    async fn a_passed_over_relay_is_skipped_once_and_keeps_its_place() {
+    async fn a_passed_over_relay_is_skipped_until_the_frontier_advances_and_keeps_its_place() {
         let front = build_network(|router| {
             router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
                 entries: vec![changeset_entry(11)],
@@ -1366,8 +1387,102 @@ mod tests {
         let next = transport.changeset_page(11, 64, true, false).await.unwrap();
         assert_eq!(next.entries.len(), 2, "the next pass asks the other relay");
         assert_eq!(peers.snapshot().first(), Some(&front_id), "not demoted");
+        let still = transport.changeset_page(11, 64, true, false).await.unwrap();
+        assert_eq!(still.entries.len(), 2, "still left out");
+        transport.changeset_frontier_advanced();
         let after = transport.changeset_page(11, 64, true, false).await.unwrap();
-        assert_eq!(after.entries.len(), 1, "skipped once only");
+        assert_eq!(
+            after.entries.len(),
+            1,
+            "asked again once the frontier advances"
+        );
+    }
+
+    /// Two relays serving pages a bootstrapping receiver cannot check yet,
+    /// at the front of the order, cannot keep it from the honest relay
+    /// behind them: each is passed over in turn, and the third pass asks the
+    /// honest one. Once every relay has been passed over, a pass with nobody
+    /// left to ask fails and the next one asks every relay again.
+    #[tokio::test]
+    async fn relays_passed_over_in_turn_cannot_keep_a_bootstrap_from_an_honest_relay() {
+        let serving = |entries: Vec<ChangesetEntry>| {
+            build_network(move |router| {
+                router.add_rpc_service(SuiStateMirrorServer::new(StubMirror {
+                    entries,
+                    ..Default::default()
+                }))
+            })
+        };
+        let first = serving(vec![changeset_entry(11)]);
+        let second = serving(vec![
+            changeset_entry(11),
+            changeset_entry(12),
+            changeset_entry(13),
+        ]);
+        let honest = serving(vec![changeset_entry(11), changeset_entry(12)]);
+        let consumer = build_network(|router| router);
+        let first_id = consumer.connect(first.local_addr()).await.unwrap();
+        let second_id = consumer.connect(second.local_addr()).await.unwrap();
+        let honest_id = consumer.connect(honest.local_addr()).await.unwrap();
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+        let peers = SuiMirrorPeers::new(consumer, vec![], metrics);
+        // Order: first, second, honest.
+        peers.snapshot();
+        peers.demote(second_id);
+        peers.demote(honest_id);
+        assert_eq!(peers.snapshot(), vec![first_id, second_id, honest_id]);
+        let transport = SuiMirrorTransport::new(peers);
+        let served = |page: ChangesetPageResponse| page.entries.len();
+
+        assert_eq!(
+            served(
+                transport
+                    .changeset_page(11, 64, false, false)
+                    .await
+                    .unwrap()
+            ),
+            1
+        );
+        transport.pass_over_last_changeset_source();
+        assert_eq!(
+            served(
+                transport
+                    .changeset_page(11, 64, false, false)
+                    .await
+                    .unwrap()
+            ),
+            3
+        );
+        transport.pass_over_last_changeset_source();
+        assert_eq!(
+            served(
+                transport
+                    .changeset_page(11, 64, false, false)
+                    .await
+                    .unwrap()
+            ),
+            2,
+            "the honest relay is asked"
+        );
+
+        transport.pass_over_last_changeset_source();
+        assert!(
+            transport
+                .changeset_page(11, 64, false, false)
+                .await
+                .is_err(),
+            "nobody is left to ask"
+        );
+        assert_eq!(
+            served(
+                transport
+                    .changeset_page(11, 64, false, false)
+                    .await
+                    .unwrap()
+            ),
+            1,
+            "then every relay is asked again"
+        );
     }
 
     fn changeset_entry(seq: u64) -> ChangesetEntry {
