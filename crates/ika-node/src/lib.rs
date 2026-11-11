@@ -603,6 +603,13 @@ impl IkaNode {
                 config.sui_connector_config.sui_data_source,
                 SuiDataSource::SuiStateMirrored { .. }
             );
+        if is_sui_state_direct {
+            // The pusher's last-advance clock starts at boot, so a node whose
+            // pusher is never built (its first watermark probe keeps failing,
+            // or the boot stops before it) reads as not advancing instead of
+            // reading 0 like a node that runs no pusher.
+            ocs_metrics.start_pusher_upstream_clock();
+        }
         // The plan selects direct gRPC or the peer-only verified relay.
         let plan = select_sui_transport(
             &config.sui_connector_config.sui_data_source,
@@ -1252,7 +1259,7 @@ impl IkaNode {
                     {
                         Ok(pusher) => {
                             if let Some(fallback) = &fallback_for_push {
-                                fallback.attach_upstream_frozen(pusher.upstream_frozen());
+                                fallback.attach_upstream_frozen(Arc::new(pusher.upstream_frozen()));
                             }
                             break pusher.with_archive_backfill(archive_backfill.clone());
                         }

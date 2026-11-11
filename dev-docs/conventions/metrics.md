@@ -419,21 +419,30 @@ legacy meaning (lag over 100). Two families on `sui-state-direct` cover the
 gap:
 
 - `ika_ocs_pusher_upstream_last_advance_timestamp_seconds` (gauge): Unix time
-  the watermark last advanced, meaning a probe answered above the previous
-  answer. It is set to the pusher's start until the first advance, and it is 0
-  on nodes that run no pusher, so gate on `> 0`. It is left alone while the
-  probe fails, hangs or repeats a height, so
+  the pusher last saw its fullnode report a checkpoint watermark above both
+  its previous report and the scan cursor. It measures the fullnode's reported
+  watermark, not what the node has folded. On `sui-state-direct` it is stamped
+  at boot, so a node whose pusher never gets built ages from boot too; it is
+  0 on nodes that run no pusher. Gate on
+  `ika_ocs_role_info{role="sui_state_direct"} == 1` rather than on `> 0`. It
+  is left alone while the probe fails, hangs or answers nothing past the
+  cursor, so
   `time() - ika_ocs_pusher_upstream_last_advance_timestamp_seconds` is how long
-  the node's view of Sui has been frozen. A tick held by slow checkpoint
-  fetches ages it too, so alert above the longest healthy tick (cursor
-  no-progress on healthy direct nodes peaks around 300 s).
+  the fullnode has reported nothing new to the pusher. The watermark is
+  sampled once per pusher tick, so a tick held by slow checkpoint fetches ages
+  it for the whole tick. The 300 s healthy peak quoted for direct nodes was
+  measured on cursor no-progress, not on this gauge: measure this gauge's
+  healthy peak across the fleet after rollout before paging on it.
 - `ika_ocs_pusher_watermark_probe_failures_total` (counter): watermark probes
-  that failed or passed their 60 s deadline, at most one per tick. It is flat
-  when the fullnode answers but has stopped syncing, so it complements the
-  gauge rather than replacing it.
+  that failed or passed their 60 s deadline, at most one per tick, including
+  the probe that builds the pusher on a first start. It is flat when the
+  fullnode answers but has stopped syncing, so it complements the gauge rather
+  than replacing it.
 
 The pusher also logs one `ERROR` ("Sui fullnode is not advancing") after five
-minutes without an advance, and one `INFO` when the watermark moves again.
+minutes without an advance, and one `INFO` when the watermark moves again. A
+timer in the pusher's loop checks, so the `ERROR` comes even while a tick is
+held by a read of the fullnode that never returns.
 
 ## A process registers only the families it drives
 

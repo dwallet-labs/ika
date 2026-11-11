@@ -1381,17 +1381,16 @@ mod tests {
         let frozen = pusher.upstream_frozen();
         tokio::spawn(pusher.run());
 
-        tokio::time::sleep(Duration::from_secs(290)).await;
-        assert!(!frozen.load(Ordering::Relaxed), "under five minutes");
-        tokio::time::sleep(Duration::from_secs(20)).await;
-        assert!(
-            frozen.load(Ordering::Relaxed),
-            "no advance for five minutes"
-        );
+        // The pusher checks every few seconds, so allow it one check past each
+        // transition.
+        tokio::time::sleep(Duration::from_secs(285)).await;
+        assert!(!frozen.is_frozen(), "under five minutes");
+        tokio::time::sleep(Duration::from_secs(35)).await;
+        assert!(frozen.is_frozen(), "no advance for five minutes");
 
         fullnode.height.store(101, Ordering::Relaxed);
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        assert!(!frozen.load(Ordering::Relaxed), "advancing again");
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        assert!(!frozen.is_frozen(), "advancing again");
     }
 
     /// At most `max_peers` peers are asked per attempt.

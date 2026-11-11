@@ -1128,20 +1128,28 @@ stop. A failed probe ends the tick before they are written, so they keep their
 last healthy values, and a fullnode that answers but has stopped syncing is
 measured against its own frozen watermark, so the lag reads about 0. One
 testnet validator sat three Ika epochs behind for more than two days with
-`ika_ocs_pusher_stalled` at 0 and the lag at 1. The folder therefore records
-every probe before acting on it: a failure (including a probe past its 60 s
-deadline) counts in `ika_ocs_pusher_watermark_probe_failures_total`, and an
-answer above the previous answer stamps
-`ika_ocs_pusher_upstream_last_advance_timestamp_seconds` (the pusher's start
-until the first advance; 0 where no pusher runs). Sui certifies several
-checkpoints a second, so five minutes without an advance means the node's view
-of Sui is frozen, whether the probe fails, hangs or keeps answering the same
-height. The folder logs that once at `ERROR` (cursor, last watermark seen, time
-frozen, last probe error) and once at `INFO` when the watermark advances again.
-The check runs at the probe, so a tick held by a hung full-checkpoint fetch
-delays the log; the gauge keeps aging regardless, which makes
-`time() -` the gauge the alert signal. Apart from the probe deadline, nothing
-about admission, scanning or serving changes.
+`ika_ocs_pusher_stalled` at 0 and the lag at 1; the per-tick failure warn and
+the frozen `ika_ocs_pusher_last_progress_timestamp_seconds` were the only
+traces, and neither said why. The folder therefore records every probe before
+acting on it. A failure, including a probe past its 60 s deadline, counts in
+`ika_ocs_pusher_watermark_probe_failures_total`. An answer above both the
+previous answer and the scan cursor is an advance and stamps
+`ika_ocs_pusher_upstream_last_advance_timestamp_seconds`, so two stuck
+load-balanced backends answering in turn, or a fullnode climbing back up below
+the cursor, do not count. The gauge measures what the fullnode reports, not
+what the node has folded. On `sui-state-direct` it is stamped at boot, so a
+pusher that is never built (its first probe, under the same deadline, keeps
+failing) ages from boot; it is 0 where no pusher runs. Sui certifies several
+checkpoints a second, so five minutes without an advance means the pusher is
+getting nothing new from the fullnode. The folder logs that once at `ERROR`
+(cursor, last watermark seen, time frozen, last probe error, and how long the
+current tick has run) and once at `INFO` when the watermark advances again. A
+timer in the pusher's loop runs the check every 10 s while a tick runs, so a
+tick held by a checkpoint fetch, a gap retry or a committee capture that never
+returns cannot hold the report back. The report's state is exposed to other
+components (`IkaCheckpointPusher::upstream_frozen`), set and cleared exactly
+where the report flips. Apart from the probe deadline, nothing about admission,
+scanning or serving changes.
 
 The folder logs the watermark refusal as the stall reason once per stretch,
 then logs recovery. The reader logs refusals at most once per minute across
@@ -1515,9 +1523,10 @@ everything (`sui_connector/peer_fallback.rs`):
   frozen (no advance for five minutes, see the frozen-upstream signal), its
   reference is a past one and a genuine but superseded version would match
   it, so the fallback asks nobody — neither a peer nor the fullnode — and
-  counts `skipped`. The pusher sets and clears the shared flag at the same
-  point as its frozen ERROR and recovery INFO; asking resumes when the
-  fullnode advances again.
+  counts `skipped`. It reads the pusher's frozen state
+  (`IkaCheckpointPusher::upstream_frozen`, flipped where the frozen ERROR and
+  recovery INFO latch flips); asking resumes when the fullnode advances
+  again.
 - **Afterwards.** The direct reader applies its own high-water, serves the
   object, and shadow-writes the verified snapshot into its cache like any
   network-verified read (in memory; the pusher's folds supersede it), so the
