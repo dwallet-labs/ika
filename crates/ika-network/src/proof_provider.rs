@@ -2054,8 +2054,11 @@ mod tests {
     }
 
     /// A part-read build keeps its permit until the cache has weighed its
-    /// tree: when the next part-read build starts, the trees past the cache's
-    /// capacity are already gone. The test runs no cache maintenance itself.
+    /// tree: when the next part-read build starts, the cache's own counters
+    /// already show one tree at its full capacity, the earlier tree having
+    /// been evicted or the later one rejected. The test runs no cache
+    /// maintenance itself, so only the build's own maintenance can have
+    /// updated the counters.
     #[tokio::test]
     async fn a_part_read_build_waits_for_the_previous_tree_to_be_weighed() {
         let states = parts_of(&whole_checkpoint(1))
@@ -2068,28 +2071,26 @@ mod tests {
         });
         let metrics = ProofProviderMetrics::new_for_testing();
         let too_large = || async { Err::<CheckpointData, _>(too_large_error()) };
-        let mut trees = Vec::new();
         for seq in [1, 2] {
             let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
-            let built =
-                get_or_build_checkpoint(&cache, &metrics, seq, too_large, move || async move {
-                    Ok(parts)
-                })
-                .await
-                .expect("the part read builds");
-            trees.push(Arc::downgrade(&built));
+            get_or_build_checkpoint(&cache, &metrics, seq, too_large, move || async move {
+                Ok(parts)
+            })
+            .await
+            .expect("the part read builds");
         }
-        let live_when_third_started = AtomicU32::new(u32::MAX);
+        let counters_when_third_started = Mutex::new(None);
         let parts = parts_of(&whole_checkpoint(3)).expect("the fixture folds");
         get_or_build_checkpoint(&cache, &metrics, 3, too_large, || {
-            let live = trees.iter().filter(|tree| tree.strong_count() > 0).count();
-            live_when_third_started.store(live as u32, Ordering::SeqCst);
+            *counters_when_third_started.lock().unwrap() =
+                Some((cache.trees.entry_count(), cache.trees.weighted_size()));
             async { Ok(parts) }
         })
         .await
         .expect("the part read builds");
-        assert!(
-            live_when_third_started.load(Ordering::SeqCst) <= 1,
+        assert_eq!(
+            *counters_when_third_started.lock().unwrap(),
+            Some((1, states as u64)),
             "the previous tree must be weighed before the next part-read build"
         );
     }
