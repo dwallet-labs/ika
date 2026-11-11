@@ -422,11 +422,13 @@ gap:
   the pusher last saw its fullnode report a checkpoint watermark above both
   its previous report and the scan cursor. It measures the fullnode's reported
   watermark, not what the node has folded. On `sui-state-direct` it is stamped
-  at boot, so a node whose pusher never gets built ages from boot too; it is
-  0 on nodes that run no pusher. Gate on
-  `ika_ocs_role_info{role="sui_state_direct"} == 1` rather than on `> 0`. It
-  is left alone while the probe fails, hangs or answers nothing past the
-  cursor, so
+  at boot, before any Sui I/O, so a node whose pusher never gets built ages
+  from boot too; it is 0 on nodes that run no pusher. So `> 0` means exactly
+  "a sui-state-direct node", from boot on: gate on it. Do not gate on
+  `ika_ocs_role_info{role="sui_state_direct"}`, which is set only once the
+  connector stack's chain-identifier probe has answered, a probe with no
+  deadline, so a direct node hung there would be missed. It is left alone
+  while the probe fails, hangs or answers nothing past the cursor, so
   `time() - ika_ocs_pusher_upstream_last_advance_timestamp_seconds` is how long
   the fullnode has reported nothing new to the pusher. The watermark is
   sampled once per pusher tick, so a tick held by slow checkpoint fetches ages
@@ -443,6 +445,19 @@ The pusher also logs one `ERROR` ("Sui fullnode is not advancing") after five
 minutes without an advance, and one `INFO` when the watermark moves again. A
 timer in the pusher's loop checks, so the `ERROR` comes even while a tick is
 held by a read of the fullnode that never returns.
+
+Because the gauge ages from process boot, an alert on it also needs an uptime
+condition, like the cursor alert's, so a node that just started is not paged
+before its fullnode has had time to answer. `THRESHOLD` is the healthy peak
+measured after rollout plus margin:
+
+```promql
+max by (network, host) (
+  time() - (ika_ocs_pusher_upstream_last_advance_timestamp_seconds{metrics_source="ika-proxy"} > 0)
+) > THRESHOLD
+and on (network, host)
+max by (network, host) (uptime{process="validator",metrics_source="ika-proxy"}) > 600
+```
 
 ## A process registers only the families it drives
 
