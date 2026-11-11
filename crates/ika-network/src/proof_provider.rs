@@ -706,7 +706,8 @@ where
     if cache.over_state_cap_checkpoints.contains_key(&seq) {
         return Err(object_state_cap_error(seq, MAX_CHECKPOINT_OBJECT_STATES));
     }
-    let whole = if cache.too_large_checkpoints.contains_key(&seq) {
+    let remembered_too_large = cache.too_large_checkpoints.contains_key(&seq);
+    let whole = if remembered_too_large {
         Err(TransportError::TooLarge(format!(
             "checkpoint {seq} is known to be over the decode limit"
         )))
@@ -724,7 +725,11 @@ where
                 seq,
                 reason, "whole checkpoint is over the decode limit; reading its effects in parts"
             );
-            cache.too_large_checkpoints.insert(seq, ()).await;
+            // Remembered only when the whole read itself was too large, so a
+            // retry of a remembered checkpoint does not renew its lifetime.
+            if !remembered_too_large {
+                cache.too_large_checkpoints.insert(seq, ()).await;
+            }
             let held = cache
                 .part_read_builds
                 .clone()
@@ -2103,6 +2108,45 @@ mod tests {
             !cache.too_large_checkpoints.contains_key(&7)
                 && !cache.over_state_cap_checkpoints.contains_key(&7),
             "remembered checkpoints must expire with the tree cache's lifetime"
+        );
+    }
+
+    /// A retry of a remembered too-large checkpoint does not renew its
+    /// marker: the marker expires on the schedule its first whole read set.
+    #[tokio::test]
+    async fn a_retry_does_not_renew_the_too_large_marker() {
+        let cache = ProofCache::new(&ProofCacheConfig {
+            tree_ttl: Duration::from_millis(400),
+            ..ProofCacheConfig::default()
+        });
+        let seq = 7;
+        let failing_parts = || async {
+            Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(TransportError::Network(
+                "refused".into(),
+            ))
+        };
+        let first = build_cached_checkpoint(
+            seq,
+            &cache,
+            || async { Err::<CheckpointData, _>(too_large_error()) },
+            failing_parts,
+        )
+        .await;
+        assert!(first.is_err());
+        assert!(cache.too_large_checkpoints.contains_key(&seq));
+        sleep(Duration::from_millis(250)).await;
+        let retry = build_cached_checkpoint(
+            seq,
+            &cache,
+            || async { Err::<CheckpointData, _>(too_large_error()) },
+            failing_parts,
+        )
+        .await;
+        assert!(retry.is_err());
+        sleep(Duration::from_millis(250)).await;
+        assert!(
+            !cache.too_large_checkpoints.contains_key(&seq),
+            "a retry of a remembered checkpoint must not renew its marker"
         );
     }
 }

@@ -294,6 +294,11 @@ struct PendingGap {
     /// When the archive was last consulted for this gap, so archive fetches
     /// are paced at `ARCHIVE_RETRY_INTERVAL` instead of every 250ms tick.
     last_archive_attempt: Option<Instant>,
+    /// Whether a fullnode read of this checkpoint ever failed as too large.
+    /// Set on the first such answer and never cleared: a checkpoint never
+    /// changes, so a later `Network` or `NotFound` answer does not make it
+    /// small, and the archive, which reads it whole, is never used for it.
+    observed_too_large: bool,
 }
 
 type ArchiveFetch =
@@ -681,6 +686,32 @@ impl IkaCheckpointPusher {
         );
     }
 
+    /// Give up on `seq`, a pending gap just dropped, as
+    /// [`Self::give_up_on_checkpoint`] does, unless a fullnode read of its
+    /// checkpoint ever failed as too large (`observed_too_large`). Such a gap
+    /// is not recorded, pinned or scheduled: the archive backfill would read
+    /// the checkpoint whole and build its full tree with no bound, which the
+    /// gap retry refuses to do. Its objects stay out of the verified cache
+    /// until a later write; the proof provider proves those entries itself.
+    fn give_up_on_gap(
+        &mut self,
+        seq: CheckpointSequenceNumber,
+        observed_too_large: bool,
+        cause: &'static str,
+    ) {
+        if observed_too_large {
+            warn!(
+                seq,
+                cause,
+                "dropped a pending gap too large to read whole: it is NOT recorded as lost and NOT \
+                 backfilled from the archive, which would read it whole and build its full tree \
+                 with no bound"
+            );
+            return;
+        }
+        self.give_up_on_checkpoint(seq, cause);
+    }
+
     /// A pending gap was repaired before its deadline — folded from the
     /// fullnode or from the archive, as gaps were before lost checkpoints were
     /// recorded at all. Delete the record its first decode or fold failure
@@ -1010,7 +1041,8 @@ impl IkaCheckpointPusher {
             // span the scan did reach, so each is a single known loss like a
             // gap dropped at its deadline: counted toward the drop alarm and
             // recorded (if a decode or fold failure has not already) and
-            // scheduled for the archive backfill. The skipped span itself was
+            // scheduled for the archive backfill, unless it is too large to
+            // read whole (`give_up_on_gap`). The skipped span itself was
             // never fetched and is not recorded: it is the fast-forward's
             // deliberate sacrifice, unbounded in size.
             let kept = self.pending_gaps.split_off(&new_cursor.saturating_add(1));
@@ -1019,8 +1051,8 @@ impl IkaCheckpointPusher {
                 self.metrics
                     .pusher_gap_dropped_total
                     .inc_by(sacrificed.len() as u64);
-                for seq in sacrificed.into_keys() {
-                    self.give_up_on_checkpoint(seq, "fast_forward");
+                for (seq, gap) in sacrificed {
+                    self.give_up_on_gap(seq, gap.observed_too_large, "fast_forward");
                 }
             }
         }
@@ -1054,10 +1086,12 @@ impl IkaCheckpointPusher {
                         error = ?e,
                         "full-checkpoint fetch failed; queued as a pending gap"
                     );
-                    self.pending_gaps.entry(seq).or_insert_with(|| PendingGap {
+                    let gap = self.pending_gaps.entry(seq).or_insert_with(|| PendingGap {
                         first_seen: Instant::now(),
                         last_archive_attempt: None,
+                        observed_too_large: false,
                     });
+                    gap.observed_too_large |= matches!(e, TransportError::TooLarge(_));
                     matches!(e, TransportError::Encoding(_))
                 }
             };
@@ -1244,15 +1278,19 @@ impl IkaCheckpointPusher {
                         self.forget_repaired_gap(seq);
                     }
                     Err(e) if expired => {
-                        self.pending_gaps.remove(&seq);
+                        let observed_too_large = self
+                            .pending_gaps
+                            .remove(&seq)
+                            .is_some_and(|gap| gap.observed_too_large);
                         self.metrics.pusher_gap_dropped_total.inc();
                         warn!(
                             seq,
                             error = ?e,
                             "gap checkpoint kept failing to fold until the retry deadline — dropping \
-                             it from the gap retries and scheduling it for the archive backfill"
+                             it from the gap retries and scheduling it for the archive backfill \
+                             unless it is too large to read whole"
                         );
-                        self.give_up_on_checkpoint(seq, "fold_failed");
+                        self.give_up_on_gap(seq, observed_too_large, "fold_failed");
                     }
                     Err(e) => {
                         warn!(
@@ -1264,14 +1302,19 @@ impl IkaCheckpointPusher {
                     }
                 },
                 Err(fullnode_error) => {
-                    // A checkpoint too large to read whole from the fullnode
-                    // is not read whole from the archive either: that would
-                    // load it and build its full tree with no bound. Such a
-                    // gap is handled as without an archive, so it is dropped
-                    // at its deadline; the proof provider proves its entries
-                    // itself.
+                    // A checkpoint too large to read whole from the fullnode,
+                    // on this read or any earlier one, is not read whole from
+                    // the archive either: that would load it and build its
+                    // full tree with no bound. Such a gap is handled as
+                    // without an archive, so it is dropped at its deadline;
+                    // the proof provider proves its entries itself.
+                    let observed_too_large = self.pending_gaps.get_mut(&seq).is_some_and(|gap| {
+                        gap.observed_too_large |=
+                            matches!(fullnode_error, TransportError::TooLarge(_));
+                        gap.observed_too_large
+                    });
                     let archive_due = self.archive.is_some()
-                        && !matches!(fullnode_error, TransportError::TooLarge(_))
+                        && !observed_too_large
                         && first_seen.elapsed() > ARCHIVE_FALLBACK_AFTER
                         && last_archive_attempt
                             .is_none_or(|at| at.elapsed() > ARCHIVE_RETRY_INTERVAL)
@@ -1289,20 +1332,7 @@ impl IkaCheckpointPusher {
                     if matches!(fullnode_error, TransportError::Encoding(_)) {
                         self.record_failing_gap(seq, "first_decode_failure");
                     }
-                    if expired && matches!(fullnode_error, TransportError::TooLarge(_)) {
-                        // Not recorded as lost: the archive backfill would
-                        // read it whole, as the gap retry above does not.
-                        self.pending_gaps.remove(&seq);
-                        self.metrics.pusher_gap_dropped_total.inc();
-                        warn!(
-                            seq,
-                            error = ?fullnode_error,
-                            "checkpoint too large to read whole never materialized within the gap \
-                             retry deadline — dropping it from the gap retries; it is NOT recorded \
-                             as lost and NOT backfilled from the archive, which would read it whole \
-                             and build its full tree with no bound"
-                        );
-                    } else if expired {
+                    if expired {
                         self.pending_gaps.remove(&seq);
                         self.metrics.pusher_gap_dropped_total.inc();
                         warn!(
@@ -1311,9 +1341,9 @@ impl IkaCheckpointPusher {
                             archive_configured = self.archive.is_some(),
                             "checkpoint never materialized within the gap retry deadline — dropping \
                              it from the gap retries (recorded for the archive backfill when an \
-                             archive is configured)"
+                             archive is configured and it is not too large to read whole)"
                         );
-                        self.give_up_on_checkpoint(seq, "never_materialized");
+                        self.give_up_on_gap(seq, observed_too_large, "never_materialized");
                     }
                 }
             }
@@ -2193,6 +2223,8 @@ mod tests {
         completed: Mutex<Vec<CheckpointSequenceNumber>>,
         /// Checkpoints whose whole read fails as too large.
         too_large: HashSet<CheckpointSequenceNumber>,
+        /// Checkpoints whose whole read fails as `Network`.
+        network_error: HashSet<CheckpointSequenceNumber>,
     }
 
     struct InFlightFetch<'a> {
@@ -2249,6 +2281,11 @@ mod tests {
                 if control.too_large.contains(&seq) {
                     return Err(TransportError::TooLarge(format!(
                         "checkpoint {seq} is over the decode limit"
+                    )));
+                }
+                if control.network_error.contains(&seq) {
+                    return Err(TransportError::Network(format!(
+                        "checkpoint {seq} read failed"
                     )));
                 }
             }
@@ -3763,6 +3800,7 @@ mod tests {
             PendingGap {
                 first_seen: Instant::now(),
                 last_archive_attempt: None,
+                observed_too_large: false,
             },
         );
 
@@ -4779,6 +4817,7 @@ mod tests {
             PendingGap {
                 first_seen: Instant::now() - age,
                 last_archive_attempt: None,
+                observed_too_large: false,
             },
         );
     }
@@ -4933,6 +4972,7 @@ mod tests {
                 PendingGap {
                     first_seen: Instant::now(),
                     last_archive_attempt: None,
+                    observed_too_large: false,
                 },
             );
         }
@@ -6706,5 +6746,170 @@ mod tests {
             "a checkpoint too large to read whole must not be read from the archive"
         );
         assert!(cache.is_empty());
+    }
+
+    /// A transport that answers checkpoint `seq` as `control` says, with no
+    /// checkpoint data, at `latest`.
+    fn transport_answering(
+        control: Option<FetchControl>,
+        latest: CertifiedCheckpointSummary,
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(MockTransport {
+            fetch_control: control.map(Arc::new),
+            latest_summary_pruned: false,
+            latest,
+            checkpoints: HashMap::new(),
+            eoe_seqs: HashMap::new(),
+            live_objects: HashMap::new(),
+        })
+    }
+
+    /// A pusher whose first read of the next checkpoint failed as too large,
+    /// leaving a pending gap first seen `age` ago, with an archive that holds
+    /// the checkpoint and a fullnode that now answers as `later` says.
+    async fn gap_first_seen_too_large(
+        later: Option<FetchControl>,
+        age: Duration,
+    ) -> (
+        BackfillFixture,
+        IkaCheckpointPusher,
+        Arc<MockCheckpointArchive>,
+        CheckpointSequenceNumber,
+    ) {
+        let fx = backfill_fixture();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let mut pusher = backfill_pusher(&fx, cache).await;
+        let package = ika_package_of(&pusher);
+        let object = ika_object(
+            package,
+            ObjectID::from_single_byte(0xC5),
+            7,
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xBA).into()),
+        );
+        let seq = BACKFILL_CURSOR + 1;
+        let blob = checkpoint_writing(&fx.committee, &fx.keys, seq, &[slice::from_ref(&object)]);
+        let latest = blob.checkpoint_summary.clone();
+        pusher.transport = transport_answering(
+            Some(FetchControl {
+                delays: HashMap::from([(seq, Duration::ZERO)]),
+                too_large: HashSet::from([seq]),
+                ..Default::default()
+            }),
+            latest.clone(),
+        );
+        let archive = Arc::new(MockCheckpointArchive {
+            checkpoints: HashMap::from([(seq, blob)]),
+            ..Default::default()
+        });
+        pusher.archive = Some(archive.clone());
+        pusher.advance().await.unwrap();
+        assert!(pusher.pending_gaps[&seq].observed_too_large);
+        pusher.pending_gaps.get_mut(&seq).unwrap().first_seen = Instant::now() - age;
+        pusher.transport = transport_answering(later, latest);
+        (fx, pusher, archive, seq)
+    }
+
+    /// A gap once too large stays out of the archive when the fullnode later
+    /// answers `Network`.
+    #[tokio::test]
+    async fn a_gap_once_too_large_is_not_read_from_the_archive_after_a_network_error() {
+        let seq = BACKFILL_CURSOR + 1;
+        let (_fx, mut pusher, archive, seq) = gap_first_seen_too_large(
+            Some(FetchControl {
+                delays: HashMap::from([(seq, Duration::ZERO)]),
+                network_error: HashSet::from([seq]),
+                ..Default::default()
+            }),
+            Duration::from_secs(6),
+        )
+        .await;
+        pusher.advance().await.unwrap();
+        assert_eq!(
+            archive.fetches.load(Ordering::Relaxed),
+            0,
+            "a gap once too large to read whole must never be read from the archive"
+        );
+        assert!(pusher.pending_gaps.contains_key(&seq));
+    }
+
+    /// A gap once too large stays out of the archive when the fullnode later
+    /// answers `NotFound`.
+    #[tokio::test]
+    async fn a_gap_once_too_large_is_not_read_from_the_archive_after_not_found() {
+        let (_fx, mut pusher, archive, seq) =
+            gap_first_seen_too_large(None, Duration::from_secs(6)).await;
+        pusher.advance().await.unwrap();
+        assert_eq!(
+            archive.fetches.load(Ordering::Relaxed),
+            0,
+            "a gap once too large to read whole must never be read from the archive"
+        );
+        assert!(pusher.pending_gaps.contains_key(&seq));
+    }
+
+    /// A gap once too large that reaches its deadline is dropped without
+    /// reading the archive, and without a lost-checkpoint record: the tick
+    /// after the drop, the one that would start the archive backfill of a
+    /// recorded gap, finds nothing to backfill.
+    #[tokio::test]
+    async fn an_expired_gap_once_too_large_is_dropped_without_the_archive() {
+        let (fx, mut pusher, archive, seq) =
+            gap_first_seen_too_large(None, Duration::from_secs(601)).await;
+        pusher.advance().await.unwrap();
+        assert!(!pusher.pending_gaps.contains_key(&seq));
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 1);
+        pusher.advance().await.unwrap();
+
+        assert!(!pusher.lost_checkpoints.contains_key(&seq));
+        assert!(!pusher.archive_backfill.contains_key(&seq));
+        assert!(recorded(&fx).is_empty(), "nothing persisted");
+        assert_eq!(
+            archive.fetches.load(Ordering::Relaxed),
+            0,
+            "a gap once too large to read whole must never be read from the archive"
+        );
+    }
+
+    /// The far-behind fast-forward counts a sacrificed gap once too large as
+    /// dropped, like any other, but does not record it: the archive backfill
+    /// would read it whole.
+    #[tokio::test]
+    async fn a_far_behind_fast_forward_does_not_record_a_gap_once_too_large() {
+        let fx = backfill_fixture();
+        let mut pusher = backfill_pusher(&fx, durable_cache(&fx, &[])).await;
+        pusher.transport = transport_reporting(
+            &fx.committee,
+            &fx.keys,
+            BACKFILL_CURSOR + 1_500,
+            HashMap::new(),
+        );
+        pusher.archive = Some(Arc::new(MockCheckpointArchive::default()));
+        for (seq, observed_too_large) in [(50, false), (60, true)] {
+            pusher.pending_gaps.insert(
+                seq,
+                PendingGap {
+                    first_seen: Instant::now(),
+                    last_archive_attempt: None,
+                    observed_too_large,
+                },
+            );
+        }
+
+        // Propose, then confirm, the fast-forward; then the tick that would
+        // start the backfill.
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.cursor, BACKFILL_CURSOR);
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.cursor, BACKFILL_CURSOR + 1_500);
+        pusher.advance().await.unwrap();
+
+        assert_eq!(fx.metrics.pusher_gap_dropped_total.get(), 2);
+        assert_eq!(
+            recorded(&fx).into_keys().collect::<Vec<_>>(),
+            vec![50],
+            "only the gap never found too large is recorded"
+        );
+        assert!(!pusher.lost_checkpoints.contains_key(&60));
+        assert!(!pusher.archive_backfill.contains_key(&60));
     }
 }

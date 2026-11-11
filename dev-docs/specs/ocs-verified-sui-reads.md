@@ -647,8 +647,9 @@ dropping entries are layered:
   checkpoint 0 counts all of its own. A part read that fails as `Network` is
   retried on its own, up to four tries with a 250 ms wait that doubles, so
   the parts already read are kept. A checkpoint found too large is
-  remembered (up to 1,024 of them, as long as a cached tree, 300 s), and
-  its whole read is not tried again.
+  remembered (up to 1,024 of them, as long as a cached tree, 300 s, counted
+  from the whole read that found it; a retry does not renew it), and its
+  whole read is not tried again.
   Simultaneous builds of one checkpoint's tree share one set of reads.
   Before either read's effects build the tree, the provider
   checks that every effects is version 2 and that each object's written
@@ -669,11 +670,13 @@ dropping entries are layered:
   changeset page answers `internal`. A checkpoint whose fullnode read fails
   as too large becomes a pending gap of the pusher; the pusher does not
   repair such a gap from the checkpoint archive, which would read it whole
-  and build its full tree with no bound. The gap is handled as without an
-  archive: it is dropped at its 600 s deadline, and the objects it wrote
-  stay out of the verified cache. It is not recorded as a lost checkpoint
-  either, so the archive backfill never reads it (below). The proof
-  provider proves those entries itself.
+  and build its full tree with no bound. The gap remembers that any of its
+  reads failed as too large for its whole life, so a later read that fails
+  as `Network` or `NotFound` does not send it to the archive either. The
+  gap is handled as without an archive: it is dropped at its 600 s
+  deadline, and the objects it wrote stay out of the verified cache. It is
+  not recorded as a lost checkpoint either, so the archive backfill never
+  reads it (below). The proof provider proves those entries itself.
 
   The whole read also checks, before Sui's conversion of the checkpoint's
   object set, that every Move object's contents start with a 32-byte id.
@@ -1277,9 +1280,10 @@ A direct node therefore re-folds checkpoints from the archive
   recovers it with no list in the release and no operator action. The span a
   fast-forward jumps over is *not* recorded: it was never fetched, it is
   unbounded, and sacrificing it is that path's purpose. Nothing is recorded
-  on a node with no archive, which could never re-fold it. A gap whose
-  fullnode read still fails as too large when it is dropped at the deadline
-  is not recorded either. The backfill would read it whole from the archive
+  on a node with no archive, which could never re-fold it. A gap any of
+  whose fullnode reads failed as too large is not recorded either, whether
+  it is dropped at the deadline, after a fold failure, or by a
+  fast-forward. The backfill would read it whole from the archive
   and build its full tree with no bound, which the gap retry refuses to do
   (per-entry failure isolation, above). So it is dropped and counted in
   `ika_ocs_pusher_gap_dropped_total`, with a warning naming the checkpoint,
