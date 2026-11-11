@@ -1574,9 +1574,9 @@ mod tests {
     }
 
     /// An effects list in which one transaction's effects appear twice writes
-    /// the same object versions twice. Sui's tree builder would abort the
-    /// process on it, so the checkpoint is refused as `Encoding` first, on the
-    /// whole-read path and on the part-read path. The child defined in it is
+    /// the same object versions twice. The checkpoint is refused as
+    /// `Encoding` before its tree is built, on the whole-read path and on the
+    /// part-read path. The child defined in it is
     /// skipped, and the rest of the page is served.
     #[tokio::test]
     async fn effects_listed_twice_are_refused_and_the_page_served() {
@@ -1739,9 +1739,8 @@ mod tests {
         assert_eq!(metrics.proof_tree_cache_misses_total.get(), 1);
     }
 
-    /// Version 1 effects of the checkpoint's own transaction, whose
-    /// `written()` Sui leaves `unimplemented!`, are refused as `Encoding` on
-    /// the whole read and on the part read.
+    /// Version 1 effects of the checkpoint's own transaction are refused as
+    /// `Encoding` on the whole read and on the part read.
     #[tokio::test]
     async fn version_one_effects_are_refused_on_both_reads() {
         let seq = 7;

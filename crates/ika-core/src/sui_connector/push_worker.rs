@@ -1331,8 +1331,8 @@ impl IkaCheckpointPusher {
     /// Sui's `CheckpointArtifacts` of `data`, from its object states folded
     /// with the written-version check and the object-state cap
     /// ([`fold_checkpoint_object_states`]) — the same artifacts
-    /// `CheckpointArtifacts::from` builds, which instead aborts the process
-    /// on a version written twice and has no bound. Every tree this worker
+    /// `CheckpointArtifacts::from` builds, but a version written twice is
+    /// refused with an error and the fold is bounded. Every tree this worker
     /// builds goes through it.
     fn checkpoint_artifacts(
         &self,
@@ -6865,10 +6865,9 @@ mod tests {
 
     /// A checkpoint whose effects write an object version twice is refused
     /// with an error by the archive verification and by the fold's entry
-    /// builder, where Sui's `CheckpointArtifacts::from` would abort the
-    /// process.
+    /// builder.
     #[tokio::test]
-    async fn a_checkpoint_whose_effects_repeat_a_version_is_refused_not_aborted() {
+    async fn a_checkpoint_whose_effects_repeat_a_version_is_refused() {
         let fx = backfill_fixture();
         let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
         let pusher = backfill_pusher(&fx, cache).await;

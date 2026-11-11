@@ -654,10 +654,7 @@ dropping entries are layered:
   Before either read's effects build the tree, the provider
   checks that every effects is version 2 and that each object's written
   versions strictly increase across the effects list, in order (in the part
-  read, as each result is folded). Sui's tree
-  builder asserts the version order, and reads each effects' `written()`,
-  which Sui leaves `unimplemented!` for version 1 effects; either failure
-  ends the process. The list comes from the endpoint and is not yet checked
+  read, as each result is folded). The list comes from the endpoint and is not yet checked
   against the certified summary. A list that breaks either condition fails
   that checkpoint as `Encoding`, so the child is skipped as above. The
   checkpoint pusher and the mirror server's changeset page run the same

@@ -125,13 +125,11 @@ pub type CheckpointObjectStates = BTreeMap<ObjectID, (SequenceNumber, ObjectDige
 /// `CheckpointArtifacts::from`, which the caller can finish with
 /// `CheckpointArtifacts::from_object_states(states)`.
 ///
-/// Sui's loop asserts that each object's written versions strictly
-/// increase, and a failed assert ends the process. It reads each effects'
-/// `written()`, which Sui leaves `unimplemented!` for version 1 effects, so
-/// version 1 effects end the process too. Effects read from a Sui endpoint
-/// or a checkpoint archive are not yet checked against the certified
-/// summary here. So both conditions are refused as `Encoding` instead, and
-/// a list that breaks one fails only that checkpoint.
+/// Each object's written versions must strictly increase, and only version
+/// 2 effects are accepted. Effects read from a Sui endpoint or a checkpoint
+/// archive are not yet checked against the certified summary here, so a
+/// list that breaks either condition is refused as `Encoding` and fails
+/// only that checkpoint.
 pub fn fold_written_object_states(
     seq: CheckpointSequenceNumber,
     states: &mut CheckpointObjectStates,
@@ -608,8 +606,7 @@ mod tests {
 
     /// A checkpoint whose effects write each object at increasing versions
     /// passes. The same checkpoint with one transaction's effects listed twice
-    /// writes the same versions again and is refused as `Encoding`, where
-    /// Sui's `CheckpointArtifacts::from` would abort the process.
+    /// writes the same versions again and is refused as `Encoding`.
     #[test]
     fn effects_that_write_a_version_twice_are_refused() {
         let mut builder = TestCheckpointBuilder::new(5)
@@ -705,8 +702,8 @@ mod tests {
         ));
     }
 
-    /// Version 1 effects are refused as `Encoding` before their `written()`,
-    /// which Sui leaves `unimplemented!`, is called.
+    /// Version 1 effects are refused as `Encoding` before their `written()`
+    /// is read.
     #[test]
     fn version_one_effects_are_refused() {
         let mut effects = TransactionEffects::V1(TransactionEffectsV1::default());
