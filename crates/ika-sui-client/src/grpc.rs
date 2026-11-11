@@ -51,8 +51,9 @@ use tonic::metadata::{Ascii, MetadataKey, MetadataValue};
 
 use crate::rate_limit::RateLimitGate;
 use crate::transport::{
-    CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, ExecutedTransaction,
-    SubmittedTransaction, SuiFundsBreakdown, SuiNodeInfo, SuiTransport, SuiWriter, TransportError,
+    CheckpointObjectStates, CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage,
+    ExecutedTransaction, SubmittedTransaction, SuiFundsBreakdown, SuiNodeInfo, SuiTransport,
+    SuiWriter, TransportError, fold_written_object_states,
 };
 
 /// Sui rejects a transaction whose gas payment names more than
@@ -65,8 +66,8 @@ const MAX_GAS_PAYMENT_OBJECTS: usize = 256;
 /// The most bytes a whole-checkpoint read decodes.
 pub const FULL_CHECKPOINT_DECODE_LIMIT: usize = 128 * 1024 * 1024;
 
-/// The most bytes one read of [`SuiGrpcClient::get_checkpoint_effects_in_parts`]
-/// decodes. Its largest read is one transaction's effects. Sui's executor
+/// The most bytes one read of
+/// [`SuiGrpcClient::get_checkpoint_object_states_in_parts`] decodes. Its largest read is one transaction's effects. Sui's executor
 /// refuses a transaction whose estimated effects pass 512 KiB, or 8 MiB for a
 /// system transaction (`max_serialized_tx_effects_size_bytes` and
 /// `max_serialized_tx_effects_size_bytes_system_tx`); a refused transaction
@@ -74,34 +75,18 @@ pub const FULL_CHECKPOINT_DECODE_LIMIT: usize = 128 * 1024 * 1024;
 /// version 141 on, which Sui mainnet runs: 141 turns on
 /// `complete_effects_size_estimate`, and before it the estimate left out
 /// accumulator writes, so older effects could be larger. The other read
-/// carries the summary and the digests: at most
-/// [`MAX_CHECKPOINT_PART_DIGESTS`] of them, at about 48 bytes each, so about
-/// 11 MiB. Twice the system-transaction cap leaves room for the protobuf
-/// framing.
+/// carries the summary and the digests. An honest checkpoint lists at most
+/// about 225,000: `max_transactions_per_checkpoint` (20,000) scheduled
+/// transactions, plus the accumulator settlement transactions, at most
+/// 20,000 × 1,025 accumulator updates (`max_num_accumulator_events` 1,024,
+/// plus one from gas charging) ÷ `max_updates_per_settlement_txn` (100) =
+/// 205,000, plus a few system transactions. At about 48 bytes each that is
+/// about 11 MiB. Twice the system-transaction cap leaves room for the
+/// protobuf framing.
 pub const CHECKPOINT_PART_DECODE_LIMIT: usize = 16 * 1024 * 1024;
 
 /// How many per-transaction effects reads one checkpoint keeps in flight.
 const CHECKPOINT_PART_CONCURRENCY: usize = 16;
-
-/// The most transaction digests one checkpoint's part read accepts, checked
-/// on the listed digests before any effects read. It does not depend on the
-/// summary, which is not signature-checked at that point. At the locked Sui
-/// (6a567fa, sui-protocol-config lib.rs):
-/// - `max_transactions_per_checkpoint` = 20,000 scheduled transactions;
-/// - each checkpoint's accumulator settlement is split into transactions of
-///   `max_updates_per_settlement_txn` = 100 updates, and each transaction
-///   emits at most `max_num_accumulator_events` = 1,024 accumulator events,
-///   so at most 20,000 × 1,024 / 100 = 204,800 settlement transactions;
-/// - 16 more for the consensus commit prologue, randomness, authenticator
-///   state and end-of-epoch transactions.
-pub const MAX_CHECKPOINT_PART_DIGESTS: usize = 20_000 + 204_800 + 16;
-
-/// The most effects bytes one checkpoint's part read holds at once, counted
-/// as each answer arrives. No Sui limit bounds a checkpoint's total effects
-/// size at the locked Sui (`max_checkpoint_size_bytes` is read nowhere), so
-/// this is a memory bound of ika's own: a checkpoint over it is refused and
-/// its entries are skipped, not fetched further.
-pub const MAX_CHECKPOINT_PART_EFFECTS_BYTES: usize = 1024 * 1024 * 1024;
 
 /// How many times one part read is tried when it fails as `Network`.
 const PART_READ_ATTEMPTS: u32 = 4;
@@ -369,53 +354,37 @@ impl SuiGrpcClient {
         SuiTransport::get_full_checkpoint(self, sequence_number).await
     }
 
-    /// The certified summary of checkpoint `seq` and the effects of each of
-    /// its transactions, in checkpoint order, read in parts instead of as one
+    /// The certified summary of checkpoint `seq` and the latest written state
+    /// of each object its transactions wrote, read in parts instead of as one
     /// whole checkpoint. Built for a checkpoint whose whole read is over
-    /// [`FULL_CHECKPOINT_DECODE_LIMIT`]: the effects are all an object
-    /// inclusion proof needs from it.
+    /// [`FULL_CHECKPOINT_DECODE_LIMIT`]: these states are all an object
+    /// inclusion proof needs from it, through Sui's
+    /// `CheckpointArtifacts::from_object_states`.
     ///
     /// The first read returns the summary, its signature and the transaction
-    /// digests. The number of digests must equal the summary's
+    /// digests. A summary past checkpoint 0 must name its previous
+    /// checkpoint, and the number of digests must equal the summary's
     /// `network_total_transactions` minus the previous checkpoint's, read
-    /// with the small summary read by the summary's `previous_digest`.
-    /// Then each transaction's effects come in a read of their own. Every
-    /// read decodes at most [`CHECKPOINT_PART_DECODE_LIMIT`], and a read that
-    /// fails as `Network` is retried on its own (see [`retry_part_read`]), so
-    /// the parts already read are kept. Nothing read here is trusted: a proof
-    /// built from these effects is checked against the certified summary by
-    /// whoever verifies it.
-    pub async fn get_checkpoint_effects_in_parts(
+    /// with the small summary read by the summary's `previous_digest`. Then
+    /// each transaction's effects come in a read of their own. Every read
+    /// decodes at most [`CHECKPOINT_PART_DECODE_LIMIT`], and a read that
+    /// fails as `Network` is retried on its own (see [`retry_part_read`]).
+    ///
+    /// The effects reads run [`CHECKPOINT_PART_CONCURRENCY`] at a time, and
+    /// their results are taken in checkpoint order. Each result is folded
+    /// into the object states (see [`fold_written_object_states`]) and then
+    /// dropped, so no more than the reads in flight are held at once. The
+    /// first result, in checkpoint order, that is an error once its retries
+    /// are spent stops the reads.
+    ///
+    /// Nothing read here is trusted: a proof built from these states is
+    /// checked against the certified summary by whoever verifies it.
+    pub async fn get_checkpoint_object_states_in_parts(
         &self,
         seq: CheckpointSequenceNumber,
-    ) -> Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError> {
-        self.get_checkpoint_effects_in_parts_capped(
-            seq,
-            MAX_CHECKPOINT_PART_DIGESTS,
-            MAX_CHECKPOINT_PART_EFFECTS_BYTES,
-        )
-        .await
-    }
-
-    /// [`Self::get_checkpoint_effects_in_parts`] under the given caps: at
-    /// most `max_digests` digests, refused before any effects read, and at
-    /// most `max_effects_bytes` of effects held at once, refused as soon as
-    /// an answer passes it. The first failed effects read, once its retries
-    /// are spent, stops the remaining reads.
-    async fn get_checkpoint_effects_in_parts_capped(
-        &self,
-        seq: CheckpointSequenceNumber,
-        max_digests: usize,
-        max_effects_bytes: usize,
-    ) -> Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError> {
+    ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
         let (summary, digests) =
             retry_part_read(PART_READ_FIRST_DELAY, || self.get_checkpoint_digests(seq)).await?;
-        if digests.len() > max_digests {
-            return Err(TransportError::Encoding(format!(
-                "checkpoint {seq} lists {} transactions, over the {max_digests} cap",
-                digests.len()
-            )));
-        }
         let previous = match summary.data().previous_digest {
             Some(previous_digest) => Some(
                 retry_part_read(PART_READ_FIRST_DELAY, || {
@@ -430,7 +399,6 @@ impl SuiGrpcClient {
             previous.as_ref().map(|previous| previous.data()),
             digests.len(),
         )?;
-        let count = digests.len();
         let mut reads = stream::iter(digests)
             .map(|digest| {
                 retry_part_read(PART_READ_FIRST_DELAY, move || {
@@ -438,22 +406,11 @@ impl SuiGrpcClient {
                 })
             })
             .buffered(CHECKPOINT_PART_CONCURRENCY);
-        let mut effects = Vec::with_capacity(count);
-        let mut held_bytes = 0usize;
+        let mut states = CheckpointObjectStates::new();
         while let Some(read) = reads.next().await {
-            let read = read?;
-            held_bytes = held_bytes.saturating_add(
-                bcs::serialized_size(&read)
-                    .map_err(|e| TransportError::Encoding(format!("size of effects: {e}")))?,
-            );
-            if held_bytes > max_effects_bytes {
-                return Err(TransportError::Encoding(format!(
-                    "checkpoint {seq}: effects pass the {max_effects_bytes}-byte cap"
-                )));
-            }
-            effects.push(read);
+            fold_written_object_states(seq, &mut states, &read?)?;
         }
-        Ok((summary, effects))
+        Ok((summary, states))
     }
 
     /// The certified summary of checkpoint `seq` and its transaction digests,
@@ -1561,7 +1518,7 @@ impl SuiWriter for SuiGrpcClient {
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Instant;
@@ -1571,10 +1528,13 @@ mod tests {
     use sui_rpc::field::FieldMaskTree;
     use sui_rpc::merge::Merge;
     use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::effects::EffectsObjectChange;
     use sui_types::effects::{TransactionEffects, TransactionEffectsAPI};
+    use sui_types::execution_status::ExecutionStatus;
     use sui_types::full_checkpoint_content::{ExecutedTransaction, ObjectSet};
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::CheckpointContents;
+    use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
     use sui_types::transaction::{
         AllowedProposers, GasData, ProgrammableTransaction, TransactionDataV1,
         TransactionExpiration, TransactionKind,
@@ -2058,33 +2018,61 @@ mod tests {
     }
 
     /// Three transactions in checkpoint 1, whose previous checkpoint 0 counted
-    /// five transactions in all.
+    /// five transactions in all. In checkpoint order, the transactions write
+    /// one object at versions 1, 2 and 3.
     fn mock_ledger() -> MockLedger {
         mock_ledger_naming_previous(true)
     }
 
+    /// The object the mock ledger's transactions write.
+    fn mock_object() -> Object {
+        Object::immutable_with_id_for_testing(ObjectID::from_single_byte(0x0B))
+    }
+
     /// As [`mock_ledger`], with checkpoint 1's summary naming its previous
-    /// checkpoint only when `names_previous`.
+    /// checkpoint only when `names_previous`. A summary that names none
+    /// counts exactly its own three transactions, so the count alone would
+    /// accept it.
     fn mock_ledger_naming_previous(names_previous: bool) -> MockLedger {
         let (committee, keys) = Committee::new_simple_test_committee();
         let certify = |summary| {
             CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, &keys, &committee)
         };
         let previous = certify(summary_counting(0, 5));
-        let current = certify(CheckpointSummary {
-            previous_digest: names_previous.then_some(*previous.digest()),
-            ..summary_counting(1, 8)
-        });
-        let answers: HashMap<TransactionDigest, TransactionEffects> = (0..3)
-            .map(|_| {
-                let mut effects = TransactionEffects::default();
-                let digest = TransactionDigest::random();
-                *effects.transaction_digest_mut_for_testing() = digest;
-                (digest, effects)
+        let current = if names_previous {
+            certify(CheckpointSummary {
+                previous_digest: Some(*previous.digest()),
+                ..summary_counting(1, 8)
+            })
+        } else {
+            certify(summary_counting(1, 3))
+        };
+        let mut digests: Vec<TransactionDigest> =
+            (0..3).map(|_| TransactionDigest::random()).collect();
+        digests.sort();
+        let object = mock_object();
+        let answers: HashMap<TransactionDigest, TransactionEffects> = digests
+            .iter()
+            .zip(1u64..)
+            .map(|(digest, version)| {
+                let effects = TransactionEffects::new_from_execution_v2(
+                    ExecutionStatus::Success,
+                    0,
+                    GasCostSummary::default(),
+                    vec![],
+                    *digest,
+                    SequenceNumber::from_u64(version),
+                    BTreeMap::from([(
+                        object.id(),
+                        EffectsObjectChange::new(None, Some(&object), true, false),
+                    )]),
+                    None,
+                    None,
+                    vec![],
+                );
+                (*digest, effects)
             })
             .collect();
-        let mut digests: Vec<TransactionDigest> = answers.keys().copied().collect();
-        digests.sort();
         MockLedger {
             current,
             previous,
@@ -2116,8 +2104,9 @@ mod tests {
 
     /// The part reader against a ledger service: it sends the narrow read
     /// masks, checks the digest count against the two summaries, retries a
-    /// refused effects read, and returns the effects in checkpoint order
-    /// although the reads finish in another order.
+    /// refused effects read, and folds the effects in checkpoint order
+    /// although the reads finish in another order. Folded in the order they
+    /// finished, the versions would go down and be refused.
     #[tokio::test]
     async fn the_part_reader_reads_narrow_parts_in_order_with_retries() {
         let mut ledger = mock_ledger();
@@ -2127,18 +2116,19 @@ mod tests {
         let ledger = Arc::new(ledger);
         let client = serve(ledger.clone()).await;
 
-        let (summary, effects) = client
-            .get_checkpoint_effects_in_parts(1)
+        let (summary, states) = client
+            .get_checkpoint_object_states_in_parts(1)
             .await
             .expect("the parts are read");
 
         assert_eq!(summary.digest(), ledger.current.digest());
+        let object = mock_object();
         assert_eq!(
-            effects
-                .iter()
-                .map(|effects| *effects.transaction_digest())
-                .collect::<Vec<_>>(),
-            digests
+            states,
+            CheckpointObjectStates::from([(
+                object.id(),
+                (SequenceNumber::from_u64(3), object.digest())
+            )])
         );
         let finished = ledger.finished.lock().unwrap().clone();
         assert_eq!(finished.len(), 3);
@@ -2179,7 +2169,7 @@ mod tests {
         ledger.answers.insert(digests[2], other);
         let client = serve(Arc::new(ledger)).await;
         assert!(matches!(
-            client.get_checkpoint_effects_in_parts(1).await,
+            client.get_checkpoint_object_states_in_parts(1).await,
             Err(TransportError::Encoding(_))
         ));
 
@@ -2187,14 +2177,15 @@ mod tests {
         ledger.digests.pop();
         let client = serve(Arc::new(ledger)).await;
         assert!(matches!(
-            client.get_checkpoint_effects_in_parts(1).await,
+            client.get_checkpoint_object_states_in_parts(1).await,
             Err(TransportError::Encoding(_))
         ));
     }
 
     /// BCS accepts a Move object whose contents are shorter than its 32-byte
-    /// id. The whole-checkpoint decode refuses a checkpoint holding one as
-    /// `Encoding`, where Sui's object-set conversion would abort the process.
+    /// id. In an otherwise valid checkpoint, which decodes, such an object
+    /// makes the whole-checkpoint decode refuse the checkpoint as `Encoding`,
+    /// where Sui's object-set conversion would abort the process.
     #[test]
     fn a_move_object_too_short_for_its_id_is_refused() {
         let object = Object::immutable_with_id_for_testing(ObjectID::random());
@@ -2215,51 +2206,29 @@ mod tests {
         let short: Object = bcs::from_bytes(&short).expect("BCS accepts short contents");
         assert_eq!(short.data.try_as_move().unwrap().contents().len(), 16);
 
-        let mut proto_object = proto::Object::default();
-        proto_object.bcs = Some(proto::Bcs::serialize(&short).unwrap());
-        let mut objects = proto::ObjectSet::default();
-        objects.objects = vec![proto_object];
-        let mut checkpoint = proto::Checkpoint::default();
-        checkpoint.objects = Some(objects);
-        assert!(matches!(
-            SuiGrpcClient::decode_full_checkpoint(&checkpoint),
-            Err(TransportError::Encoding(_))
-        ));
-    }
+        let mut builder = TestCheckpointBuilder::new(1)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .finish_transaction();
+        let checkpoint = builder.build_checkpoint();
+        let mask = FieldMaskTree::from(FullCheckpoint::proto_field_mask());
+        let mut encoded = proto::Checkpoint::merge_from(&checkpoint, &mask);
+        SuiGrpcClient::decode_full_checkpoint(&encoded).expect("the valid checkpoint decodes");
 
-    /// A digest list longer than the digest cap is refused before any effects
-    /// read, whatever the summary says.
-    #[tokio::test]
-    async fn a_digest_list_over_the_cap_is_refused_before_any_effects_read() {
-        let ledger = Arc::new(mock_ledger());
-        let client = serve(ledger.clone()).await;
-        let result = client
-            .get_checkpoint_effects_in_parts_capped(1, 2, MAX_CHECKPOINT_PART_EFFECTS_BYTES)
-            .await;
-        let Err(TransportError::Encoding(_)) = result else {
-            panic!("the digest cap must refuse three digests over a cap of two");
-        };
-        assert!(ledger.reads.lock().unwrap().is_empty());
-    }
-
-    /// The effects bytes are counted as each answer arrives, and the read
-    /// stops as soon as they pass the cap, without waiting for the reads
-    /// still in flight.
-    #[tokio::test]
-    async fn effects_past_the_byte_cap_are_refused_as_they_arrive() {
-        let mut ledger = mock_ledger();
-        let digests = ledger.digests.clone();
-        ledger.delays.insert(digests[2], Duration::from_secs(3));
-        let one_answer = bcs::serialized_size(&ledger.answers[&digests[0]]).unwrap();
-        let client = serve(Arc::new(ledger)).await;
-        let started = Instant::now();
-        let result = client
-            .get_checkpoint_effects_in_parts_capped(1, MAX_CHECKPOINT_PART_DIGESTS, one_answer + 1)
-            .await;
-        let Err(TransportError::Encoding(_)) = result else {
-            panic!("the effects byte cap must refuse the second answer");
-        };
-        assert!(started.elapsed() < Duration::from_secs(2));
+        let objects = encoded
+            .objects
+            .as_mut()
+            .expect("the checkpoint carries its objects");
+        assert!(!objects.objects.is_empty());
+        objects.objects[0].bcs = Some(proto::Bcs::serialize(&short).unwrap());
+        match SuiGrpcClient::decode_full_checkpoint(&encoded) {
+            Err(TransportError::Encoding(reason)) => assert!(
+                reason.contains("Move object contents hold no id"),
+                "{reason}"
+            ),
+            Err(other) => panic!("a short object must be refused by the id check, got {other:?}"),
+            Ok(_) => panic!("a short object must be refused"),
+        }
     }
 
     /// The first effects read that fails without a retry stops the part read
@@ -2274,20 +2243,25 @@ mod tests {
         let client = serve(Arc::new(ledger)).await;
         let started = Instant::now();
         assert!(matches!(
-            client.get_checkpoint_effects_in_parts(1).await,
+            client.get_checkpoint_object_states_in_parts(1).await,
             Err(TransportError::Encoding(_))
         ));
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     /// A summary past checkpoint 0 that names no previous checkpoint is
-    /// refused, since the digest count could not be checked against it.
+    /// refused, even when its own total equals the listed count.
     #[tokio::test]
     async fn a_summary_naming_no_previous_checkpoint_is_refused() {
         let client = serve(Arc::new(mock_ledger_naming_previous(false))).await;
-        assert!(matches!(
-            client.get_checkpoint_effects_in_parts(1).await,
-            Err(TransportError::Encoding(_))
-        ));
+        match client.get_checkpoint_object_states_in_parts(1).await {
+            Err(TransportError::Encoding(reason)) => {
+                assert!(reason.contains("names no previous checkpoint"), "{reason}")
+            }
+            other => panic!(
+                "a summary naming no previous checkpoint must be refused, got {:?}",
+                other.map(|(summary, _)| *summary.digest())
+            ),
+        }
     }
 }

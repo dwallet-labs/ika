@@ -18,7 +18,9 @@ use sui_rpc::proto::sui::rpc::v2::owner::OwnerKind;
 use sui_rpc::proto::sui::rpc::v2::{ChangedObject, CleverError};
 use sui_sdk_types::BalanceChange;
 use sui_types::TypeTag;
-use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+use sui_types::base_types::{
+    ObjectDigest, ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest,
+};
 use sui_types::committee::Committee;
 use sui_types::digests::{ChainIdentifier, CheckpointDigest};
 use sui_types::dynamic_field::{DynamicFieldInfo, derive_dynamic_field_id};
@@ -113,45 +115,61 @@ pub enum TransportError {
     TooLarge(String),
 }
 
-/// Refuse checkpoint `seq` as `Encoding` unless every effects in it is
-/// version 2 and each object's written versions strictly increase across
-/// `effects`, in order.
+/// The latest written state of each object of a checkpoint, as Sui's
+/// `CheckpointArtifacts` holds it: object id to (version, digest).
+pub type CheckpointObjectStates = BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>;
+
+/// Fold one transaction's effects of checkpoint `seq` into `states`, the
+/// object states of the transactions before it: each written object's
+/// state replaces the earlier one. This is the loop of Sui's
+/// `CheckpointArtifacts::from`, which the caller can finish with
+/// `CheckpointArtifacts::from_object_states(states)`.
 ///
-/// Sui's `CheckpointArtifacts::from` asserts the version order, and a failed
-/// assert ends the process. It reads each effects' `written()`, which Sui
-/// leaves `unimplemented!` for version 1 effects, so version 1 effects end
-/// the process too. Effects read from a Sui endpoint or a checkpoint archive
-/// are not yet checked against the certified summary when the artifacts are
-/// built from them. So every caller that builds artifacts from such effects
-/// checks both conditions first, and a list that breaks one fails only that
-/// checkpoint.
+/// Sui's loop asserts that each object's written versions strictly
+/// increase, and a failed assert ends the process. It reads each effects'
+/// `written()`, which Sui leaves `unimplemented!` for version 1 effects, so
+/// version 1 effects end the process too. Effects read from a Sui endpoint
+/// or a checkpoint archive are not yet checked against the certified
+/// summary here. So both conditions are refused as `Encoding` instead, and
+/// a list that breaks one fails only that checkpoint.
+pub fn fold_written_object_states(
+    seq: CheckpointSequenceNumber,
+    states: &mut CheckpointObjectStates,
+    effects: &TransactionEffects,
+) -> Result<(), TransportError> {
+    if matches!(effects, TransactionEffects::V1(_)) {
+        return Err(TransportError::Encoding(format!(
+            "checkpoint {seq}: transaction {} has version 1 effects",
+            effects.transaction_digest()
+        )));
+    }
+    effects
+        .written()
+        .into_iter()
+        .try_for_each(
+            |(id, version, digest)| match states.insert(id, (version, digest)) {
+                Some((previous, _)) if previous >= version => {
+                    Err(TransportError::Encoding(format!(
+                        "checkpoint {seq}: object {id} written at version {version} after \
+                         version {previous}"
+                    )))
+                }
+                _ => Ok(()),
+            },
+        )
+}
+
+/// Refuse checkpoint `seq` as `Encoding` when [`fold_written_object_states`]
+/// refuses any of `effects`, in order. Callers that build the artifacts with
+/// Sui's `CheckpointArtifacts::from` run this first.
 pub fn check_written_versions_increase<'a>(
     seq: CheckpointSequenceNumber,
     effects: impl IntoIterator<Item = &'a TransactionEffects>,
 ) -> Result<(), TransportError> {
     effects
         .into_iter()
-        .try_fold(BTreeMap::new(), |latest, effects| {
-            if matches!(effects, TransactionEffects::V1(_)) {
-                return Err(TransportError::Encoding(format!(
-                    "checkpoint {seq}: transaction {} has version 1 effects",
-                    effects.transaction_digest()
-                )));
-            }
-            effects
-                .written()
-                .into_iter()
-                .try_fold(latest, |mut latest, (id, version, _)| {
-                    match latest.insert(id, version) {
-                        Some(previous) if previous >= version => {
-                            Err(TransportError::Encoding(format!(
-                                "checkpoint {seq}: object {id} written at version {version} after \
-                             version {previous}"
-                            )))
-                        }
-                        _ => Ok(latest),
-                    }
-                })
+        .try_fold(CheckpointObjectStates::new(), |mut states, effects| {
+            fold_written_object_states(seq, &mut states, effects).map(|()| states)
         })
         .map(|_| ())
 }

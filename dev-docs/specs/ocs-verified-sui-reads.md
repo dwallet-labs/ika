@@ -609,16 +609,37 @@ dropping entries are layered:
   tonic's message, and does not count it as a rate-limit answer from the
   endpoint. Before it reports `TooLarge`, the direct proof provider reads
   the checkpoint again in parts, because an inclusion proof needs only the
-  certified summary and each transaction's effects. One read returns the
-  summary, its signature and the transaction digests, at most 224,816 of
-  them (the digest cap below), about 11 MiB. Then one read
-  per transaction returns only its effects. Sui's executor caps each
+  certified summary and the latest written state of each object the
+  checkpoint's transactions wrote. One read returns the summary, its
+  signature and the transaction digests. An honest checkpoint lists at most
+  about 225,000: 20,000 scheduled transactions
+  (`max_transactions_per_checkpoint`), plus up to 205,000 accumulator
+  settlement transactions (20,000 × 1,025 accumulator updates, the 1,024 of
+  `max_num_accumulator_events` plus one from gas charging, ÷ 100 per
+  settlement transaction, `max_updates_per_settlement_txn`), plus a few
+  system transactions; about 11 MiB. Then one read per transaction returns
+  only its effects. The read masks are narrow, but the endpoint's work is
+  not: Sui's `GetCheckpoint` loads the whole checkpoint's data whenever the
+  mask names `transactions` (sui-rpc-api `get_checkpoint.rs:86-105` at Sui
+  6a567fa), and `GetTransaction` loads the transaction's whole object set
+  whenever the mask names `effects` (`get_transaction.rs:83-84`,
+  `object_set.rs:16-20`). So the part reads cost the endpoint about the
+  whole read's object loading again, plus one call per transaction. Sui's executor caps each
   transaction's estimated effects at 512 KiB, or 8 MiB for a system
   transaction, so each part read decodes at most 16 MiB. That bound holds
   for effects from Sui protocol version 141 on, which Sui mainnet runs:
   before 141 the size estimate left out accumulator writes, so older effects
-  could be larger, and a read of them would fail as `TooLarge`. The tree built from
-  the parts is the same tree the whole read builds. The proof is checked
+  could be larger, and a read of them would fail as `TooLarge`.
+
+  The effects reads run 16 at a time, and their results are taken in
+  checkpoint order. Each result is folded into a map of the latest written
+  state of each object, as the loop of Sui's `CheckpointArtifacts::from`
+  does, and then dropped; the map goes to Sui's
+  `CheckpointArtifacts::from_object_states`. The tree built from the parts
+  is the same tree the whole read builds. A result that is an error once
+  its retries are spent stops the reads; errors are seen in checkpoint
+  order, so a failed read is reported only after the reads before it have
+  arrived. The proof is checked
   against the certified summary as before, so the part reads add no trust in
   the fullnode. The number of digests must equal the summary's
   `network_total_transactions` minus the previous checkpoint's, read by the
@@ -630,7 +651,8 @@ dropping entries are layered:
   Simultaneous builds of one checkpoint's tree share one set of reads.
   Before either read's effects build the tree, the provider
   checks that every effects is version 2 and that each object's written
-  versions strictly increase across the effects list, in order. Sui's tree
+  versions strictly increase across the effects list, in order (in the part
+  read, as each result is folded). Sui's tree
   builder asserts the version order, and reads each effects' `written()`,
   which Sui leaves `unimplemented!` for version 1 effects; either failure
   ends the process. The list comes from the endpoint and is not yet checked
@@ -645,30 +667,38 @@ dropping entries are layered:
   `object_store/util.rs:514-548`), which runs that conversion before ika
   sees the data, so the archive path does not yet refuse such objects.
 
-  The part read has two caps, both `Encoding` when passed, so the child is
-  skipped as above:
-  - at most 224,816 transaction digests, checked on the listed digests
-    before any effects read and independent of the summary. That is
-    `max_transactions_per_checkpoint` (20,000), plus the accumulator
-    settlement transactions Sui may add (20,000 transactions × 1,024
-    accumulator events, `max_num_accumulator_events`, ÷ 100 updates per
-    settlement transaction, `max_updates_per_settlement_txn` = 204,800),
-    plus 16 system transactions (Sui 6a567fa, sui-protocol-config
-    `lib.rs:4451`, `:4484`, `:4957`);
-  - at most 1 GiB of effects held at once, counted as each answer arrives,
-    stopping the read at once. No Sui limit bounds a checkpoint's total
-    effects, so an honest checkpoint whose effects total more than 1 GiB is
-    skipped, and the sessions it defines wait. The checkpoints the part read
-    exists for stay far below that: each user transaction's effects are at
-    most 512 KiB.
+  A summary past checkpoint 0 that names no previous checkpoint is
+  refused. The summary is not signature-checked in the part read, so an
+  endpoint that answers wrongly can make the count check pass with any
+  count; a proof built from such an answer still fails at the consumer.
+  Such an endpoint can make the reader issue many more effects reads than
+  an ordinary checkpoint needs, with at most 16 answers of up to 16 MiB
+  held at once, and an object-state map as large as the effects it sends.
 
-  The first effects read that fails once its retries are spent also stops
-  the part read. A summary past checkpoint 0 that names no previous
-  checkpoint is refused. The summary is not signature-checked in the part
-  read, so an endpoint that answers wrongly can make the count check pass
-  with any count up to the digest cap; a proof built from such an answer
-  still fails at the consumer, but the reads and memory such an answer
-  causes are bounded only by the two caps. The
+  Memory a validator must have free to prove an entry of the largest honest
+  checkpoint Sui's limits allow (Sui 6a567fa):
+  - written object states: each user transaction's estimated effects are at
+    most 512 KiB (`max_serialized_tx_effects_size_bytes`); the estimate
+    charges 2,210 bytes fixed, 128 for each written or modified object, and
+    40 for each id-only change, and at most 2,048 ids are deleted per
+    transaction (`max_num_deleted_move_object_ids`). So one user
+    transaction writes at most 2,048 + (524,288 − 2,210 − 2,048 × 40) / 128
+    = 5,486 object states, and 20,000 of them 109,720,000. Settlement
+    writes at most one accumulator object per update, 20,500,000, plus the
+    accumulator root. The few system transactions, at most 8 MiB of
+    estimated effects each at 40 bytes per state, add at most about 1
+    million. In all, at most about 131.3 million object states;
+  - the fold's map holds each in 72 bytes plus `BTreeMap` node overhead,
+    about 120 to 165 bytes, so about 16 to 22 GB;
+  - Sui's `ModifiedObjectTree::new` then holds, while the map is still
+    alive, a 72-byte leaf per state (about 9.5 GB), a position map of about
+    41 bytes per bucket over up to 2^28 buckets (about 11 GB, briefly 16.5 GB
+    while it grows), and a Merkle tree of about two 32-byte nodes per state
+    (about 8.4 GB). The cached tree keeps the last three, about 29 GB;
+  - so the peak is about 45 to 56 GB, and a cached tree of such a
+    checkpoint keeps about 29 GB.
+  This is far above real checkpoints, whose effects are a few KiB per
+  transaction. The
   checkpoint pusher and the mirror server's changeset page run the same
   check before they build artifacts from a checkpoint. The pusher's archive
   verification and fold then fail with an error. A checkpoint the fold

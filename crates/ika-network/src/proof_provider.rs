@@ -34,7 +34,6 @@ use serde::{Deserialize, Serialize};
 use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSInclusionProof};
 use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::digests::TransactionDigest;
-use sui_types::effects::TransactionEffects;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
@@ -43,8 +42,8 @@ use sui_types::object::Object;
 
 use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::transport::{
-    DynamicFieldEntry, SuiTransport, TransportError, check_checkpoint_written_versions_increase,
-    check_written_versions_increase,
+    CheckpointObjectStates, DynamicFieldEntry, SuiTransport, TransportError,
+    check_checkpoint_written_versions_increase,
 };
 use tracing::{debug, info, warn};
 
@@ -624,7 +623,7 @@ where
     FullFut: Future<Output = Result<CheckpointData, TransportError>>,
     Parts: FnOnce() -> PartsFut,
     PartsFut: Future<
-        Output = Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError>,
+        Output = Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError>,
     >,
 {
     if let Some(cached) = cache.trees.get(&seq).await {
@@ -663,7 +662,7 @@ where
     FullFut: Future<Output = Result<CheckpointData, TransportError>>,
     Parts: FnOnce() -> PartsFut,
     PartsFut: Future<
-        Output = Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError>,
+        Output = Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError>,
     >,
 {
     let whole = if too_large.contains_key(&seq) {
@@ -685,15 +684,14 @@ where
                 reason, "whole checkpoint is over the decode limit; reading its effects in parts"
             );
             too_large.insert(seq, ()).await;
-            let (summary, effects) = fetch_parts().await?;
+            let (summary, states) = fetch_parts().await?;
             if *summary.sequence_number() != seq {
                 return Err(TransportError::Encoding(format!(
                     "asked for checkpoint {seq}, got the summary of {}",
                     summary.sequence_number()
                 )));
             }
-            check_written_versions_increase(seq, effects.iter())?;
-            (summary, CheckpointArtifacts::from(effects.as_slice()))
+            (summary, CheckpointArtifacts::from_object_states(states))
         }
         Err(error) => return Err(error),
     };
@@ -770,7 +768,7 @@ impl LocalProofProvider {
             &self.metrics,
             seq,
             || self.raw.get_full_checkpoint(seq),
-            || self.raw.get_checkpoint_effects_in_parts(seq),
+            || self.raw.get_checkpoint_object_states_in_parts(seq),
         )
         .await
     }
@@ -991,12 +989,13 @@ mod tests {
 
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+    use ika_sui_client::transport::fold_written_object_states;
     use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSTarget};
     use sui_types::base_types::SequenceNumber;
     use sui_types::committee::Committee as SuiCommittee;
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointContentsDigest;
-    use sui_types::effects::{TransactionEffectsAPI, TransactionEffectsV1};
+    use sui_types::effects::{TransactionEffects, TransactionEffectsAPI, TransactionEffectsV1};
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::{
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
@@ -1358,16 +1357,20 @@ mod tests {
         CheckpointData::from(builder.build_checkpoint())
     }
 
-    /// What the part reads return for `data`: its summary and each
-    /// transaction's effects, and nothing else.
-    fn parts_of(data: &CheckpointData) -> (CertifiedCheckpointSummary, Vec<TransactionEffects>) {
-        (
-            data.checkpoint_summary.clone(),
-            data.transactions
-                .iter()
-                .map(|transaction| transaction.effects.clone())
-                .collect(),
-        )
+    /// What the part reads return for `data`: its summary and the object
+    /// states its transactions' effects fold into, in order, or the fold's
+    /// refusal.
+    fn parts_of(
+        data: &CheckpointData,
+    ) -> Result<(CertifiedCheckpointSummary, CheckpointObjectStates), TransportError> {
+        let seq = data.checkpoint_summary.sequence_number;
+        let states = data.transactions.iter().try_fold(
+            CheckpointObjectStates::new(),
+            |mut states, transaction| {
+                fold_written_object_states(seq, &mut states, &transaction.effects).map(|()| states)
+            },
+        )?;
+        Ok((data.checkpoint_summary.clone(), states))
     }
 
     /// When the whole checkpoint is over the decode limit, the summary and the
@@ -1379,14 +1382,14 @@ mod tests {
     async fn a_too_large_checkpoint_is_read_in_parts_and_gives_the_same_proofs() {
         let seq = 7;
         let data = whole_checkpoint(seq);
-        let parts = parts_of(&data);
+        let parts = parts_of(&data).expect("the fixture folds");
 
         let from_whole = build_cached_checkpoint(
             seq,
             &too_large_cache(),
             || async { Ok(data.clone()) },
             || async {
-                Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
+                Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(
                     TransportError::Network("the parts must not be read".into()),
                 )
             },
@@ -1456,16 +1459,15 @@ mod tests {
         let seq = 7;
         let mut whole = whole_checkpoint(seq);
         whole.transactions.push(whole.transactions[1].clone());
-        let (summary, mut effects) = parts_of(&whole_checkpoint(seq));
-        effects.push(effects[1].clone());
-        let parts = (summary, effects);
+        let parts = parts_of(&whole);
+        assert!(matches!(parts, Err(TransportError::Encoding(_))));
 
         let from_whole = build_cached_checkpoint(
             seq,
             &too_large_cache(),
             || async { Ok(whole.clone()) },
             || async {
-                Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
+                Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(
                     TransportError::Network("the parts must not be read".into()),
                 )
             },
@@ -1489,7 +1491,7 @@ mod tests {
                             "Error, decoded message length too large".into(),
                         ))
                     },
-                    || async move { Ok(parts) },
+                    || async move { parts },
                 )
                 .await
                 {
@@ -1531,7 +1533,7 @@ mod tests {
     #[tokio::test]
     async fn a_network_error_on_the_whole_read_is_returned_without_reading_parts() {
         let seq = 7;
-        let parts = parts_of(&whole_checkpoint(seq));
+        let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
         let parts_read = AtomicBool::new(false);
         let result = build_cached_checkpoint(
             seq,
@@ -1559,7 +1561,7 @@ mod tests {
     #[tokio::test]
     async fn a_checkpoint_found_too_large_is_not_read_whole_again() {
         let seq = 7;
-        let parts = parts_of(&whole_checkpoint(seq));
+        let parts = parts_of(&whole_checkpoint(seq)).expect("the fixture folds");
         let too_large = too_large_cache();
         let whole_reads = AtomicU32::new(0);
         let whole_read = || {
@@ -1595,9 +1597,9 @@ mod tests {
             }
         };
         let no_parts = || async {
-            Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
-                TransportError::Network("the parts must not be read".into()),
-            )
+            Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(TransportError::Network(
+                "the parts must not be read".into(),
+            ))
         };
 
         let (first, second) = tokio::join!(
@@ -1623,13 +1625,14 @@ mod tests {
         *effects.transaction_digest_mut_for_testing() = digest;
         whole.transactions[0].effects = effects;
         let parts = parts_of(&whole);
+        assert!(matches!(parts, Err(TransportError::Encoding(_))));
 
         let from_whole = build_cached_checkpoint(
             seq,
             &too_large_cache(),
             || async { Ok(whole.clone()) },
             || async {
-                Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
+                Err::<(CertifiedCheckpointSummary, CheckpointObjectStates), _>(
                     TransportError::Network("the parts must not be read".into()),
                 )
             },
@@ -1641,9 +1644,77 @@ mod tests {
             seq,
             &too_large_cache(),
             || async { Err::<CheckpointData, _>(too_large_error()) },
-            || async { Ok(parts.clone()) },
+            || async { parts.clone() },
         )
         .await;
         assert!(matches!(from_parts, Err(TransportError::Encoding(_))));
+    }
+
+    /// Objects written by several transactions of the checkpoint, in order:
+    /// created, then mutated twice, then transferred.
+    fn several_writes_checkpoint(seq: CheckpointSequenceNumber) -> CheckpointData {
+        let mut builder = TestCheckpointBuilder::new(seq)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .create_owned_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .finish_transaction()
+            .start_transaction(0)
+            .mutate_owned_object(1)
+            .mutate_owned_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .transfer_object(1, 1)
+            .finish_transaction();
+        CheckpointData::from(builder.build_checkpoint())
+    }
+
+    /// Objects wrapped, deleted and unwrapped across transactions.
+    fn wraps_and_deletions_checkpoint(seq: CheckpointSequenceNumber) -> CheckpointData {
+        let mut builder = TestCheckpointBuilder::new(seq)
+            .start_transaction(0)
+            .create_owned_object(1)
+            .create_owned_object(2)
+            .create_owned_object(3)
+            .finish_transaction()
+            .start_transaction(0)
+            .wrap_object(1)
+            .delete_object(2)
+            .finish_transaction()
+            .start_transaction(0)
+            .unwrap_object(1)
+            .wrap_object(3)
+            .finish_transaction();
+        CheckpointData::from(builder.build_checkpoint())
+    }
+
+    /// The object states the part read folds are exactly the ones Sui's
+    /// `CheckpointArtifacts::from` builds from the whole checkpoint, and so
+    /// is the artifacts digest a proof's tree commits to.
+    #[test]
+    fn folded_object_states_equal_sui_s_artifacts() {
+        let fixtures = [
+            ("mixed", whole_checkpoint(7)),
+            ("several writes", several_writes_checkpoint(8)),
+            ("wraps and deletions", wraps_and_deletions_checkpoint(9)),
+        ];
+        for (name, data) in fixtures {
+            let (_, states) = parts_of(&data).expect("the fixture folds");
+            let whole = CheckpointArtifacts::from(&data);
+            assert_eq!(
+                &states,
+                whole.object_states().expect("object states"),
+                "folded object states differ from Sui's for the {name} checkpoint"
+            );
+            assert_eq!(
+                CheckpointArtifacts::from_object_states(states)
+                    .digest()
+                    .expect("artifacts digest"),
+                whole.digest().expect("artifacts digest"),
+                "folded artifacts digest differs from Sui's for the {name} checkpoint"
+            );
+        }
     }
 }
