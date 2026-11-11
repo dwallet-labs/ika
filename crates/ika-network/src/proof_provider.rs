@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use moka::future::Cache;
+use moka::policy::EvictionPolicy;
 use prometheus::{
     HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Registry,
     register_histogram_vec_with_registry, register_int_counter_vec_with_registry,
@@ -565,8 +566,10 @@ pub struct ProofCacheConfig {
     /// nodes), so the default of 32 million is about 7 GB at most. A
     /// checkpoint read whole holds at most a few million states, so many
     /// ordinary trees fit; one tree built from the part read may take up to
-    /// `MAX_CHECKPOINT_OBJECT_STATES` (also 32 million). `tree_ttl` still
-    /// bounds residency.
+    /// `MAX_CHECKPOINT_OBJECT_STATES` (also 32 million). The cache evicts the
+    /// least recently used trees to admit a new one, so even a tree that
+    /// takes the whole capacity is kept and reused. `tree_ttl` still bounds
+    /// residency.
     pub tree_capacity: u64,
     pub tree_ttl: Duration,
     /// LRU capacity for the `tx_digest → checkpoint_seq` map. This mapping is
@@ -592,7 +595,12 @@ impl Default for ProofCacheConfig {
 struct ProofCache {
     /// Keyed by checkpoint sequence. Holds both the summary and the tree
     /// so we can serve proofs without re-fetching either. Weighed by each
-    /// tree's object states.
+    /// tree's object states, and evicted least recently used first. moka's
+    /// default policy admits a new entry that needs room only when it has
+    /// been looked up more often than the entries it would evict, which a
+    /// tree just built never has: a large part-read tree was then dropped as
+    /// soon as it was built, and every later proof against its checkpoint
+    /// read all the parts and built the tree again.
     trees: Cache<CheckpointSequenceNumber, Arc<CachedCheckpoint>>,
     /// `tx_digest → checkpoint_seq`, immutable once committed. Saves a
     /// `get_transaction_checkpoint` full-node round-trip per relayed read.
@@ -815,6 +823,7 @@ impl ProofCache {
                 .weigher(|_, cached: &Arc<CachedCheckpoint>| {
                     u32::try_from(cached.object_states.max(1)).unwrap_or(u32::MAX)
                 })
+                .eviction_policy(EvictionPolicy::lru())
                 .time_to_live(cfg.tree_ttl)
                 .build(),
             tx_checkpoints: Cache::builder()
@@ -2055,8 +2064,8 @@ mod tests {
 
     /// A part-read build keeps its permit until the cache has weighed its
     /// tree: when the next part-read build starts, the cache's own counters
-    /// already show one tree at its full capacity, the earlier tree having
-    /// been evicted or the later one rejected. The test runs no cache
+    /// already show one tree at its full capacity, and that tree is the later
+    /// one, admitted in place of the earlier. The test runs no cache
     /// maintenance itself, so only the build's own maintenance can have
     /// updated the counters.
     #[tokio::test]
@@ -2079,19 +2088,79 @@ mod tests {
             .await
             .expect("the part read builds");
         }
-        let counters_when_third_started = Mutex::new(None);
+        let cache_when_third_started = Mutex::new(None);
         let parts = parts_of(&whole_checkpoint(3)).expect("the fixture folds");
         get_or_build_checkpoint(&cache, &metrics, 3, too_large, || {
-            *counters_when_third_started.lock().unwrap() =
-                Some((cache.trees.entry_count(), cache.trees.weighted_size()));
+            *cache_when_third_started.lock().unwrap() = Some((
+                cache.trees.entry_count(),
+                cache.trees.weighted_size(),
+                cache.trees.contains_key(&1),
+                cache.trees.contains_key(&2),
+            ));
             async { Ok(parts) }
         })
         .await
         .expect("the part read builds");
         assert_eq!(
-            *counters_when_third_started.lock().unwrap(),
-            Some((1, states as u64)),
-            "the previous tree must be weighed before the next part-read build"
+            *cache_when_third_started.lock().unwrap(),
+            Some((1, states as u64, false, true)),
+            "the later tree must be in the cache, weighed, before the next part-read build"
+        );
+    }
+
+    /// A part-read tree that needs nearly the whole capacity is admitted,
+    /// evicting smaller trees that were looked up many times, and the next
+    /// lookup of its checkpoint is a cache hit, with no part read. So is a
+    /// second such tree right after it, which evicts the first.
+    #[tokio::test]
+    async fn near_capacity_part_read_trees_are_admitted_and_reused() {
+        const CAPACITY: usize = 1_000;
+        let cache = ProofCache::new(&ProofCacheConfig {
+            tree_capacity: CAPACITY as u64,
+            ..ProofCacheConfig::default()
+        });
+        let metrics = ProofProviderMetrics::new_for_testing();
+        for seq in 1..=5 {
+            for _ in 0..10 {
+                let data = whole_checkpoint(seq);
+                get_or_build_checkpoint(
+                    &cache,
+                    &metrics,
+                    seq,
+                    move || async move { Ok(data) },
+                    no_parts,
+                )
+                .await
+                .expect("the whole read builds the tree");
+            }
+        }
+        cache.trees.run_pending_tasks().await;
+        assert!(cache.trees.weighted_size() > 0);
+
+        let too_large = || async { Err::<CheckpointData, _>(too_large_error()) };
+        for seq in [100, 101] {
+            let part_reads = AtomicU32::new(0);
+            let parts = large_parts(seq, CAPACITY - 10);
+            for _ in 0..2 {
+                let parts = parts.clone();
+                let built = get_or_build_checkpoint(&cache, &metrics, seq, too_large, || {
+                    part_reads.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(parts) }
+                })
+                .await
+                .expect("the part read builds the tree");
+                assert_eq!(built.object_states, CAPACITY - 10);
+            }
+            assert_eq!(
+                part_reads.load(Ordering::SeqCst),
+                1,
+                "checkpoint {seq}'s tree must be served from the cache on the next lookup"
+            );
+            assert!(cache.trees.contains_key(&seq));
+        }
+        assert!(
+            !cache.trees.contains_key(&100),
+            "the second near-capacity tree evicts the first"
         );
     }
 
