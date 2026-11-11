@@ -589,22 +589,69 @@ struct ProofCache {
     /// `tx_digest → checkpoint_seq`, immutable once committed. Saves a
     /// `get_transaction_checkpoint` full-node round-trip per relayed read.
     tx_checkpoints: Cache<TransactionDigest, CheckpointSequenceNumber>,
+    /// Checkpoints whose whole read was over the decode limit. A checkpoint
+    /// never changes, so the whole read is not tried for them again: their
+    /// trees are built from the part reads at once.
+    too_large_checkpoints: Cache<CheckpointSequenceNumber, ()>,
 }
+
+/// How many too-large checkpoint numbers [`ProofCache`] remembers.
+const TOO_LARGE_CHECKPOINTS_CAPACITY: u64 = 1_024;
 
 struct CachedCheckpoint {
     summary: CertifiedCheckpointSummary,
     tree: ModifiedObjectTree,
 }
 
+/// Checkpoint `seq`'s summary and tree from `cache`, or built and cached.
+///
+/// Simultaneous misses of the same checkpoint share one build: the first
+/// runs it, and the others wait for its result. A hit counts in
+/// `proof_tree_cache_hits_total`, a build in `proof_tree_cache_misses_total`,
+/// and a caller that waited for another's build in neither.
+async fn get_or_build_checkpoint<Full, FullFut, Parts, PartsFut>(
+    cache: &ProofCache,
+    metrics: &ProofProviderMetrics,
+    seq: CheckpointSequenceNumber,
+    fetch_full: Full,
+    fetch_parts: Parts,
+) -> Result<Arc<CachedCheckpoint>, TransportError>
+where
+    Full: FnOnce() -> FullFut,
+    FullFut: Future<Output = Result<CheckpointData, TransportError>>,
+    Parts: FnOnce() -> PartsFut,
+    PartsFut: Future<
+        Output = Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError>,
+    >,
+{
+    if let Some(cached) = cache.trees.get(&seq).await {
+        metrics.proof_tree_cache_hits_total.inc();
+        return Ok(cached);
+    }
+    cache
+        .trees
+        .try_get_with(seq, async {
+            metrics.proof_tree_cache_misses_total.inc();
+            build_cached_checkpoint(seq, &cache.too_large_checkpoints, fetch_full, fetch_parts)
+                .await
+                .map(Arc::new)
+        })
+        .await
+        .map_err(|error| (*error).clone())
+}
+
 /// Build checkpoint `seq`'s summary and modified-object tree.
 ///
 /// The tree needs only the effects of the checkpoint's transactions.
 /// `fetch_full` reads the whole checkpoint. When that read is over the
-/// client's decode limit (`TooLarge`), `fetch_parts` reads the summary and
-/// each transaction's effects in separate, smaller reads instead. Any other
-/// error of `fetch_full` is returned as is.
+/// client's decode limit (`TooLarge`), `seq` is remembered in `too_large`,
+/// and `fetch_parts` reads the summary and each transaction's effects in
+/// separate, smaller reads instead. For a `seq` already in `too_large`,
+/// `fetch_full` is not called. Any other error of `fetch_full` is returned
+/// as is.
 async fn build_cached_checkpoint<Full, FullFut, Parts, PartsFut>(
     seq: CheckpointSequenceNumber,
+    too_large: &Cache<CheckpointSequenceNumber, ()>,
     fetch_full: Full,
     fetch_parts: Parts,
 ) -> Result<CachedCheckpoint, TransportError>
@@ -616,7 +663,14 @@ where
         Output = Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError>,
     >,
 {
-    let (summary, artifacts) = match fetch_full().await {
+    let whole = if too_large.contains_key(&seq) {
+        Err(TransportError::TooLarge(format!(
+            "checkpoint {seq} is known to be over the decode limit"
+        )))
+    } else {
+        fetch_full().await
+    };
+    let (summary, artifacts) = match whole {
         Ok(data) => {
             check_written_versions_increase(
                 seq,
@@ -632,6 +686,7 @@ where
                 seq,
                 reason, "whole checkpoint is over the decode limit; reading its effects in parts"
             );
+            too_large.insert(seq, ()).await;
             let (summary, effects) = fetch_parts().await?;
             if *summary.sequence_number() != seq {
                 return Err(TransportError::Encoding(format!(
@@ -688,6 +743,9 @@ impl ProofCache {
             tx_checkpoints: Cache::builder()
                 .max_capacity(cfg.tx_checkpoint_capacity)
                 .build(),
+            too_large_checkpoints: Cache::builder()
+                .max_capacity(TOO_LARGE_CHECKPOINTS_CAPACITY)
+                .build(),
         }
     }
 }
@@ -738,21 +796,14 @@ impl LocalProofProvider {
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<Arc<CachedCheckpoint>, TransportError> {
-        if let Some(c) = self.cache.trees.get(&seq).await {
-            self.metrics.proof_tree_cache_hits_total.inc();
-            return Ok(c);
-        }
-        self.metrics.proof_tree_cache_misses_total.inc();
-        let entry = Arc::new(
-            build_cached_checkpoint(
-                seq,
-                || self.raw.get_full_checkpoint(seq),
-                || self.raw.get_checkpoint_effects_in_parts(seq),
-            )
-            .await?,
-        );
-        self.cache.trees.insert(seq, entry.clone()).await;
-        Ok(entry)
+        get_or_build_checkpoint(
+            &self.cache,
+            &self.metrics,
+            seq,
+            || self.raw.get_full_checkpoint(seq),
+            || self.raw.get_checkpoint_effects_in_parts(seq),
+        )
+        .await
     }
 
     async fn build_object_entry(
@@ -969,7 +1020,7 @@ impl ProofProvider for LocalProofProvider {
 mod tests {
     use super::*;
 
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSTarget};
     use sui_types::base_types::SequenceNumber;
@@ -982,6 +1033,7 @@ mod tests {
     };
     use sui_types::object::Owner;
     use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
+    use tokio::task::yield_now;
 
     struct StaticSnapshotCache {
         entry: VerifiedObjectEntry,
@@ -1100,6 +1152,10 @@ mod tests {
         );
         let StaticSnapshotCache { entry, summary } = snapshot_cache(committee, keys, seq, &object);
         Ok((seq, entry, summary))
+    }
+
+    fn too_large_cache() -> Cache<CheckpointSequenceNumber, ()> {
+        Cache::builder().max_capacity(16).build()
     }
 
     fn unprovable_entry_cache() -> Cache<ObjectID, ()> {
@@ -1357,6 +1413,7 @@ mod tests {
 
         let from_whole = build_cached_checkpoint(
             seq,
+            &too_large_cache(),
             || async { Ok(data.clone()) },
             || async {
                 Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
@@ -1369,6 +1426,7 @@ mod tests {
         let parts_read = AtomicBool::new(false);
         let from_parts = build_cached_checkpoint(
             seq,
+            &too_large_cache(),
             || async {
                 Err::<CheckpointData, _>(TransportError::TooLarge(
                     "Error, decoded message length too large: found 140000000 bytes, \
@@ -1434,6 +1492,7 @@ mod tests {
 
         let from_whole = build_cached_checkpoint(
             seq,
+            &too_large_cache(),
             || async { Ok(whole.clone()) },
             || async {
                 Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
@@ -1454,6 +1513,7 @@ mod tests {
                 }
                 match build_cached_checkpoint(
                     seq,
+                    &too_large_cache(),
                     || async {
                         Err::<CheckpointData, _>(TransportError::TooLarge(
                             "Error, decoded message length too large".into(),
@@ -1505,6 +1565,7 @@ mod tests {
         let parts_read = AtomicBool::new(false);
         let result = build_cached_checkpoint(
             seq,
+            &too_large_cache(),
             || async {
                 Err::<CheckpointData, _>(TransportError::Network("connection reset".into()))
             },
@@ -1517,5 +1578,66 @@ mod tests {
 
         assert!(matches!(result, Err(TransportError::Network(_))));
         assert!(!parts_read.load(Ordering::SeqCst));
+    }
+
+    fn too_large_error() -> TransportError {
+        TransportError::TooLarge("Error, decoded message length too large".into())
+    }
+
+    /// A checkpoint found too large is remembered: the next build of it reads
+    /// the parts without trying the whole read again.
+    #[tokio::test]
+    async fn a_checkpoint_found_too_large_is_not_read_whole_again() {
+        let seq = 7;
+        let parts = parts_of(&whole_checkpoint(seq));
+        let too_large = too_large_cache();
+        let whole_reads = AtomicU32::new(0);
+        let whole_read = || {
+            whole_reads.fetch_add(1, Ordering::SeqCst);
+            async { Err::<CheckpointData, _>(too_large_error()) }
+        };
+
+        for _ in 0..2 {
+            build_cached_checkpoint(seq, &too_large, whole_read, || async { Ok(parts.clone()) })
+                .await
+                .expect("the part reads build the tree");
+        }
+
+        assert_eq!(whole_reads.load(Ordering::SeqCst), 1);
+        assert!(too_large.contains_key(&seq));
+    }
+
+    /// Simultaneous misses of the same checkpoint share one build, and so
+    /// one set of reads.
+    #[tokio::test]
+    async fn simultaneous_misses_of_one_checkpoint_share_one_build() {
+        let seq = 7;
+        let data = whole_checkpoint(seq);
+        let cache = ProofCache::new(&ProofCacheConfig::default());
+        let metrics = ProofProviderMetrics::new_for_testing();
+        let whole_reads = AtomicU32::new(0);
+        let whole_read = || {
+            whole_reads.fetch_add(1, Ordering::SeqCst);
+            let data = data.clone();
+            async move {
+                yield_now().await;
+                Ok(data)
+            }
+        };
+        let no_parts = || async {
+            Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
+                TransportError::Network("the parts must not be read".into()),
+            )
+        };
+
+        let (first, second) = tokio::join!(
+            get_or_build_checkpoint(&cache, &metrics, seq, whole_read, no_parts),
+            get_or_build_checkpoint(&cache, &metrics, seq, whole_read, no_parts),
+        );
+
+        let (first, second) = (first.unwrap(), second.unwrap());
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(whole_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(metrics.proof_tree_cache_misses_total.get(), 1);
     }
 }

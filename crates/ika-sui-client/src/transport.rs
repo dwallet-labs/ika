@@ -98,7 +98,7 @@ pub struct SubmittedTransaction {
     pub effects: TransactionEffects,
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum TransportError {
     #[error("transport: {0}")]
     Network(String),

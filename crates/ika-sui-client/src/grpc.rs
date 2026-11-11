@@ -46,6 +46,7 @@ use sui_types::object::Object;
 use sui_types::signature::GenericSignature;
 use sui_types::sui_sdk_types_conversions::struct_tag_core_to_sdk;
 use sui_types::transaction::{Transaction, TransactionData};
+use tokio::time::sleep;
 use tonic::metadata::{Ascii, MetadataKey, MetadataValue};
 
 use crate::rate_limit::RateLimitGate;
@@ -76,6 +77,62 @@ pub const CHECKPOINT_PART_DECODE_LIMIT: usize = 16 * 1024 * 1024;
 
 /// How many per-transaction effects reads one checkpoint keeps in flight.
 const CHECKPOINT_PART_CONCURRENCY: usize = 16;
+
+/// How many times one part read is tried when it fails as `Network`.
+const PART_READ_ATTEMPTS: u32 = 4;
+
+/// The wait before a part read's first retry. It doubles before each later
+/// retry, so one part read waits at most 1.75 s in all.
+const PART_READ_FIRST_DELAY: Duration = Duration::from_millis(250);
+
+/// Run one part read, and run it again, up to [`PART_READ_ATTEMPTS`] times
+/// in all, while it fails as `Network`, waiting `first_delay` and then twice
+/// as long before each retry. Any other outcome is returned at once.
+async fn retry_part_read<T, F, Fut>(first_delay: Duration, mut read: F) -> Result<T, TransportError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, TransportError>>,
+{
+    let mut delay = first_delay;
+    for _ in 1..PART_READ_ATTEMPTS {
+        match read().await {
+            Err(TransportError::Network(reason)) => {
+                tracing::debug!(reason, ?delay, "part read failed; retrying it");
+                sleep(delay).await;
+                delay *= 2;
+            }
+            other => return other,
+        }
+    }
+    read().await
+}
+
+/// Refuse a digest list whose length is not the number of transactions the
+/// summary says its checkpoint holds: its `network_total_transactions` minus
+/// the previous checkpoint's, or all of them for the first checkpoint.
+fn check_transaction_count(
+    summary: &CheckpointSummary,
+    previous: Option<&CheckpointSummary>,
+    count: usize,
+) -> Result<(), TransportError> {
+    let before = previous.map_or(0, |previous| previous.network_total_transactions);
+    let expected = summary
+        .network_total_transactions
+        .checked_sub(before)
+        .ok_or_else(|| {
+            TransportError::Encoding(format!(
+                "checkpoint {} counts {} transactions in all, fewer than the {before} before it",
+                summary.sequence_number, summary.network_total_transactions
+            ))
+        })?;
+    if count as u64 != expected {
+        return Err(TransportError::Encoding(format!(
+            "checkpoint {} holds {expected} transactions, but {count} digests were listed",
+            summary.sequence_number
+        )));
+    }
+    Ok(())
+}
 
 /// Deadline for a transaction submission.
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -257,14 +314,55 @@ impl SuiGrpcClient {
     /// inclusion proof needs from it.
     ///
     /// The first read returns the summary, its signature and the transaction
-    /// digests. Then each transaction's effects come in a read of their own.
-    /// Every read decodes at most [`CHECKPOINT_PART_DECODE_LIMIT`]. Nothing
-    /// read here is trusted: a proof built from these effects is checked
-    /// against the certified summary by whoever verifies it.
+    /// digests. The number of digests must equal the summary's
+    /// `network_total_transactions` minus the previous checkpoint's, read
+    /// with the small summary read by the summary's `previous_digest`.
+    /// Then each transaction's effects come in a read of their own. Every
+    /// read decodes at most [`CHECKPOINT_PART_DECODE_LIMIT`], and a read that
+    /// fails as `Network` is retried on its own (see [`retry_part_read`]), so
+    /// the parts already read are kept. Nothing read here is trusted: a proof
+    /// built from these effects is checked against the certified summary by
+    /// whoever verifies it.
     pub async fn get_checkpoint_effects_in_parts(
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<(CertifiedCheckpointSummary, Vec<TransactionEffects>), TransportError> {
+        let (summary, digests) =
+            retry_part_read(PART_READ_FIRST_DELAY, || self.get_checkpoint_digests(seq)).await?;
+        let previous = match summary.data().previous_digest {
+            Some(previous_digest) => Some(
+                retry_part_read(PART_READ_FIRST_DELAY, || {
+                    self.get_previous_checkpoint_summary(previous_digest)
+                })
+                .await?,
+            ),
+            None => None,
+        };
+        check_transaction_count(
+            summary.data(),
+            previous.as_ref().map(|previous| previous.data()),
+            digests.len(),
+        )?;
+        let effects = stream::iter(digests)
+            .map(|digest| {
+                retry_part_read(PART_READ_FIRST_DELAY, move || {
+                    self.get_transaction_effects(digest)
+                })
+            })
+            .buffered(CHECKPOINT_PART_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((summary, effects))
+    }
+
+    /// The certified summary of checkpoint `seq` and its transaction digests,
+    /// under [`CHECKPOINT_PART_DECODE_LIMIT`].
+    async fn get_checkpoint_digests(
+        &self,
+        seq: CheckpointSequenceNumber,
+    ) -> Result<(CertifiedCheckpointSummary, Vec<TransactionDigest>), TransportError> {
         let mut rpc = self.rpc.clone();
         let mut request = proto::GetCheckpointRequest::by_sequence_number(seq);
         request.read_mask = Some(prost_types::FieldMask {
@@ -301,14 +399,22 @@ impl SuiGrpcClient {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let effects = stream::iter(digests)
-            .map(|digest| self.get_transaction_effects(digest))
-            .buffered(CHECKPOINT_PART_CONCURRENCY)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok((summary, effects))
+        Ok((summary, digests))
+    }
+
+    /// The summary whose digest is `digest`, refused unless it hashes to it.
+    async fn get_previous_checkpoint_summary(
+        &self,
+        digest: CheckpointDigest,
+    ) -> Result<CertifiedCheckpointSummary, TransportError> {
+        let summary = self.get_checkpoint_summary_by_digest(digest).await?;
+        if *summary.digest() != digest {
+            return Err(TransportError::Encoding(format!(
+                "summary returned for checkpoint digest {digest} hashes to {}",
+                summary.digest()
+            )));
+        }
+        Ok(summary)
     }
 
     /// The effects of `digest`, alone, under [`CHECKPOINT_PART_DECODE_LIMIT`].
@@ -1356,8 +1462,11 @@ impl SuiWriter for SuiGrpcClient {
 mod tests {
     use super::*;
 
+    use std::sync::atomic::{AtomicU32, Ordering};
+
     use sui_rpc::field::FieldMaskTree;
     use sui_rpc::merge::Merge;
+    use sui_types::digests::CheckpointContentsDigest;
     use sui_types::effects::{TransactionEffects, TransactionEffectsAPI};
     use sui_types::full_checkpoint_content::{ExecutedTransaction, ObjectSet};
     use sui_types::gas::GasCostSummary;
@@ -1641,5 +1750,91 @@ mod tests {
                 other => panic!("{code:?} from the endpoint must map to Network, got {other:?}"),
             }
         }
+    }
+
+    fn summary_counting(
+        sequence_number: CheckpointSequenceNumber,
+        network_total_transactions: u64,
+    ) -> CheckpointSummary {
+        CheckpointSummary {
+            epoch: 0,
+            sequence_number,
+            network_total_transactions,
+            content_digest: CheckpointContentsDigest::new([0; 32]),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![],
+            end_of_epoch_data: None,
+            version_specific_data: vec![],
+        }
+    }
+
+    /// The digest count must equal the summary's total minus the previous
+    /// checkpoint's total. The first checkpoint has no previous one, so its
+    /// count is its total. A list one short or one long is refused.
+    #[test]
+    fn the_digest_count_must_match_the_summaries() {
+        let previous = summary_counting(9, 100);
+        let summary = summary_counting(10, 103);
+        assert!(check_transaction_count(&summary, Some(&previous), 3).is_ok());
+        for count in [2, 4] {
+            assert!(matches!(
+                check_transaction_count(&summary, Some(&previous), count),
+                Err(TransportError::Encoding(_))
+            ));
+        }
+        let first = summary_counting(0, 1);
+        assert!(check_transaction_count(&first, None, 1).is_ok());
+        assert!(matches!(
+            check_transaction_count(&first, None, 0),
+            Err(TransportError::Encoding(_))
+        ));
+        assert!(matches!(
+            check_transaction_count(&summary_counting(10, 50), Some(&previous), 0),
+            Err(TransportError::Encoding(_))
+        ));
+    }
+
+    /// A part read that fails as `Network` is tried again, up to the cap,
+    /// and its later success is returned. Any other failure is returned at
+    /// once, and a read that keeps failing stops at the cap.
+    #[tokio::test]
+    async fn a_part_read_is_retried_on_network_errors_only() {
+        let calls = AtomicU32::new(0);
+        let read = || {
+            let call = calls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if call < 2 {
+                    Err(TransportError::Network("refused".into()))
+                } else {
+                    Ok(call)
+                }
+            }
+        };
+        assert_eq!(retry_part_read(Duration::ZERO, read).await.unwrap(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        let calls = AtomicU32::new(0);
+        let read = || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err::<(), _>(TransportError::NotFound("pruned".into())) }
+        };
+        assert!(matches!(
+            retry_part_read(Duration::ZERO, read).await,
+            Err(TransportError::NotFound(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let calls = AtomicU32::new(0);
+        let read = || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err::<(), _>(TransportError::Network("refused".into())) }
+        };
+        assert!(matches!(
+            retry_part_read(Duration::ZERO, read).await,
+            Err(TransportError::Network(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), PART_READ_ATTEMPTS);
     }
 }
