@@ -113,32 +113,46 @@ pub enum TransportError {
     TooLarge(String),
 }
 
-/// Refuse checkpoint `seq` as `Encoding` unless each object's written
-/// versions strictly increase across `effects`, in order.
+/// Refuse checkpoint `seq` as `Encoding` unless every effects in it is
+/// version 2 and each object's written versions strictly increase across
+/// `effects`, in order.
 ///
-/// Sui's `CheckpointArtifacts::from` asserts this condition, and a failed
-/// assert ends the process. Effects read from a Sui endpoint or a checkpoint
-/// archive are not yet checked against the certified summary when the
-/// artifacts are built from them. So every caller that builds artifacts from
-/// such effects checks the same condition first, and a list that breaks it
-/// fails only that checkpoint.
+/// Sui's `CheckpointArtifacts::from` asserts the version order, and a failed
+/// assert ends the process. It reads each effects' `written()`, which Sui
+/// leaves `unimplemented!` for version 1 effects, so version 1 effects end
+/// the process too. Effects read from a Sui endpoint or a checkpoint archive
+/// are not yet checked against the certified summary when the artifacts are
+/// built from them. So every caller that builds artifacts from such effects
+/// checks both conditions first, and a list that breaks one fails only that
+/// checkpoint.
 pub fn check_written_versions_increase<'a>(
     seq: CheckpointSequenceNumber,
     effects: impl IntoIterator<Item = &'a TransactionEffects>,
 ) -> Result<(), TransportError> {
     effects
         .into_iter()
-        .flat_map(|effects| effects.written())
-        .try_fold(
-            BTreeMap::new(),
-            |mut latest, (id, version, _)| match latest.insert(id, version) {
-                Some(previous) if previous >= version => Err(TransportError::Encoding(format!(
-                    "checkpoint {seq}: object {id} written at version {version} after \
-                     version {previous}"
-                ))),
-                _ => Ok(latest),
-            },
-        )
+        .try_fold(BTreeMap::new(), |latest, effects| {
+            if matches!(effects, TransactionEffects::V1(_)) {
+                return Err(TransportError::Encoding(format!(
+                    "checkpoint {seq}: transaction {} has version 1 effects",
+                    effects.transaction_digest()
+                )));
+            }
+            effects
+                .written()
+                .into_iter()
+                .try_fold(latest, |mut latest, (id, version, _)| {
+                    match latest.insert(id, version) {
+                        Some(previous) if previous >= version => {
+                            Err(TransportError::Encoding(format!(
+                                "checkpoint {seq}: object {id} written at version {version} after \
+                             version {previous}"
+                            )))
+                        }
+                        _ => Ok(latest),
+                    }
+                })
+        })
         .map(|_| ())
 }
 
@@ -446,6 +460,9 @@ pub trait SuiWriter: Send + Sync {
 mod tests {
     use super::*;
 
+    use sui_types::effects::{EffectsObjectChange, TransactionEffectsV1};
+    use sui_types::execution_status::ExecutionStatus;
+    use sui_types::gas::GasCostSummary;
     use sui_types::test_checkpoint_data_builder::TestCheckpointBuilder;
 
     fn wrapper_tag(inner: TypeTag) -> TypeTag {
@@ -571,6 +588,54 @@ mod tests {
                 assert!(reason.contains("checkpoint 5"), "{reason}")
             }
             other => panic!("a repeated version must be refused, got {other:?}"),
+        }
+    }
+
+    /// Effects of one transaction that write `object` at `lamport_version`.
+    fn effects_writing(object: &Object, lamport_version: u64) -> TransactionEffects {
+        TransactionEffects::new_from_execution_v2(
+            ExecutionStatus::Success,
+            0,
+            GasCostSummary::default(),
+            vec![],
+            TransactionDigest::random(),
+            SequenceNumber::from_u64(lamport_version),
+            BTreeMap::from([(
+                object.id(),
+                EffectsObjectChange::new(None, Some(object), true, false),
+            )]),
+            None,
+            None,
+            vec![],
+        )
+    }
+
+    /// A later transaction that writes an object at a lower version than an
+    /// earlier one, 8 then 7, is refused as `Encoding`.
+    #[test]
+    fn a_version_written_lower_than_the_one_before_is_refused() {
+        let object = Object::immutable_with_id_for_testing(ObjectID::random());
+        let increasing = [effects_writing(&object, 7), effects_writing(&object, 8)];
+        check_written_versions_increase(5, &increasing).expect("7 then 8 passes");
+        let decreasing = [effects_writing(&object, 8), effects_writing(&object, 7)];
+        assert!(matches!(
+            check_written_versions_increase(5, &decreasing),
+            Err(TransportError::Encoding(_))
+        ));
+    }
+
+    /// Version 1 effects are refused as `Encoding` before their `written()`,
+    /// which Sui leaves `unimplemented!`, is called.
+    #[test]
+    fn version_one_effects_are_refused() {
+        let mut effects = TransactionEffects::V1(TransactionEffectsV1::default());
+        let digest = TransactionDigest::random();
+        *effects.transaction_digest_mut_for_testing() = digest;
+        match check_written_versions_increase(5, [&effects]) {
+            Err(TransportError::Encoding(reason)) => {
+                assert!(reason.contains(&digest.to_string()), "{reason}")
+            }
+            other => panic!("version 1 effects must be refused, got {other:?}"),
         }
     }
 }

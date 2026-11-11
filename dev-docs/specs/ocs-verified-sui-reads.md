@@ -610,9 +610,8 @@ dropping entries are layered:
   endpoint. Before it reports `TooLarge`, the direct proof provider reads
   the checkpoint again in parts, because an inclusion proof needs only the
   certified summary and each transaction's effects. One read returns the
-  summary, its signature and the transaction digests. Sui caps the
-  transactions scheduled into a checkpoint at 20,000, and may add a few
-  settlement transactions and the end-of-epoch transaction. Then one read
+  summary, its signature and the transaction digests, at most 224,816 of
+  them (the digest cap below), about 11 MiB. Then one read
   per transaction returns only its effects. Sui's executor caps each
   transaction's estimated effects at 512 KiB, or 8 MiB for a system
   transaction, so each part read decodes at most 16 MiB. That bound holds
@@ -630,11 +629,46 @@ dropping entries are layered:
   remembered (up to 1,024 of them), and its whole read is not tried again.
   Simultaneous builds of one checkpoint's tree share one set of reads.
   Before either read's effects build the tree, the provider
-  checks that each object's written versions strictly increase across the
-  effects list, in order. Sui's tree builder asserts that condition, and a
-  failed assert ends the process; the list comes from the endpoint and is not
-  yet checked against the certified summary. A list that breaks it fails
-  that checkpoint as `Encoding`, so the child is skipped as above. The
+  checks that every effects is version 2 and that each object's written
+  versions strictly increase across the effects list, in order. Sui's tree
+  builder asserts the version order, and reads each effects' `written()`,
+  which Sui leaves `unimplemented!` for version 1 effects; either failure
+  ends the process. The list comes from the endpoint and is not yet checked
+  against the certified summary. A list that breaks either condition fails
+  that checkpoint as `Encoding`, so the child is skipped as above.
+
+  The whole read also checks, before Sui's conversion of the checkpoint's
+  object set, that every Move object's contents start with a 32-byte id.
+  BCS accepts shorter contents, and that conversion assumes the id is
+  there. A checkpoint that fails is `Encoding`. The checkpoint archive's
+  read goes through Sui's own `fetch_checkpoint` (sui-storage
+  `object_store/util.rs:514-548`), which runs that conversion before ika
+  sees the data, so the archive path does not yet refuse such objects.
+
+  The part read has two caps, both `Encoding` when passed, so the child is
+  skipped as above:
+  - at most 224,816 transaction digests, checked on the listed digests
+    before any effects read and independent of the summary. That is
+    `max_transactions_per_checkpoint` (20,000), plus the accumulator
+    settlement transactions Sui may add (20,000 transactions × 1,024
+    accumulator events, `max_num_accumulator_events`, ÷ 100 updates per
+    settlement transaction, `max_updates_per_settlement_txn` = 204,800),
+    plus 16 system transactions (Sui 6a567fa, sui-protocol-config
+    `lib.rs:4451`, `:4484`, `:4957`);
+  - at most 1 GiB of effects held at once, counted as each answer arrives,
+    stopping the read at once. No Sui limit bounds a checkpoint's total
+    effects, so an honest checkpoint whose effects total more than 1 GiB is
+    skipped, and the sessions it defines wait. The checkpoints the part read
+    exists for stay far below that: each user transaction's effects are at
+    most 512 KiB.
+
+  The first effects read that fails once its retries are spent also stops
+  the part read. A summary past checkpoint 0 that names no previous
+  checkpoint is refused. The summary is not signature-checked in the part
+  read, so an endpoint that answers wrongly can make the count check pass
+  with any count up to the digest cap; a proof built from such an answer
+  still fails at the consumer, but the reads and memory such an answer
+  causes are bounded only by the two caps. The
   checkpoint pusher and the mirror server's changeset page run the same
   check before they build artifacts from a checkpoint. The pusher's archive
   verification and fold then fail with an error. A checkpoint the fold

@@ -996,7 +996,7 @@ mod tests {
     use sui_types::committee::Committee as SuiCommittee;
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointContentsDigest;
-    use sui_types::effects::TransactionEffectsAPI;
+    use sui_types::effects::{TransactionEffectsAPI, TransactionEffectsV1};
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::{
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
@@ -1609,5 +1609,41 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(whole_reads.load(Ordering::SeqCst), 1);
         assert_eq!(metrics.proof_tree_cache_misses_total.get(), 1);
+    }
+
+    /// Version 1 effects of the checkpoint's own transaction, whose
+    /// `written()` Sui leaves `unimplemented!`, are refused as `Encoding` on
+    /// the whole read and on the part read.
+    #[tokio::test]
+    async fn version_one_effects_are_refused_on_both_reads() {
+        let seq = 7;
+        let mut whole = whole_checkpoint(seq);
+        let digest = *whole.transactions[0].effects.transaction_digest();
+        let mut effects = TransactionEffects::V1(TransactionEffectsV1::default());
+        *effects.transaction_digest_mut_for_testing() = digest;
+        whole.transactions[0].effects = effects;
+        let parts = parts_of(&whole);
+
+        let from_whole = build_cached_checkpoint(
+            seq,
+            &too_large_cache(),
+            || async { Ok(whole.clone()) },
+            || async {
+                Err::<(CertifiedCheckpointSummary, Vec<TransactionEffects>), _>(
+                    TransportError::Network("the parts must not be read".into()),
+                )
+            },
+        )
+        .await;
+        assert!(matches!(from_whole, Err(TransportError::Encoding(_))));
+
+        let from_parts = build_cached_checkpoint(
+            seq,
+            &too_large_cache(),
+            || async { Err::<CheckpointData, _>(too_large_error()) },
+            || async { Ok(parts.clone()) },
+        )
+        .await;
+        assert!(matches!(from_parts, Err(TransportError::Encoding(_))));
     }
 }
