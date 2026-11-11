@@ -40,8 +40,8 @@ const SEEK_SUCCESSOR_AFTER: Duration = Duration::from_secs(30);
 /// While the frontier stays stalled, how often every relay is asked again.
 const SEEK_SUCCESSOR_INTERVAL: Duration = Duration::from_secs(30);
 /// How long the frontier may go without advancing before the receiver reports
-/// this node's view of Sui as frozen. The log text says "5 minutes"; keep it in
-/// step.
+/// that no relay is serving it anything new. The log text says "5 minutes";
+/// keep it in step.
 const UPSTREAM_FROZEN_AFTER: Duration = Duration::from_secs(5 * 60);
 
 /// Unix seconds now, for the `*_timestamp_seconds` gauges.
@@ -362,17 +362,18 @@ impl ChangesetReceiver {
                     "none: the relays answer, but none has a newer checkpoint"
                 ),
                 "no Sui state relay is advancing: no relay has served this node a Sui \
-                 checkpoint past its changeset frontier for over 5 minutes, so this node's \
-                 view of Sui is frozen. Every reachable relay is asked for the next checkpoint \
-                 every 30 seconds. Check this node's p2p connectivity to sui-state-direct \
-                 validators, and the sui-state-mirror-peers list if one is set \
-                 (logged once until a relay serves a newer checkpoint)"
+                 checkpoint past its changeset frontier for over 5 minutes, so the changeset \
+                 index that verified reads check currency against is not moving. Every \
+                 reachable relay is asked for the next checkpoint every 30 seconds. Check this \
+                 node's p2p connectivity to sui-state-direct validators, and the \
+                 sui-state-mirror-peers list if one is set (logged once until a relay serves \
+                 a newer checkpoint)"
             );
         } else {
             info!(
                 %contiguous_head,
                 was_frozen_secs = now.saturating_duration_since(previous_advance).as_secs(),
-                "a Sui state relay is serving new checkpoints again; this node's view of Sui \
+                "a Sui state relay is serving new checkpoints again; the changeset frontier \
                  is moving"
             );
         }

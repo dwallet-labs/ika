@@ -286,7 +286,7 @@ impl OcsMetrics {
             ).unwrap(),
             changeset_upstream_last_advance_timestamp_seconds: register_int_gauge_with_registry!(
                 "ika_ocs_changeset_upstream_last_advance_timestamp_seconds",
-                "Unix time a relay last served this node a Sui checkpoint past its changeset frontier (the changeset receiver's start until the first advance; 0 when no receiver runs); time() minus this is how long this node's view of Sui through its relays has been frozen",
+                "Unix time a relay last served this node a Sui checkpoint past its changeset frontier (the changeset receiver's start until the first advance; 0 when no receiver runs); time() minus this is how long no relay has served this node anything new",
                 registry,
             ).unwrap(),
             changeset_successor_seeks_total: register_int_counter_vec_with_registry!(

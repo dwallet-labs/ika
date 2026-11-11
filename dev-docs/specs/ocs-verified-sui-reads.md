@@ -476,7 +476,9 @@ that retains it; this change does not manufacture missing verified history.
 **A frozen relay.** A relay whose own fullnode is dead or stuck serves empty
 pages, which read exactly like being caught up. In automatic peer mode the
 first relay that answers keeps being preferred, so one frozen relay at the
-front froze the whole node, and every gauge read healthy. Sui makes
+front stopped the node's changeset index, and nothing said so: only
+`ika_ocs_changeset_last_progress_timestamp_seconds` aged, and the gap signal
+(highest seen past the contiguous head) stayed 0. Sui makes
 checkpoints continuously, so the receiver measures the frontier against time
 instead. Once it has not advanced for 30 s, the receiver asks every relay for
 the next checkpoint, at most every 30 s while the stall lasts. This is the

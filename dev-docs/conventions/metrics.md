@@ -454,11 +454,14 @@ so the gap alert never fires. These families cover that case:
 - `ika_ocs_changeset_upstream_last_advance_timestamp_seconds` (gauge): Unix
   time a relay last served this node a checkpoint past its changeset
   frontier. It is set to the receiver's start until the first advance, and it
-  is 0 on nodes that run no receiver (sui-state-direct), so gate on `> 0`.
-  Unlike `ika_ocs_changeset_last_progress_timestamp_seconds`, which is 0 until
-  the first advance, it ages even when no relay ever served this node, so
+  is 0 on nodes that run no receiver (sui-state-direct), so gate on
+  `ika_ocs_role_info{role="sui_state_mirrored"} == 1`. Unlike
+  `ika_ocs_changeset_last_progress_timestamp_seconds`, which is 0 until the
+  first advance, it ages even when no relay ever served this node, so
   `time() - ika_ocs_changeset_upstream_last_advance_timestamp_seconds` is how
-  long the node's view of Sui has been frozen.
+  long no relay has served the node anything new. It is evaluated once per
+  receiver poll (2 s); measure its healthy peak across the fleet after
+  rollout before paging on it.
 - `ika_ocs_changeset_successor_seeks_total{outcome}` (counter, all three
   outcomes present from the start): once the frontier has stalled for 30 s,
   the receiver asks every relay for the next checkpoint, at most every 30 s.
