@@ -128,30 +128,14 @@ pub struct OcsMetrics {
     /// is a cache gap the archive backfill will not repair. Alert on any
     /// increase.
     pub pusher_lost_checkpoints_overflow_total: IntCounter,
-
-    /// Peer checkpoint lookups a `sui-state-direct` node ran for an object it
-    /// could not prove (see `peer_checkpoint_lookup`), by outcome: `recovered`
-    /// (an archive checkpoint a peer named verified and folded the object),
-    /// `already_cached`, `not_live` (the fullnode no longer reports the
-    /// object), `fullnode_error`, `no_candidate` (no peer named an acceptable
-    /// checkpoint), `not_recovered` (every candidate tried folded nothing for
-    /// it), `exhausted` (the per-object candidate budget is spent),
-    /// `backfill_unavailable` or `no_peers` (the p2p network is not attached
-    /// yet).
-    pub peer_checkpoint_lookups_total: IntCounterVec, // labels: ["outcome"]
-    /// Peer replies to those lookups, by answer: `named`, `unknown`,
-    /// `unimplemented` (an older binary or a node that does not serve the
-    /// relay — a "don't know") or `failed` (an error, refusal or timeout —
-    /// also a "don't know").
-    pub peer_checkpoint_answers_total: IntCounterVec, // labels: ["answer"]
-    /// What became of each checkpoint a peer named: `submitted` to the archive
-    /// backfill, then `folded` or `not_folded`; or refused before any download
-    /// as `above_head`, `beyond_retention`, `already_tried` or `over_budget`.
-    pub peer_checkpoint_candidates_total: IntCounterVec, // labels: ["result"]
-    /// Unprovable-object reports that did not start a lookup, by reason:
-    /// `rate_limit` (the node-wide lookup budget), `concurrency` or
-    /// `tracked_full`.
-    pub peer_checkpoint_lookups_throttled_total: IntCounterVec, // labels: ["reason"]
+    /// A sui-state-direct node's peer fallback for objects it cannot prove
+    /// itself (see `peer_fallback`), by outcome: `served` (a peer's answer
+    /// passed every mirrored-node check and matched this node's fullnode),
+    /// `not_current` (authentic, but not the fullnode's current reference),
+    /// `unverified` (a peer's answer failed verification), `unavailable` (no
+    /// peer served it), `not_live`, `fullnode_error`, or `skipped` (network not
+    /// attached, concurrency cap, or the object failed recently).
+    pub direct_peer_fallback_total: IntCounterVec, // labels: ["outcome"]
 
     /// Latest-checkpoint watermark samples refused by the rate bound, by
     /// consumer (`folder` = the checkpoint folder's per-tick scan bound and
@@ -361,31 +345,10 @@ impl OcsMetrics {
                 registry,
             )
             .unwrap(),
-            peer_checkpoint_lookups_total: register_int_counter_vec_with_registry!(
-                "ika_ocs_peer_checkpoint_lookups_total",
-                "Peer checkpoint lookups a sui-state-direct node ran for an object it could not prove, by outcome (recovered, already_cached, not_live, fullnode_error, no_candidate, not_recovered, exhausted, backfill_unavailable, no_peers)",
+            direct_peer_fallback_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_direct_peer_fallback_total",
+                "A sui-state-direct node's peer fallback for objects it cannot prove itself, by outcome (served, not_current, unverified, unavailable, not_live, fullnode_error, skipped)",
                 &["outcome"],
-                registry,
-            )
-            .unwrap(),
-            peer_checkpoint_answers_total: register_int_counter_vec_with_registry!(
-                "ika_ocs_peer_checkpoint_answers_total",
-                "Peer replies to object checkpoint lookups, by answer (named, unknown, unimplemented = older binary or non-serving node, failed = error/refusal/timeout); every non-named answer is a don't-know",
-                &["answer"],
-                registry,
-            )
-            .unwrap(),
-            peer_checkpoint_candidates_total: register_int_counter_vec_with_registry!(
-                "ika_ocs_peer_checkpoint_candidates_total",
-                "Checkpoints peers named for an unprovable object, by result: submitted to the archive backfill then folded/not_folded, or refused before download as above_head/beyond_retention/already_tried/over_budget",
-                &["result"],
-                registry,
-            )
-            .unwrap(),
-            peer_checkpoint_lookups_throttled_total: register_int_counter_vec_with_registry!(
-                "ika_ocs_peer_checkpoint_lookups_throttled_total",
-                "Unprovable-object reports that did not start a peer checkpoint lookup, by reason (rate_limit, concurrency, tracked_full)",
-                &["reason"],
                 registry,
             )
             .unwrap(),

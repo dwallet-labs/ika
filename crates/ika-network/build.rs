@@ -259,21 +259,6 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path(codec_path)
                 .build(),
         )
-        // Direct-to-direct: which Sui checkpoint proves one object at exactly
-        // one reference, answered from the serving node's own verified state.
-        // The answer is a bare sequence number the asker verifies against the
-        // checkpoint archive itself; no object data crosses the wire. An older
-        // binary has no route for it and answers anemo's bare NotFound, which
-        // the asker counts as "don't know".
-        .method(
-            anemo_build::manual::Method::builder()
-                .name("object_checkpoint_lookup")
-                .route_name("ObjectCheckpointLookup")
-                .request_type("crate::sui_state_mirror::ObjectCheckpointLookupRequest")
-                .response_type("crate::sui_state_mirror::ObjectCheckpointLookupResponse")
-                .codec_path(codec_path)
-                .build(),
-        )
         // NOTE: no `submit_transaction` RPC. The relay serves verified READS
         // only — writes (ika checkpoint write-back) are notifier-gated and the
         // notifier always uses a direct uplink, so no node ever submits through

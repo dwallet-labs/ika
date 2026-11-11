@@ -24,16 +24,14 @@
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.SuiStateMirror.rs"));
 }
-pub mod checkpoint_lookup;
 pub mod client;
 
 use std::collections::BTreeMap;
-use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use anemo::codegen::InboundRequestLayer;
 use anemo::{PeerId, Request, Response, rpc::Status, types::response::StatusCode};
-use anemo_tower::{inflight_limit, rate_limit};
+use anemo_tower::inflight_limit;
 use ika_sui_client::transport::{SuiTransport, TransportError};
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::{ObjectDigest, ObjectID, SequenceNumber};
@@ -48,10 +46,6 @@ use crate::proof_provider::{
     VerifiedDynamicFieldsPageRequest, VerifiedDynamicFieldsPageResponse, VerifiedObjectResponse,
 };
 
-pub use checkpoint_lookup::{
-    MirrorCheckpointPeers, ObjectCheckpointLocator, ObjectCheckpointLookupRequest,
-    ObjectCheckpointLookupResponse, ObjectCheckpointPeers, PeerCheckpointAnswers,
-};
 pub use client::{
     SuiMirrorPeers, SuiMirrorProofProvider, SuiMirrorTransport, find_serving_mirror_peer,
     register_addressed_mirror_peers,
@@ -129,9 +123,6 @@ pub struct Server {
     transport: Arc<dyn SuiTransport>,
     provider: Arc<dyn ProofProvider>,
     metrics: Arc<ProofProviderMetrics>,
-    /// Answers `object_checkpoint_lookup` from this node's verified state.
-    /// `None` answers "don't know" to every lookup.
-    checkpoint_locator: Option<Arc<dyn ObjectCheckpointLocator>>,
 }
 
 impl Server {
@@ -144,18 +135,7 @@ impl Server {
             transport,
             provider,
             metrics,
-            checkpoint_locator: None,
         }
-    }
-
-    /// Answer `object_checkpoint_lookup` from `locator` (see
-    /// [`checkpoint_lookup`]).
-    pub fn with_checkpoint_locator(
-        mut self,
-        locator: Option<Arc<dyn ObjectCheckpointLocator>>,
-    ) -> Self {
-        self.checkpoint_locator = locator;
-        self
     }
 
     /// Record that a relay request is being served: bump the op counter (and,
@@ -405,32 +385,6 @@ impl SuiStateMirror for Server {
         self.serve_end("verified_dynamic_fields_page", started);
         Ok(Response::new(v))
     }
-    /// A point lookup in this node's verified cache — never a scan, and never
-    /// a fullnode call. The per-requester rate limit and the inflight cap sit
-    /// in front of it (see [`make_server`]).
-    async fn object_checkpoint_lookup(
-        &self,
-        request: Request<ObjectCheckpointLookupRequest>,
-    ) -> Result<Response<ObjectCheckpointLookupResponse>, Status> {
-        let started = self.serve_start("object_checkpoint_lookup", request.peer_id().copied());
-        let object_ref = request.into_inner().object_ref;
-        let checkpoint_seq = self
-            .checkpoint_locator
-            .as_ref()
-            .and_then(|locator| locator.checkpoint_proving(object_ref));
-        self.metrics
-            .serve_object_checkpoint_lookup_total
-            .with_label_values(&[if checkpoint_seq.is_some() {
-                "named"
-            } else {
-                "unknown"
-            }])
-            .inc();
-        self.serve_end("object_checkpoint_lookup", started);
-        Ok(Response::new(ObjectCheckpointLookupResponse {
-            checkpoint_seq,
-        }))
-    }
 }
 
 /// Coarse per-method concurrency ceilings for the heaviest serving RPCs, to
@@ -457,25 +411,13 @@ const INFLIGHT_METADATA_READ: usize = 256;
 /// checkpoint server-side to extract its object-set, so keep the page modest;
 /// the receiver simply requests the next page to continue.
 const MAX_CHANGESET_PAGE: usize = 64;
-/// `object_checkpoint_lookup` is a cache point read, but it is served to any
-/// connected peer, so it is bounded twice: a concurrency ceiling, and a
-/// per-requester rate (a sustained rate with a burst). A direct node asks at
-/// most a few lookups a minute in total, spread over every connected peer, so
-/// an honest requester never comes near either; one over the rate gets
-/// `TooManyRequests`, which the asker counts as "don't know".
-const INFLIGHT_OBJECT_CHECKPOINT_LOOKUP: usize = 64;
-const OBJECT_CHECKPOINT_LOOKUP_PER_PEER_PER_SECOND: NonZeroU32 = NonZeroU32::new(1).unwrap();
-const OBJECT_CHECKPOINT_LOOKUP_PER_PEER_BURST: NonZeroU32 = NonZeroU32::new(16).unwrap();
 
 /// Build the anemo router service serving the verified-read and
 /// committee-ratchet RPCs, with per-method inflight caps on the heavy ones.
-/// `checkpoint_locator` answers the direct-to-direct `object_checkpoint_lookup`
-/// (see [`checkpoint_lookup`]); `None` answers "don't know".
 pub fn make_server(
     transport: Arc<dyn SuiTransport>,
     provider: Arc<dyn ProofProvider>,
     metrics: Arc<ProofProviderMetrics>,
-    checkpoint_locator: Option<Arc<dyn ObjectCheckpointLocator>>,
 ) -> SuiStateMirrorServer<Server> {
     // Every served READ RPC gets an inflight ceiling so a byzantine peer can't
     // open unbounded concurrent streams against a sui-state-direct node. (Each
@@ -491,32 +433,22 @@ pub fn make_server(
             ))
         };
     }
-    SuiStateMirrorServer::new(
-        Server::new(transport, provider, metrics).with_checkpoint_locator(checkpoint_locator),
-    )
-    // direct-to-direct checkpoint lookup: a concurrency ceiling, then a
-    // per-requester rate (refused, never queued)
-    .add_layer_for_object_checkpoint_lookup(inflight!(INFLIGHT_OBJECT_CHECKPOINT_LOOKUP))
-    .add_layer_for_object_checkpoint_lookup(InboundRequestLayer::new(
-        rate_limit::RateLimitLayer::new(
-            governor::Quota::per_second(OBJECT_CHECKPOINT_LOOKUP_PER_PEER_PER_SECOND)
-                .allow_burst(OBJECT_CHECKPOINT_LOOKUP_PER_PEER_BURST),
-            rate_limit::WaitMode::ReturnError,
-        ),
-    ))
-    // verified reads
-    .add_layer_for_verified_object(inflight!(INFLIGHT_VERIFIED_OBJECT))
-    .add_layer_for_batch_verified_objects(inflight!(INFLIGHT_BATCH_VERIFIED_OBJECTS))
-    .add_layer_for_verified_dynamic_fields_page(inflight!(INFLIGHT_VERIFIED_DYNAMIC_FIELDS_PAGE))
-    .add_layer_for_get_full_checkpoint(inflight!(INFLIGHT_GET_FULL_CHECKPOINT))
-    .add_layer_for_changeset_page(inflight!(INFLIGHT_CHANGESET_PAGE))
-    // committee-ratchet checkpoint lookups (were uncapped)
-    .add_layer_for_last_checkpoint_of_epoch(inflight!(INFLIGHT_CHECKPOINT_READ))
-    .add_layer_for_get_checkpoint_summary_by_digest(inflight!(INFLIGHT_CHECKPOINT_READ))
-    .add_layer_for_get_latest_checkpoint(inflight!(INFLIGHT_CHECKPOINT_READ))
-    // cheap metadata reads (were uncapped)
-    .add_layer_for_get_current_epoch(inflight!(INFLIGHT_METADATA_READ))
-    .add_layer_for_get_chain_identifier(inflight!(INFLIGHT_METADATA_READ))
+    SuiStateMirrorServer::new(Server::new(transport, provider, metrics))
+        // verified reads
+        .add_layer_for_verified_object(inflight!(INFLIGHT_VERIFIED_OBJECT))
+        .add_layer_for_batch_verified_objects(inflight!(INFLIGHT_BATCH_VERIFIED_OBJECTS))
+        .add_layer_for_verified_dynamic_fields_page(inflight!(
+            INFLIGHT_VERIFIED_DYNAMIC_FIELDS_PAGE
+        ))
+        .add_layer_for_get_full_checkpoint(inflight!(INFLIGHT_GET_FULL_CHECKPOINT))
+        .add_layer_for_changeset_page(inflight!(INFLIGHT_CHANGESET_PAGE))
+        // committee-ratchet checkpoint lookups (were uncapped)
+        .add_layer_for_last_checkpoint_of_epoch(inflight!(INFLIGHT_CHECKPOINT_READ))
+        .add_layer_for_get_checkpoint_summary_by_digest(inflight!(INFLIGHT_CHECKPOINT_READ))
+        .add_layer_for_get_latest_checkpoint(inflight!(INFLIGHT_CHECKPOINT_READ))
+        // cheap metadata reads (were uncapped)
+        .add_layer_for_get_current_epoch(inflight!(INFLIGHT_METADATA_READ))
+        .add_layer_for_get_chain_identifier(inflight!(INFLIGHT_METADATA_READ))
 }
 
 #[cfg(test)]

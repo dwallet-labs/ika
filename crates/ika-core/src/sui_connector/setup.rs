@@ -44,8 +44,8 @@ use ika_network::proof_provider::{
     LocalProofProvider, ProofCacheConfig, ProofProvider, ProofProviderMetrics,
 };
 use ika_network::sui_state_mirror::{
-    self, ObjectCheckpointLocator, Server as SuiStateMirrorImpl, SuiMirrorPeers,
-    SuiMirrorProofProvider, SuiMirrorTransport, SuiStateMirrorServer,
+    self, Server as SuiStateMirrorImpl, SuiMirrorPeers, SuiMirrorProofProvider, SuiMirrorTransport,
+    SuiStateMirrorServer,
 };
 use ika_sui_client::genesis::{compiled_in_chain_identifier, load_and_verify_sui_genesis};
 use ika_sui_client::grpc::SuiGrpcClient;
@@ -62,10 +62,7 @@ use crate::sui_connector::fallback_transport::FallbackTransport;
 use crate::sui_connector::ocs_currency::ChangesetIndex;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::ocs_verifier::{OcsError, OcsVerifyingClient};
-use crate::sui_connector::peer_checkpoint_lookup::{
-    PeerCheckpointRecovery, PeerCheckpointRecoveryWiring, RecoveryBounds, peer_backfill_channel,
-    perpetual_retention_floor,
-};
+use crate::sui_connector::peer_fallback::{FallbackBounds, PeerFallback};
 use crate::sui_connector::push_worker::load_lost_checkpoints;
 use crate::sui_connector::retained_transport::RetainedFullnodeTransport;
 use crate::sui_connector::verified_reader::{OcsVerifiedReader, singleton_anchor_ids};
@@ -104,11 +101,10 @@ pub struct SuiConnectorStack {
     /// fullnode pruned before the pusher could fetch them. `None` when no
     /// archive resolved (localnet without one configured).
     pub checkpoint_archive: Option<Arc<dyn ika_sui_client::archive::CheckpointArchive>>,
-    /// `Some` on a sui-state-direct node with a checkpoint archive: the peer
-    /// checkpoint lookup the reader reports unprovable objects to (see
-    /// `peer_checkpoint_lookup`). The caller attaches the p2p network once it
-    /// is up and hands the backfill requests to the pusher.
-    pub peer_checkpoint_recovery: Option<PeerCheckpointRecoveryWiring>,
+    /// sui-state-direct only: the reader's peer fallback for objects this node
+    /// cannot prove itself (see `peer_fallback`). The caller attaches the p2p
+    /// network once it is up.
+    pub peer_fallback: Option<Arc<PeerFallback>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -545,30 +541,20 @@ pub async fn build_sui_connector_stack(
     //    sui-state-mirrored the cache is a read-through memo of an
     //    untrusted relay, so reads stay on the per-read-verified relay.
     let cache_first_reads = mirror_capable;
-    // A direct node that cannot prove an object — its fullnode pruned the
-    // checkpoint that wrote it and its cache has no snapshot at that exact
-    // reference — asks the other direct nodes which checkpoint proves it and
-    // backfills that checkpoint from the archive, verified like any lost
-    // checkpoint. Only with an archive: without one there is nothing to verify
-    // a peer's answer against.
-    let peer_checkpoint_recovery = match (&raw_for_pushing, &archive) {
-        (Some(fullnode), Some(_)) => {
-            let (requests, backfill_requests) = peer_backfill_channel();
-            let recovery = Arc::new(PeerCheckpointRecovery::new(
-                fullnode.clone(),
-                state_cache.clone(),
-                requests,
-                perpetual_retention_floor(perpetual.clone()),
-                RecoveryBounds::default(),
-                metrics.clone(),
-            ));
-            Some(PeerCheckpointRecoveryWiring {
-                recovery,
-                backfill_requests,
-            })
-        }
-        _ => None,
-    };
+    // A direct node whose own provider cannot prove an object (its fullnode
+    // pruned the defining checkpoint, its cache has no snapshot at the current
+    // reference) reads it from a connected direct peer over the existing relay
+    // surface, verified as a mirrored node verifies a relayed object and
+    // current per this node's fullnode.
+    let peer_fallback = raw_for_pushing.as_ref().map(|fullnode| {
+        Arc::new(PeerFallback::new(
+            fullnode.clone(),
+            committees.clone(),
+            FallbackBounds::default(),
+            metrics.clone(),
+            provider_metrics.clone(),
+        ))
+    });
     // Cache-first staleness tripwire (direct only): if the cache head lags the
     // observed upstream head by more than this many checkpoints (e.g. a
     // stalled pusher), serve from the network instead of frozen cache state.
@@ -593,11 +579,7 @@ pub async fn build_sui_connector_stack(
         staleness_bound,
     )
     .with_changeset_index(changeset_index)
-    .with_peer_checkpoint_recovery(
-        peer_checkpoint_recovery
-            .as_ref()
-            .map(|wiring| wiring.recovery.clone()),
-    );
+    .with_peer_fallback(peer_fallback.clone());
     let reader = Arc::new(match compiled_in_ika_identity(cfg.sui_chain_identifier) {
         Some(identity) => reader_base.with_expected_identity(
             identity.ika_system_package_id,
@@ -634,14 +616,10 @@ pub async fn build_sui_connector_stack(
             ratchet.transport().clone(),
             perpetual.clone(),
         ));
-        // Answers the direct-to-direct checkpoint lookup from this node's
-        // verified cache, whether or not this node itself has an archive.
-        let checkpoint_locator: Arc<dyn ObjectCheckpointLocator> = state_cache.clone();
         Some(sui_state_mirror::make_server(
             mirror_transport,
             proof_provider,
             provider_metrics.clone(),
-            Some(checkpoint_locator),
         ))
     } else {
         None
@@ -661,7 +639,7 @@ pub async fn build_sui_connector_stack(
         metrics,
         changeset_receiver,
         checkpoint_archive: archive,
-        peer_checkpoint_recovery,
+        peer_fallback,
     })
 }
 

@@ -916,7 +916,7 @@ impl IkaNode {
             raw_transport_for_pushing,
             mut state_cache_opt,
             archive_for_pushing,
-            peer_checkpoint_recovery,
+            peer_fallback,
         ) = {
             // Spread a built stack into the individually-wired component
             // slots the rest of boot threads around.
@@ -928,7 +928,7 @@ impl IkaNode {
                     stack.raw_transport_for_pushing,
                     Some(stack.state_cache),
                     stack.checkpoint_archive,
-                    stack.peer_checkpoint_recovery,
+                    stack.peer_fallback,
                 )
             };
             if is_sui_state_direct {
@@ -1041,15 +1041,11 @@ impl IkaNode {
         )
         .expect("Initial trusted peers must be set");
 
-        // sui-state-direct with an archive: the peer checkpoint lookup asks the
-        // direct peers this network connects (discovery keeps the committee
-        // connected), and its answers go to the pusher's archive backfill.
-        let peer_backfill_requests = peer_checkpoint_recovery.map(|wiring| {
-            wiring.recovery.attach_peers(Arc::new(
-                ika_network::sui_state_mirror::MirrorCheckpointPeers::new(p2p_network.clone()),
-            ));
-            wiring.backfill_requests
-        });
+        // sui-state-direct: the reader's peer fallback asks the direct peers
+        // this network connects (discovery keeps the committee connected).
+        if let Some(fallback) = &peer_fallback {
+            fallback.attach_network(p2p_network.clone());
+        }
 
         if is_sui_state_mirrored && !peer_only {
             // sui-state-mirrored *with* a fallback URL: the OCS stack is built
@@ -1215,7 +1211,6 @@ impl IkaNode {
             let archive_backfill = config
                 .sui_connector_config
                 .sui_checkpoint_archive_backfill_seqs();
-            let mut peer_backfill_requests = peer_backfill_requests;
             tokio::spawn(async move {
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
                 // Retry construction instead of giving up for the lifetime of
@@ -1252,11 +1247,7 @@ impl IkaNode {
                     )
                     .await
                     {
-                        Ok(pusher) => {
-                            break pusher
-                                .with_archive_backfill(archive_backfill.clone())
-                                .with_peer_backfill_requests(peer_backfill_requests.take());
-                        }
+                        Ok(pusher) => break pusher.with_archive_backfill(archive_backfill.clone()),
                         Err(e) => {
                             warn!(
                                 error = ?e,
