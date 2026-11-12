@@ -86,6 +86,11 @@ pub struct SuiMirrorPeers {
     /// operation works over the peers connected through Ika's discovery
     /// system at that moment.
     pinned: bool,
+    /// A caller-chosen peer list ([`Self::scoped`]) rather than an operator pin
+    /// or the connected set: used exactly as given, never rotated, a peer that
+    /// does not serve `SuiStateMirror` is skipped as quietly as in automatic
+    /// mode, and a peer's error answer is logged at debug.
+    scoped: bool,
     /// Pinned mode only: round-robin start offset so the fleet spreads reads
     /// across serving peers instead of every node hammering `peers[0]` of the
     /// shared operator-written list. Each `try_peers` pass still visits all
@@ -107,13 +112,38 @@ impl SuiMirrorPeers {
             network,
             peers: Arc::new(RwLock::new(peers)),
             pinned,
+            scoped: false,
+            next_start: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            metrics,
+        }
+    }
+
+    /// Exactly `peers`, chosen by the caller — neither an operator pin nor the
+    /// connected set. For a caller that must judge each peer's answer on its
+    /// own: a sui-state-direct node's peer fallback asks one peer per provider,
+    /// so that a peer whose answer fails verification is never the only one
+    /// asked. The list is used as given and never rotated; a peer that does
+    /// not serve `SuiStateMirror` is skipped as quietly as in automatic mode,
+    /// since it is not a misconfigured pin; and a peer's error answer is
+    /// logged at debug, since the caller reports the outcome itself (a scoped
+    /// caller's own deadline is shorter than the relay request timeout).
+    pub fn scoped(
+        network: Network,
+        peers: Vec<PeerId>,
+        metrics: Arc<ProofProviderMetrics>,
+    ) -> Self {
+        Self {
+            network,
+            peers: Arc::new(RwLock::new(peers)),
+            pinned: false,
+            scoped: true,
             next_start: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             metrics,
         }
     }
 
     fn snapshot(&self) -> Vec<PeerId> {
-        if self.pinned {
+        if self.pinned || self.scoped {
             return self.peers.read().clone();
         }
         // Automatic mode: work over the peers connected RIGHT NOW — peers
@@ -260,6 +290,10 @@ impl SuiMirrorPeers {
                         // persist for hours; the receiver emits a rate-limited
                         // warning when the full pass fails to find a successor.
                         debug!(?peer_id, ?status, "changeset_page: trying next relay");
+                    } else if self.scoped {
+                        // The scoped caller judges each peer's answer and
+                        // reports the whole pass itself.
+                        debug!(?peer_id, ?status, "{op_label}: scoped peer returned error");
                     } else {
                         warn!(
                             ?peer_id,
@@ -1095,6 +1129,50 @@ mod tests {
             Err(TransportError::Network(_)) => {}
             other => panic!("expected Network error with no serving peer, got {other:?}"),
         }
+    }
+
+    /// A scoped peer set asks exactly the peers it was given — never another
+    /// connected peer — and skips a peer that does not serve the relay as
+    /// quietly as automatic mode does: no failover count, unlike a pin.
+    #[tokio::test]
+    async fn a_scoped_peer_set_asks_only_its_peers_and_skips_a_route_miss_quietly() {
+        let serving = build_network(|router| {
+            router.add_rpc_service(SuiStateMirrorServer::new(StubMirror::default()))
+        });
+        let non_serving = build_network(|router| router);
+        let consumer = build_network(|router| router);
+        let serving_id = consumer.connect(serving.local_addr()).await.unwrap();
+        let non_serving_id = consumer.connect(non_serving.local_addr()).await.unwrap();
+        let metrics = ProofProviderMetrics::new(&prometheus::Registry::new());
+
+        let only_serving = SuiMirrorTransport::new(SuiMirrorPeers::scoped(
+            consumer.clone(),
+            vec![serving_id],
+            metrics.clone(),
+        ));
+        assert_eq!(
+            only_serving.get_chain_identifier().await.unwrap(),
+            "test-chain"
+        );
+
+        // Connected to the serving peer too, but scoped away from it.
+        let only_non_serving = SuiMirrorTransport::new(SuiMirrorPeers::scoped(
+            consumer.clone(),
+            vec![non_serving_id],
+            metrics.clone(),
+        ));
+        assert!(matches!(
+            only_non_serving.get_chain_identifier().await,
+            Err(TransportError::Network(_))
+        ));
+        assert_eq!(
+            metrics
+                .relay_peer_failover_total
+                .with_label_values(&["get_chain_identifier", &non_serving_id.to_string()])
+                .get(),
+            0,
+            "a route miss on a scoped peer is not a misconfigured pin"
+        );
     }
 
     #[tokio::test]

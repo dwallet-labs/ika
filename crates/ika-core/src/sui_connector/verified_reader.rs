@@ -49,6 +49,7 @@ use crate::sui_connector::changeset_receiver::SharedChangesetIndex;
 use crate::sui_connector::committee_store::{CommitteeStore, SummaryVerifyError};
 use crate::sui_connector::ocs_currency::CurrencyVerdict;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
+use crate::sui_connector::peer_fallback::PeerFallback;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use crate::sui_connector::watermark_guard::WatermarkGuard;
 use ika_network::proof_provider::VerifiedObjectEntry;
@@ -70,6 +71,17 @@ const MAX_VERIFIED_PAGE_ENTRIES: usize = 1024;
 /// one network re-read per anchor per interval, far below the per-tick reach-back
 /// rate that the cache-first anchor path exists to avoid.
 const ANCHOR_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Whether a direct read whose own provider answered `NotFound`, with nothing
+/// cached to serve, waits for the peer fallback (see `peer_fallback`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PeerWait {
+    /// Fail at once; the fallback fills the cache in the background.
+    Never,
+    /// Wait for the attempt: the singleton anchor reads, whose callers (the
+    /// executor's boot barrier) retry until they succeed.
+    WhenNothingCached,
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum ReaderError {
@@ -291,6 +303,10 @@ pub struct OcsVerifiedReader {
     /// per genesis. Set via [`Self::with_expected_identity`].
     expected_system_package: Option<ObjectID>,
     expected_coordinator_package: Option<ObjectID>,
+    /// sui-state-direct only: proves, from a connected direct peer and with a
+    /// mirrored node's verification, an object this node's own provider
+    /// cannot (see `peer_fallback`). Set via [`Self::with_peer_fallback`].
+    peer_fallback: Option<Arc<PeerFallback>>,
 }
 
 impl OcsVerifiedReader {
@@ -320,7 +336,16 @@ impl OcsVerifiedReader {
             changeset_index: None,
             expected_system_package: None,
             expected_coordinator_package: None,
+            peer_fallback: None,
         }
+    }
+
+    /// On a direct node, fall back to `fallback` for an object this node's
+    /// own provider cannot prove. Only the direct (`cache_first`) `NotFound`
+    /// arm asks it: a mirrored node's every read is already a relayed one.
+    pub fn with_peer_fallback(mut self, fallback: Option<Arc<PeerFallback>>) -> Self {
+        self.peer_fallback = fallback;
+        self
     }
 
     /// [`check_object_identity`] plus the metric, so a node that refuses to
@@ -415,20 +440,28 @@ impl OcsVerifiedReader {
             self.observe_verify_latency("object_cache_hit", started);
             return Ok(hit);
         }
-        self.verified_object_over_network(id, started).await
+        self.verified_object_over_network(id, started, PeerWait::Never)
+            .await
     }
 
     /// The network half of [`Self::verified_object`]: pull + verify from the
     /// provider with no cache-first short-circuit (a `NotFound` still falls back
     /// to the cached snapshot on a direct node). [`Self::verified_anchor_object`]
-    /// calls this directly to force a refresh past `try_cache_hit`.
+    /// calls this directly to force a refresh past `try_cache_hit`. `wait` says
+    /// whether a direct read with nothing cached waits for the peer fallback.
     async fn verified_object_over_network(
         &self,
         id: ObjectID,
         started: Instant,
+        wait: PeerWait,
     ) -> Result<VerifiedObject, ReaderError> {
         let resp = match self.provider.verified_object(id).await {
-            Ok(resp) => resp,
+            Ok(resp) => {
+                if let Some(fallback) = &self.peer_fallback {
+                    fallback.note_proved([id]);
+                }
+                resp
+            }
             // The network reach-back failed because the object's defining
             // transaction was pruned upstream. Serve the committee-verified
             // snapshot the pusher last folded instead of wedging: it is
@@ -440,7 +473,16 @@ impl OcsVerifiedReader {
             // verified, monotonic) anchor when the pusher is behind — strictly
             // better than the alternative, which is the executor wedging forever.
             Err(TransportError::NotFound(reason)) if self.cache_first => {
+                let fallback = self.peer_fallback.as_ref();
                 if let Some(hit) = self.cache_fallback(id) {
+                    // Served at once, as without the fallback. A snapshot at
+                    // the fullnode's current reference the provider would
+                    // have proved from, so this one is likely older: let a
+                    // peer prove the current one off this read's path (an
+                    // anchor whose newer write the pusher never folded, #1736).
+                    if let Some(fallback) = fallback {
+                        fallback.refresh_in_background(id);
+                    }
                     self.metrics
                         .cache_read_total
                         .with_label_values(&["fallback"])
@@ -453,6 +495,22 @@ impl OcsVerifiedReader {
                     );
                     self.observe_verify_latency("object_cache_fallback", started);
                     return Ok(hit);
+                }
+                // Nothing to serve. Only an anchor read waits for the peers;
+                // any other read (a bag walk's child included) fails as before
+                // while the fallback fills the cache for a later read.
+                if let Some(fallback) = fallback {
+                    match wait {
+                        PeerWait::WhenNothingCached => {
+                            if fallback.fill(id).await.is_ok()
+                                && let Some(filled) = self.cache_fallback(id)
+                            {
+                                self.observe_verify_latency("object_peer_fallback", started);
+                                return Ok(filled);
+                            }
+                        }
+                        PeerWait::Never => fallback.refresh_in_background(id),
+                    }
                 }
                 return Err(ReaderError::Transport(TransportError::NotFound(reason)));
             }
@@ -506,7 +564,9 @@ impl OcsVerifiedReader {
         // re-serve the same stale snapshot — its tripwire keys off the pusher's
         // processed head, which stays current even when one anchor update was
         // skipped). On success, stamp the refresh so subsequent reads serve cache.
-        let result = self.verified_object_over_network(id, Instant::now()).await;
+        let result = self
+            .verified_object_over_network(id, Instant::now(), PeerWait::WhenNothingCached)
+            .await;
         if result.is_ok() {
             self.anchor_refreshed_at.lock().insert(id, Instant::now());
         }
@@ -953,6 +1013,14 @@ impl OcsVerifiedReader {
                 source_checkpoint_seq: seq,
             });
         }
+        // Children this page proved are not stuck: a child the fallback was
+        // tracking (not yet indexed on an earlier walk) is forgotten, so bag
+        // children never crowd its tracking table.
+        if self.cache_first
+            && let Some(fallback) = &self.peer_fallback
+        {
+            fallback.note_proved(verified.iter().map(|child| child.object.id()));
+        }
 
         // Resolve children the provider LISTED but could not build proofs
         // for — their defining checkpoint was pruned upstream, which is
@@ -962,6 +1030,9 @@ impl OcsVerifiedReader {
         // epoch-close gate pinned the epoch). `verified_object` carries its
         // own proof verification, currency check, and the committee-verified
         // cache fallback that serves exactly these pruned-defining-tx reads.
+        // On a direct node with a peer fallback, a child with nothing cached
+        // is filled in the background (`PeerWait::Never`): the walk never
+        // waits for a peer, and a later walk serves the child from the cache.
         // Trusted-listing only: on a mirrored node the relay's skipped ids
         // are untrusted (no membership binding is possible without a proof),
         // so they stay omitted there and the existing size-vs-listed
@@ -1324,7 +1395,11 @@ impl OcsVerifiedReader {
         Ok(())
     }
 
-    fn record_high_water(&self, id: ObjectID, version: SequenceNumber) -> Result<(), ReaderError> {
+    pub(crate) fn record_high_water(
+        &self,
+        id: ObjectID,
+        version: SequenceNumber,
+    ) -> Result<(), ReaderError> {
         let mut hw = self.high_water.write();
         if let Some(&cached) = hw.get(&id)
             && version < cached

@@ -54,6 +54,7 @@ pub mod metrics;
 pub mod ocs_currency;
 pub mod ocs_metrics;
 pub mod ocs_verifier;
+pub mod peer_fallback;
 pub mod pubkey_provider_updater;
 pub mod push_worker;
 pub mod retained_transport;

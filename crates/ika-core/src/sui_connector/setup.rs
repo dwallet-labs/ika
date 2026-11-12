@@ -62,6 +62,7 @@ use crate::sui_connector::fallback_transport::FallbackTransport;
 use crate::sui_connector::ocs_currency::ChangesetIndex;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::ocs_verifier::{OcsError, OcsVerifyingClient};
+use crate::sui_connector::peer_fallback::{FallbackBounds, PeerFallback};
 use crate::sui_connector::push_worker::load_lost_checkpoints;
 use crate::sui_connector::retained_transport::RetainedFullnodeTransport;
 use crate::sui_connector::verified_reader::{OcsVerifiedReader, singleton_anchor_ids};
@@ -100,6 +101,10 @@ pub struct SuiConnectorStack {
     /// fullnode pruned before the pusher could fetch them. `None` when no
     /// archive resolved (localnet without one configured).
     pub checkpoint_archive: Option<Arc<dyn ika_sui_client::archive::CheckpointArchive>>,
+    /// sui-state-direct only: the reader's peer fallback for objects this node
+    /// cannot prove itself (see `peer_fallback`). The caller attaches the p2p
+    /// network once it is up.
+    pub peer_fallback: Option<Arc<PeerFallback>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -536,6 +541,20 @@ pub async fn build_sui_connector_stack(
     //    sui-state-mirrored the cache is a read-through memo of an
     //    untrusted relay, so reads stay on the per-read-verified relay.
     let cache_first_reads = mirror_capable;
+    // A direct node whose own provider cannot prove an object (its fullnode
+    // pruned the defining checkpoint, its cache has no snapshot at the current
+    // reference) reads it from a connected direct peer over the existing relay
+    // surface, verified as a mirrored node verifies a relayed object and
+    // current per this node's fullnode.
+    let peer_fallback = raw_for_pushing.as_ref().map(|fullnode| {
+        Arc::new(PeerFallback::new(
+            fullnode.clone(),
+            committees.clone(),
+            state_cache.clone(),
+            FallbackBounds::default(),
+            metrics.clone(),
+        ))
+    });
     // Cache-first staleness tripwire (direct only): if the cache head lags the
     // observed upstream head by more than this many checkpoints (e.g. a
     // stalled pusher), serve from the network instead of frozen cache state.
@@ -559,7 +578,8 @@ pub async fn build_sui_connector_stack(
         cache_first_reads,
         staleness_bound,
     )
-    .with_changeset_index(changeset_index);
+    .with_changeset_index(changeset_index)
+    .with_peer_fallback(peer_fallback.clone());
     let reader = Arc::new(match compiled_in_ika_identity(cfg.sui_chain_identifier) {
         Some(identity) => reader_base.with_expected_identity(
             identity.ika_system_package_id,
@@ -619,6 +639,7 @@ pub async fn build_sui_connector_stack(
         metrics,
         changeset_receiver,
         checkpoint_archive: archive,
+        peer_fallback,
     })
 }
 

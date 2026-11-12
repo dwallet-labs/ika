@@ -163,6 +163,19 @@ pub struct OcsMetrics {
     /// is a cache gap the archive backfill will not repair. Alert on any
     /// increase.
     pub pusher_lost_checkpoints_overflow_total: IntCounter,
+    /// A sui-state-direct node's peer fallback for objects it cannot prove
+    /// itself (see `peer_fallback`). One count per attempt by how it ended:
+    /// `served` (a peer's answer passed every mirrored-node check and matched
+    /// this node's fullnode), `not_current` (authentic, but not the fullnode's
+    /// current reference), `unverified` (a peer's answer failed verification),
+    /// `unavailable` (no peer served it), `not_live`, `fullnode_error`,
+    /// `timed_out` (this node's own fullnode did not answer within the attempt
+    /// deadline). And one per READ that was due an attempt but got none —
+    /// reads, not attempts, so alert on the attempt outcomes: `skipped_frozen`,
+    /// `skipped_unconfirmed` (the fullnode not seen advancing since start),
+    /// `skipped_no_network`, `skipped_retry_wait`, `skipped_busy`,
+    /// `skipped_tracked_full`.
+    pub direct_peer_fallback_total: IntCounterVec, // labels: ["outcome"]
 
     /// Latest-checkpoint watermark samples refused by the rate bound, by
     /// consumer (`folder` = the checkpoint folder's per-tick scan bound and
@@ -390,6 +403,13 @@ impl OcsMetrics {
             pusher_lost_checkpoints_overflow_total: register_int_counter_with_registry!(
                 "ika_ocs_pusher_lost_checkpoints_overflow_total",
                 "Checkpoints the sui-state-direct pusher gave up on but could not record because the lost-checkpoint record was full; each is a cache gap the archive backfill will not repair — alert on any increase",
+                registry,
+            )
+            .unwrap(),
+            direct_peer_fallback_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_direct_peer_fallback_total",
+                "A sui-state-direct node's peer fallback for objects it cannot prove itself: attempts by outcome (served, not_current, unverified, unavailable, not_live, fullnode_error, timed_out), and reads (not attempts) due an attempt that got none (skipped_frozen, skipped_unconfirmed, skipped_no_network, skipped_retry_wait, skipped_busy, skipped_tracked_full)",
+                &["outcome"],
                 registry,
             )
             .unwrap(),

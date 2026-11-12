@@ -929,6 +929,7 @@ impl IkaNode {
             raw_transport_for_pushing,
             mut state_cache_opt,
             archive_for_pushing,
+            peer_fallback,
         ) = {
             // Spread a built stack into the individually-wired component
             // slots the rest of boot threads around.
@@ -940,6 +941,7 @@ impl IkaNode {
                     stack.raw_transport_for_pushing,
                     Some(stack.state_cache),
                     stack.checkpoint_archive,
+                    stack.peer_fallback,
                 )
             };
             if is_sui_state_direct {
@@ -993,7 +995,7 @@ impl IkaNode {
                     .expect("peer-only OCS stack built in the transport gate above");
                 unpack(stack)
             } else {
-                (None, None, None, None, None, None)
+                (None, None, None, None, None, None, None)
             }
         };
 
@@ -1051,6 +1053,12 @@ impl IkaNode {
             epoch_store.epoch_start_state(),
         )
         .expect("Initial trusted peers must be set");
+
+        // sui-state-direct: the reader's peer fallback asks the direct peers
+        // this network connects (discovery keeps the committee connected).
+        if let Some(fallback) = &peer_fallback {
+            fallback.attach_network(p2p_network.clone());
+        }
 
         if is_sui_state_mirrored && !peer_only {
             // sui-state-mirrored *with* a fallback URL: the OCS stack is built
@@ -1216,7 +1224,14 @@ impl IkaNode {
             let archive_backfill = config
                 .sui_connector_config
                 .sui_checkpoint_archive_backfill_seqs();
+            // The reader's peer fallback asks peers only while the pusher has
+            // seen this node's fullnode advance since start and does not report
+            // it frozen (see `peer_fallback`). Its watches are taken as soon as
+            // the pusher is built, before `run` consumes it; until then the
+            // fallback asks nobody.
+            let fallback_for_push = peer_fallback.clone();
             tokio::spawn(async move {
+                use ika_core::sui_connector::peer_fallback::PusherUpstream;
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
                 // Retry construction instead of giving up for the lifetime of
                 // the process. The constructor talks to the fullnode, so a
@@ -1252,7 +1267,12 @@ impl IkaNode {
                     )
                     .await
                     {
-                        Ok(pusher) => break pusher.with_archive_backfill(archive_backfill.clone()),
+                        Ok(pusher) => {
+                            if let Some(fallback) = &fallback_for_push {
+                                fallback.attach_upstream(PusherUpstream::of(&pusher));
+                            }
+                            break pusher.with_archive_backfill(archive_backfill.clone());
+                        }
                         Err(e) => {
                             warn!(
                                 error = ?e,
