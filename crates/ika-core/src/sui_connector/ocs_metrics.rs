@@ -151,8 +151,10 @@ pub struct OcsMetrics {
     /// `served` (a peer's answer passed every mirrored-node check and matched
     /// this node's fullnode), `not_current` (authentic, but not the fullnode's
     /// current reference), `unverified` (a peer's answer failed verification),
-    /// `unavailable` (no peer served it), `not_live`, `fullnode_error`. And one
-    /// per read that was due an attempt but got none: `skipped_frozen`,
+    /// `unavailable` (no peer served it), `not_live`, `fullnode_error`,
+    /// `timed_out` (this node's own fullnode did not answer within the attempt
+    /// deadline). And one per READ that was due an attempt but got none —
+    /// reads, not attempts, so alert on the attempt outcomes: `skipped_frozen`,
     /// `skipped_unconfirmed` (the fullnode not seen advancing since start),
     /// `skipped_no_network`, `skipped_retry_wait`, `skipped_busy`,
     /// `skipped_tracked_full`.
@@ -378,7 +380,7 @@ impl OcsMetrics {
             .unwrap(),
             direct_peer_fallback_total: register_int_counter_vec_with_registry!(
                 "ika_ocs_direct_peer_fallback_total",
-                "A sui-state-direct node's peer fallback for objects it cannot prove itself: attempts by outcome (served, not_current, unverified, unavailable, not_live, fullnode_error), and reads due an attempt that got none (skipped_frozen, skipped_unconfirmed, skipped_no_network, skipped_retry_wait, skipped_busy, skipped_tracked_full)",
+                "A sui-state-direct node's peer fallback for objects it cannot prove itself: attempts by outcome (served, not_current, unverified, unavailable, not_live, fullnode_error, timed_out), and reads (not attempts) due an attempt that got none (skipped_frozen, skipped_unconfirmed, skipped_no_network, skipped_retry_wait, skipped_busy, skipped_tracked_full)",
                 &["outcome"],
                 registry,
             )

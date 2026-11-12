@@ -32,8 +32,9 @@
 //! ago whose transaction the fullnode has not indexed yet answers the same for
 //! a few seconds. So the fallback asks peers only for an object that is
 //! stuck: this node's own provider has answered `NotFound` for it for at least
-//! `stuck_after`, with no read proving it in between. A gap of `stuck_reset`
-//! without a `NotFound` for it starts that clock over.
+//! `stuck_after`, with no read proving it in between (a single read, or a bag
+//! page proving it as a child). A gap of `stuck_reset` without a `NotFound`
+//! for it starts that clock over.
 //!
 //! The fallback never delays a read that has something to serve, and never a
 //! read other than an anchor's:
@@ -46,7 +47,18 @@
 //!   fails at once as before, and the fallback fills the cache in the
 //!   background: a later read is a cache hit.
 //! - Only an anchor read with nothing cached — the boot barrier, which retries
-//!   until it succeeds — waits for the attempt, at most `attempt_timeout`.
+//!   until it succeeds — waits for the attempt, at most `attempt_timeout`: the
+//!   deadline covers the whole attempt, this node's own fullnode lookup
+//!   included.
+//!
+//! On a fresh node that needs the fallback for an anchor, the barrier's read
+//! is answered at the executor's first retry at least `stuck_after` after the
+//! anchor's first `NotFound`: about 31 s with its backoff (1, 2, 4, 8, 16, then
+//! 30 s). The anchors are read one after another, and the `System` inner only
+//! once the outer is served, so it comes at about 61 s, and the
+//! `DWalletCoordinator` pair, if it needs the fallback too, about a minute
+//! later. Asking also waits for the pusher's first observed advance of this
+//! node's fullnode (below).
 //!
 //! # Verification parity
 //!
@@ -116,13 +128,18 @@
 //! attempt per object at a time; a deadline per peer and one for the whole
 //! attempt; at most `max_peers` peers per attempt; no new attempt for an object
 //! within `retry_after` of one that failed; and at most `max_tracked` objects
-//! tracked at once — while that many are, a new object is not tried.
+//! tracked at once — while that many are, a new object a read does not wait
+//! for is not tried. A read that waits is exempt: only the singleton anchors
+//! read that way, so a table full of bag children never keeps the boot
+//! barrier from its fallback, and the exemption adds at most those few
+//! entries.
 //!
 //! # Signals
 //!
 //! `ika_ocs_direct_peer_fallback_total{outcome}` counts each attempt by how it
 //! ended, and, as `skipped_*`, each read that was due an attempt but did not
-//! get one. The readers and relay clients an attempt uses report into metrics
+//! get one — reads, not attempts: a bag walk re-reads a child every few
+//! milliseconds, so alert on the attempt outcomes. The readers and relay clients an attempt uses report into metrics
 //! of their own that nothing exports, so a peer's answer moves none of the
 //! node's relay or verification metrics. One log line per attempt; per-peer
 //! detail is at debug.
@@ -249,6 +266,9 @@ enum Outcome {
     NotLive,
     /// The fullnode could not say what the object's current reference is.
     FullnodeError,
+    /// The attempt reached `attempt_timeout` before it could end otherwise:
+    /// this node's own fullnode did not answer in time.
+    TimedOut,
 }
 
 impl Outcome {
@@ -260,6 +280,7 @@ impl Outcome {
             Self::Unavailable => "unavailable",
             Self::NotLive => "not_live",
             Self::FullnodeError => "fullnode_error",
+            Self::TimedOut => "timed_out",
         }
     }
 }
@@ -338,6 +359,19 @@ impl Tracked {
             && self.retry_at.is_none_or(|at| now >= at)
             && now.saturating_duration_since(self.last_not_found) > bounds.stuck_reset
     }
+}
+
+/// Which attempts a read starts, and which concurrency cap they count against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lane {
+    /// A read that waits for its attempt: an anchor read with nothing cached.
+    /// Exempt from `max_tracked`, so a table full of other objects (bag
+    /// children re-walked every few milliseconds are never idle) can never
+    /// keep the boot barrier from its fallback. Only the singleton anchors
+    /// read this way, so this adds at most those few entries.
+    Waiting,
+    /// A read that does not wait.
+    Background,
 }
 
 /// An attempt allowed to start: the network to ask over and its lane's permit,
@@ -437,10 +471,11 @@ impl PeerFallback {
     /// version is now in the cache.
     pub async fn fill(self: &Arc<Self>, id: ObjectID) -> Result<(), ReaderError> {
         let admitted = self
-            .admit(id, &self.waiting)
+            .admit(id, Lane::Waiting)
             .map_err(|skip| self.refuse(id, skip))?;
         // Its own task, so a caller that stops waiting leaves the attempt to
-        // finish and settle.
+        // finish and settle. The attempt ends by `attempt_timeout`, so this
+        // wait does too.
         tokio::spawn(self.clone().run(id, admitted))
             .await
             .unwrap_or_else(|e| {
@@ -453,7 +488,7 @@ impl PeerFallback {
     /// The same `NotFound`, on a read that does not wait: start an attempt in
     /// the background if one is due.
     pub fn refresh_in_background(self: &Arc<Self>, id: ObjectID) {
-        match self.admit(id, &self.background) {
+        match self.admit(id, Lane::Background) {
             Ok(admitted) => {
                 tokio::spawn(self.clone().run(id, admitted));
             }
@@ -463,19 +498,28 @@ impl PeerFallback {
         }
     }
 
-    /// This node's own provider proved `id`: it is not stuck.
-    pub fn note_proved(&self, id: ObjectID) {
+    /// This node's own provider proved `ids`: none of them is stuck. One lock
+    /// for all, so a bag page's children cost one call.
+    pub fn note_proved(&self, ids: impl IntoIterator<Item = ObjectID>) {
         let mut tracked = self.tracked.lock();
-        if tracked.get(&id).is_some_and(|entry| !entry.in_flight) {
-            tracked.remove(&id);
+        if tracked.is_empty() {
+            return;
+        }
+        for id in ids {
+            if tracked.get(&id).is_some_and(|entry| !entry.in_flight) {
+                tracked.remove(&id);
+            }
         }
     }
 
     /// Note a `NotFound` for `id` and decide whether it starts an attempt.
-    fn admit(&self, id: ObjectID, lane: &Arc<Semaphore>) -> Result<Admitted, Skip> {
+    fn admit(&self, id: ObjectID, lane: Lane) -> Result<Admitted, Skip> {
         let now = Instant::now();
         let mut tracked = self.tracked.lock();
-        if !tracked.contains_key(&id) && tracked.len() >= self.bounds.max_tracked {
+        if lane == Lane::Background
+            && !tracked.contains_key(&id)
+            && tracked.len() >= self.bounds.max_tracked
+        {
             tracked.retain(|_, entry| !entry.idle(now, &self.bounds));
             if tracked.len() >= self.bounds.max_tracked {
                 return Err(Skip::TrackedFull);
@@ -513,7 +557,11 @@ impl PeerFallback {
         {
             return Err(skip);
         }
-        let Ok(permit) = lane.clone().try_acquire_owned() else {
+        let permits = match lane {
+            Lane::Waiting => &self.waiting,
+            Lane::Background => &self.background,
+        };
+        let Ok(permit) = permits.clone().try_acquire_owned() else {
             return Err(Skip::Busy);
         };
         entry.in_flight = true;
@@ -554,7 +602,25 @@ impl PeerFallback {
                 id,
                 served: false,
             };
-            let (outcome, result) = self.attempt(id, &network).await;
+            // One deadline for the whole attempt, this node's own fullnode
+            // lookup included: a read that waits for it waits at most
+            // `attempt_timeout`, and the lane's permit and the object's
+            // in-flight mark are released by then.
+            let deadline = Instant::now() + self.bounds.attempt_timeout;
+            let (outcome, result) =
+                match tokio::time::timeout_at(deadline, self.attempt(id, &network, deadline)).await
+                {
+                    Ok(ended) => ended,
+                    Err(_elapsed) => {
+                        debug!(?id, "peer fallback: the attempt reached its deadline");
+                        (
+                            Outcome::TimedOut,
+                            Err(ReaderError::Transport(TransportError::Network(format!(
+                                "peer fallback for {id}: no answer within the attempt deadline"
+                            )))),
+                        )
+                    }
+                };
             settle.served = outcome == Outcome::Served;
             drop(settle);
             self.metrics
@@ -565,10 +631,14 @@ impl PeerFallback {
         })
     }
 
+    /// Ask the peers, one at a time, until `deadline`. Each peer's read is cut
+    /// at the deadline; the caller cuts the whole attempt there too, this
+    /// node's own fullnode lookup included.
     async fn attempt(
         &self,
         id: ObjectID,
         network: &anemo::Network,
+        deadline: Instant,
     ) -> (Outcome, Result<(), ReaderError>) {
         let current = match self.fullnode.get_object(id).await {
             Ok(object) => object.compute_object_reference(),
@@ -590,10 +660,9 @@ impl PeerFallback {
             "peer fallback for {id}: no connected peer served it"
         )));
         let mut asked = 0usize;
-        let deadline = Instant::now() + self.bounds.attempt_timeout;
         for peer in peers {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
+            let now = Instant::now();
+            if now >= deadline {
                 debug!(?id, "peer fallback: the attempt deadline passed");
                 break;
             }
@@ -619,8 +688,12 @@ impl PeerFallback {
                 false,
                 None,
             );
-            let verified = match tokio::time::timeout(
-                self.bounds.peer_timeout.min(remaining),
+            // Capped at the attempt deadline, the very instant the caller cuts
+            // the attempt at: a peer still holding the read then ends the
+            // loop here first (the caller polls this before its own timer),
+            // so the attempt reports `unavailable`, not `timed_out`.
+            let verified = match tokio::time::timeout_at(
+                (now + self.bounds.peer_timeout).min(deadline),
                 Box::pin(reader.verified_object(id)),
             )
             .await
@@ -777,6 +850,8 @@ mod tests {
         lookups: AtomicUsize,
         /// The next lookup panics, as a bug in a client would.
         panic_next: AtomicBool,
+        /// The next lookup hangs for five seconds, as a stuck connection would.
+        hang_next: AtomicBool,
     }
 
     impl Fullnode {
@@ -785,6 +860,7 @@ mod tests {
                 live: live.iter().map(|o| (o.id(), (*o).clone())).collect(),
                 lookups: AtomicUsize::new(0),
                 panic_next: AtomicBool::new(false),
+                hang_next: AtomicBool::new(false),
             })
         }
 
@@ -831,6 +907,9 @@ mod tests {
             self.lookups.fetch_add(1, Ordering::Relaxed);
             if self.panic_next.swap(false, Ordering::Relaxed) {
                 panic!("the fullnode client panicked");
+            }
+            if self.hang_next.swap(false, Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_secs(5)).await;
             }
             self.live
                 .get(&id)
@@ -1443,6 +1522,64 @@ mod tests {
             "bounded at 2.5 s: took {took:?}"
         );
         assert_eq!(asked(&peers), 2, "no peer is asked after the deadline");
+        assert_eq!(
+            bounded
+                .scratch_provider_metrics
+                .relay_request_total
+                .with_label_values(&["verified_object"])
+                .get(),
+            2,
+            "no read is even started after the deadline"
+        );
+        // The peers ran out the clock, not this node's fullnode.
+        assert_eq!(outcome(&fx, "unavailable"), 1);
+        assert_eq!(outcome(&fx, "timed_out"), 0);
+    }
+
+    /// The deadline covers the whole attempt, this node's own fullnode lookup
+    /// included: a read that waits for an attempt whose lookup hangs gets its
+    /// answer by `attempt_timeout`, and the lane's permit and the object's
+    /// in-flight mark are released then.
+    #[tokio::test]
+    async fn an_attempt_ends_at_its_deadline_even_when_this_nodes_fullnode_hangs() {
+        let fx = fixture();
+        let (x, y) = (object(0xA1, 7), object(0xB2, 3));
+        let (peer, requests) = direct_peer(proving(&fx, 400, &[&x, &y]));
+        let node = connected(&[&peer]).await;
+        let fullnode = Fullnode::reporting(&[&x, &y]);
+        let gated = fallback(
+            &fx,
+            fullnode.clone(),
+            &node,
+            FallbackBounds {
+                max_concurrent: 1,
+                attempt_timeout: Duration::from_millis(500),
+                ..bounds()
+            },
+        );
+        fullnode.hang_next.store(true, Ordering::Relaxed);
+        let started = std::time::Instant::now();
+        assert!(gated.fill(x.id()).await.is_err());
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_millis(1_500),
+            "bounded at 0.5 s, the lookup hangs 5 s: took {took:?}"
+        );
+        assert_eq!(outcome(&fx, "timed_out"), 1);
+
+        gated.fill(y.id()).await.unwrap();
+        assert_eq!(
+            outcome(&fx, "skipped_busy"),
+            0,
+            "the lane's only permit was released"
+        );
+        assert!(gated.fill(x.id()).await.is_err());
+        assert_eq!(
+            outcome(&fx, "skipped_retry_wait"),
+            1,
+            "settled as a failure, not left in flight"
+        );
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
     }
 
     // -- when an attempt is due -----------------------------------------------------------------
@@ -1496,7 +1633,7 @@ mod tests {
 
         assert!(gated.fill(z.id()).await.is_err());
         pause(450).await;
-        gated.note_proved(z.id());
+        gated.note_proved([z.id()]);
         assert!(
             gated.fill(z.id()).await.is_err(),
             "a read that proved it starts the clock over"
@@ -1656,9 +1793,9 @@ mod tests {
     }
 
     /// The tracking table is bounded: while `max_tracked` objects are tracked
-    /// and none is idle, a new object is not tried, and the ones waiting out a
-    /// failure keep waiting, however long since their last read. Once they
-    /// are idle, they are forgotten.
+    /// and none is idle, a new object a read does not wait for is not tried,
+    /// and the ones waiting out a failure keep waiting, however long since
+    /// their last read. Once they are idle, they are forgotten.
     #[tokio::test]
     async fn a_full_tracking_table_refuses_new_objects() {
         let fx = fixture();
@@ -1687,7 +1824,7 @@ mod tests {
 
         // Past `stuck_reset` since their last read, still in their retry wait.
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(gated.fill(c).await.is_err());
+        gated.refresh_in_background(c);
         assert_eq!(outcome(&fx, "skipped_tracked_full"), 1);
         assert!(gated.fill(a).await.is_err());
         assert_eq!(
@@ -1698,8 +1835,41 @@ mod tests {
         assert_eq!(fullnode.lookups(), 2);
 
         tokio::time::sleep(Duration::from_millis(600)).await;
-        assert!(gated.fill(c).await.is_err());
+        gated.refresh_in_background(c);
+        tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(fullnode.lookups(), 3, "idle entries were forgotten");
+    }
+
+    /// A read that waits — an anchor read with nothing cached, the boot
+    /// barrier — is never refused for a full table, however many other
+    /// objects (bag children re-walked every few milliseconds) fill it.
+    #[tokio::test]
+    async fn a_read_that_waits_is_never_refused_for_a_full_table() {
+        let fx = fixture();
+        let x = object(0xA1, 7);
+        let (peer, requests) = direct_peer(proving(&fx, 400, &[&x]));
+        let node = connected(&[&peer]).await;
+        // The fullnode reports none of the children: each of their attempts
+        // fails `not_live` and waits out `retry_after`, so none is idle.
+        let gated = fallback(
+            &fx,
+            Fullnode::reporting(&[&x]),
+            &node,
+            FallbackBounds {
+                max_tracked: 2,
+                ..bounds()
+            },
+        );
+        for byte in [0xC1, 0xC2] {
+            gated.refresh_in_background(ObjectID::from_single_byte(byte));
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        gated.refresh_in_background(ObjectID::from_single_byte(0xC3));
+        assert_eq!(outcome(&fx, "skipped_tracked_full"), 1, "the table is full");
+
+        gated.fill(x.id()).await.unwrap();
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        assert_eq!(outcome(&fx, "skipped_tracked_full"), 1);
     }
 
     /// An object whose attempt is running is never forgotten to make room,
@@ -1724,7 +1894,7 @@ mod tests {
         );
         gated.refresh_in_background(x.id());
         tokio::time::sleep(Duration::from_millis(250)).await;
-        assert!(gated.fill(y.id()).await.is_err());
+        gated.refresh_in_background(y.id());
         assert_eq!(outcome(&fx, "skipped_tracked_full"), 1);
         tokio::time::sleep(Duration::from_millis(600)).await;
         assert_eq!(requests.load(Ordering::Relaxed), 1);
@@ -2224,6 +2394,130 @@ mod tests {
             .unwrap();
         assert!(direct.verified_system_inner(system_id).await.is_err());
         assert_eq!(outcome(&fx, "served"), 1, "the fallback itself verified it");
+    }
+
+    /// The direct node's own provider for one bag: its page lists `child` as
+    /// skipped (not provable yet) until `proves` is set, then proves it.
+    struct BagLocalProvider {
+        proves: AtomicBool,
+        child: Object,
+        committee: Committee,
+        keys: Arc<Vec<AuthorityKeyPair>>,
+    }
+
+    #[async_trait]
+    impl ProofProvider for BagLocalProvider {
+        async fn verified_object(
+            &self,
+            id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            Err(TransportError::NotFound(format!("{id} not provable now")))
+        }
+        async fn batch_verified_objects(
+            &self,
+            _: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            unimplemented!()
+        }
+        async fn verified_dynamic_fields_page(
+            &self,
+            _: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
+            if !self.proves.load(Ordering::Relaxed) {
+                return Ok(VerifiedDynamicFieldsPageResponse {
+                    summaries: BTreeMap::new(),
+                    entries: vec![],
+                    next_page_token: None,
+                    claimed_latest_checkpoint_seq: HEAD,
+                    skipped_entry_ids: vec![self.child.id()],
+                });
+            }
+            let child = &self.child;
+            Ok(VerifiedDynamicFieldsPageResponse {
+                summaries: BTreeMap::from([(
+                    400,
+                    summary_committing_to(
+                        &self.committee,
+                        &self.keys,
+                        400,
+                        artifacts_digest_over(&[child]),
+                    ),
+                )]),
+                entries: vec![VerifiedObjectEntry {
+                    object: child.clone(),
+                    checkpoint_seq: 400,
+                    proof: tree_over(&[child])
+                        .get_inclusion_proof(child.compute_object_reference())
+                        .unwrap(),
+                    dynamic_field_name_type: String::new(),
+                    dynamic_field_name_bcs: Vec::new(),
+                }],
+                next_page_token: None,
+                claimed_latest_checkpoint_seq: HEAD,
+                skipped_entry_ids: vec![],
+            })
+        }
+    }
+
+    /// A bag child the fallback started tracking while it was not provable yet
+    /// is forgotten once a page proves it, so bag children that resolve on
+    /// their own do not linger in the tracking table.
+    #[tokio::test]
+    async fn a_bag_page_that_proves_a_child_forgets_it() {
+        let fx = fixture();
+        let parent = ObjectID::from_single_byte(0xBA);
+        let child = Object::new_move(
+            MoveObject::new_coin(
+                parse_sui_type_tag(&format!("{}::ika::IKA", ObjectID::from_single_byte(0x1A)))
+                    .unwrap(),
+                SequenceNumber::from(4u64),
+                ObjectID::from_single_byte(0xC1),
+                1,
+            ),
+            Owner::ObjectOwner(parent.into()),
+            TransactionDigest::ZERO,
+        );
+        let local = Arc::new(BagLocalProvider {
+            proves: AtomicBool::new(false),
+            child: child.clone(),
+            committee: fx.committee.clone(),
+            keys: fx.keys.clone(),
+        });
+        let node = connected(&[]).await;
+        let tracking = fallback(
+            &fx,
+            Fullnode::reporting(&[&child]),
+            &node,
+            FallbackBounds::default(),
+        );
+        let direct = OcsVerifiedReader::new(
+            local.clone(),
+            fx.committees.clone(),
+            fx.metrics.clone(),
+            None,
+            fx.cache.clone(),
+            true,
+            None,
+        )
+        .with_peer_fallback(Some(tracking.clone()));
+
+        let page = direct
+            .verified_dynamic_fields_page(parent, None, None)
+            .await
+            .unwrap();
+        assert!(page.entries.is_empty());
+        assert!(tracking.tracked.lock().contains_key(&child.id()));
+
+        local.proves.store(true, Ordering::Relaxed);
+        let page = direct
+            .verified_dynamic_fields_page(parent, None, None)
+            .await
+            .unwrap();
+        assert_eq!(page.entries.len(), 1);
+        assert!(
+            !tracking.tracked.lock().contains_key(&child.id()),
+            "proved in a page: forgotten"
+        );
     }
 
     /// The direct node's own provider, proving `object` while `proves` is set

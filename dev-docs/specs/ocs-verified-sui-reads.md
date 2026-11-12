@@ -1503,8 +1503,8 @@ only while its cache still holds the snapshot.
   for a few seconds, for a just-written object whose transaction the fullnode
   has not indexed yet. So peers are asked only for an object that is *stuck*:
   its own provider has answered `NotFound` for it for 20 s with no read
-  proving it in between (a 60 s gap without a `NotFound` starts the clock
-  over).
+  proving it in between — a single read, or a bag page proving it as a child
+  (a 60 s gap without a `NotFound` starts the clock over).
 - **Never in a read's way.** With a cached snapshot (older than the
   fullnode's current reference, or the provider would have proved it), the
   reader serves it at once, as before, and the fallback fetches the current
@@ -1512,7 +1512,16 @@ only while its cache still holds the snapshot.
   walk's child included — fails at once as before while the fallback fills
   the cache in the background, so a later read is a cache hit. Only an anchor
   read with nothing cached (the boot barrier, which retries until it
-  succeeds) waits for the attempt, at most 15 s.
+  succeeds) waits for the attempt, at most 15 s: the deadline covers the whole
+  attempt, this node's own fullnode lookup included.
+- **Boot latency.** On a fresh node that needs the fallback for an anchor,
+  the barrier's read is answered at the executor's first retry at least 20 s
+  after the anchor's first `NotFound`: about 31 s with its backoff (1, 2, 4,
+  8, 16, then 30 s). The anchors are read one after another, and the `System`
+  inner only once the outer is served, so it comes at about 61 s; the
+  `DWalletCoordinator` pair, if it needs the fallback too, about a minute
+  later. Asking also waits for the pusher's first observed advance of this
+  node's fullnode (below).
 - **Over what.** The existing relay surface, unchanged: `verified_object`
   through `SuiMirrorProofProvider`, one connected peer at a time
   (`SuiMirrorPeers::scoped`), so a peer whose answer fails a check never hides
@@ -1560,10 +1569,13 @@ only while its cache still holds the snapshot.
   current reference — onward to its peers through `recover_pruned_proof`.
 - **Bounds.** Two attempts at once for the reads that wait and two for the
   background ones; one attempt per object at a time; at most 16 peers per
-  attempt, in random order, 5 s each and 15 s for the whole attempt; no new
-  attempt for an object within 30 s of one that failed; at most 1024 objects
-  tracked, and while that many are (after forgetting idle ones) a new object
-  is not tried.
+  attempt, in random order, 5 s each and 15 s for the whole attempt (this
+  node's fullnode lookup included); no new attempt for an object within 30 s
+  of one that failed; at most 1024 objects tracked, and while that many are
+  (after forgetting idle ones) a new object a read does not wait for is not
+  tried. A read that waits is exempt: only the singleton anchors read that
+  way, so a table full of bag children never keeps the boot barrier from its
+  fallback.
 - **What it does not cover.** No connected direct peer can prove the object
   at the fullnode's current reference: every peer lost the checkpoint too (a
   fleet-wide undecodable checkpoint) or none still holds a snapshot of it
@@ -2034,11 +2046,14 @@ does not verify and is also logged as security-critical.
 The peer fallback exports `ika_ocs_direct_peer_fallback_total{outcome}`,
 absent until its first event: one count per attempt by how it ended
 (`served`, `not_current`, `unverified`, `unavailable`, `not_live`,
-`fullnode_error`), and one per read that was due an attempt but did not get
-one (`skipped_frozen`, `skipped_unconfirmed` — the fullnode has not been seen
-advancing since start —, `skipped_no_network`, `skipped_retry_wait`,
-`skipped_busy`, `skipped_tracked_full`). A read of an object that is not yet
-stuck, or whose attempt is running, counts nothing. The per-peer readers and
+`fullnode_error`, `timed_out` — this node's own fullnode did not answer within
+the attempt deadline), and one per read that was due an attempt but did not
+get one (`skipped_frozen`, `skipped_unconfirmed` — the fullnode has not been
+seen advancing since start —, `skipped_no_network`, `skipped_retry_wait`,
+`skipped_busy`, `skipped_tracked_full`). The `skipped_*` labels count reads,
+not attempts — a bag walk re-reads a child every few milliseconds — so alert
+on the attempt outcomes. A read of an object that is not yet stuck, or whose
+attempt is running, counts nothing. The per-peer readers and
 relay clients report into metrics of their own that nothing exports, so a
 peer's answer moves none of the node's relay or verification metrics
 (`ika_ocs_proof_verify_*`, `ika_ocs_last_successful_relay_timestamp_seconds`,

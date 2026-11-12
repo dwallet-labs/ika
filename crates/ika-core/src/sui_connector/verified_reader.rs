@@ -458,7 +458,7 @@ impl OcsVerifiedReader {
         let resp = match self.provider.verified_object(id).await {
             Ok(resp) => {
                 if let Some(fallback) = &self.peer_fallback {
-                    fallback.note_proved(id);
+                    fallback.note_proved([id]);
                 }
                 resp
             }
@@ -1012,6 +1012,14 @@ impl OcsVerifiedReader {
                 object: entry.object,
                 source_checkpoint_seq: seq,
             });
+        }
+        // Children this page proved are not stuck: a child the fallback was
+        // tracking (not yet indexed on an earlier walk) is forgotten, so bag
+        // children never crowd its tracking table.
+        if self.cache_first
+            && let Some(fallback) = &self.peer_fallback
+        {
+            fallback.note_proved(verified.iter().map(|child| child.object.id()));
         }
 
         // Resolve children the provider LISTED but could not build proofs
