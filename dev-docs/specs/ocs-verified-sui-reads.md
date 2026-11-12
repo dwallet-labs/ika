@@ -654,10 +654,7 @@ dropping entries are layered:
   Before either read's effects build the tree, the provider
   checks that every effects is version 2 and that each object's written
   versions strictly increase across the effects list, in order (in the part
-  read, as each result is folded). Sui's tree
-  builder asserts the version order, and reads each effects' `written()`,
-  which Sui leaves `unimplemented!` for version 1 effects; either failure
-  ends the process. The list comes from the endpoint and is not yet checked
+  read, as each result is folded). The list comes from the endpoint and is not yet checked
   against the certified summary. A list that breaks either condition fails
   that checkpoint as `Encoding`, so the child is skipped as above. The
   checkpoint pusher and the mirror server's changeset page run the same
@@ -1122,6 +1119,42 @@ sampled difference (`-1` when no pusher runs), and
 advance that cursor, so operators must inspect fetch failures, cache gaps
 and verified-read failures independently. None of these diagnostics change
 watermark admission or authorize state.
+
+**A frozen own fullnode.** Neither lag gauge can see the node's own fullnode
+stop. A failed probe ends the tick before they are written, so they keep their
+last healthy values, and a fullnode that answers but has stopped syncing is
+measured against its own frozen watermark, so the lag reads about 0. One
+testnet validator sat three Ika epochs behind for more than two days with
+`ika_ocs_pusher_stalled` at 0 and the lag at 1; the per-tick failure warn and
+the frozen `ika_ocs_pusher_last_progress_timestamp_seconds` were the only
+traces, and neither said why. The folder therefore records every probe before
+acting on it. A failure, including a probe past its 60 s deadline, counts in
+`ika_ocs_pusher_watermark_probe_failures_total`. An answer above both the
+previous answer and the scan cursor is an advance and stamps
+`ika_ocs_pusher_upstream_last_advance_timestamp_seconds`, so two stuck
+load-balanced backends answering in turn, or a fullnode climbing back up below
+the cursor, do not count. The gauge measures what the fullnode reports, not
+what the node has folded. On `sui-state-direct` it is stamped at boot, before
+any Sui I/O, so a pusher that is never built (its first probe, under the same
+deadline, keeps failing, or the boot stops before it) ages from boot; it is 0
+where no pusher runs. An alert therefore gates on the gauge being above 0 (it
+is from boot on, on exactly the direct nodes) rather than on
+`ika_ocs_role_info`, which is set only after the connector stack's
+chain-identifier probe, a probe with no deadline; and it needs an uptime
+condition, since the gauge ages from boot. Sui certifies several
+checkpoints a second, so five minutes without an advance means the pusher is
+getting nothing new from the fullnode. The folder logs that once at `ERROR`
+(cursor, last watermark seen, time frozen, why nothing advanced, and how long
+the current tick has run) and once at `INFO` when the watermark advances again.
+Why nothing advanced is a read in the current tick that has not returned when
+the tick has run for the whole stretch, otherwise the last probe's error, or
+answers at or below the cursor. A
+timer in the pusher's loop runs the check every 10 s while a tick runs, so a
+tick held by a checkpoint fetch, a gap retry or a committee capture that never
+returns cannot hold the report back. The report's state is exposed to other
+components (`IkaCheckpointPusher::upstream_frozen`), set and cleared exactly
+where the report flips. Apart from the probe deadline, nothing about admission,
+scanning or serving changes.
 
 The folder logs the watermark refusal as the stall reason once per stretch,
 then logs recovery. The reader logs refusals at most once per minute across

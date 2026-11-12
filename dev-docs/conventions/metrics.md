@@ -408,6 +408,57 @@ shift the calibration of the fleet's rate alert, so it is a separate change. A
 spike on `sui_rpc_errors` is "the uplink is unhealthy" in the common case and
 "the uplink answered with something we could not read" in the rest.
 
+## OCS pusher: lag cannot see a frozen fullnode
+
+`ika_ocs_pusher_lag_checkpoints` and `ika_ocs_pusher_stalled` compare the scan
+cursor with the node's own fullnode's watermark. When that fullnode stops
+answering, the tick ends before they are written and they keep their last
+healthy values. When it answers but stops syncing, the lag is measured against
+its frozen watermark and reads about 0. `ika_ocs_pusher_stalled` keeps its
+legacy meaning (lag over 100). Two families on `sui-state-direct` cover the
+gap:
+
+- `ika_ocs_pusher_upstream_last_advance_timestamp_seconds` (gauge): Unix time
+  the pusher last saw its fullnode report a checkpoint watermark above both
+  its previous report and the scan cursor. It measures the fullnode's reported
+  watermark, not what the node has folded. On `sui-state-direct` it is stamped
+  at boot, before any Sui I/O, so a node whose pusher never gets built ages
+  from boot too; it is 0 on nodes that run no pusher. So `> 0` means exactly
+  "a sui-state-direct node", from boot on: gate on it. Do not gate on
+  `ika_ocs_role_info{role="sui_state_direct"}`, which is set only once the
+  connector stack's chain-identifier probe has answered, a probe with no
+  deadline, so a direct node hung there would be missed. It is left alone
+  while the probe fails, hangs or answers nothing past the cursor, so
+  `time() - ika_ocs_pusher_upstream_last_advance_timestamp_seconds` is how long
+  the fullnode has reported nothing new to the pusher. The watermark is
+  sampled once per pusher tick, so a tick held by slow checkpoint fetches ages
+  it for the whole tick. The 300 s healthy peak quoted for direct nodes was
+  measured on cursor no-progress, not on this gauge: measure this gauge's
+  healthy peak across the fleet after rollout before paging on it.
+- `ika_ocs_pusher_watermark_probe_failures_total` (counter): watermark probes
+  that failed or passed their 60 s deadline, at most one per tick, including
+  the probe that builds the pusher on a first start. It is flat when the
+  fullnode answers but has stopped syncing, so it complements the gauge rather
+  than replacing it.
+
+The pusher also logs one `ERROR` ("Sui fullnode is not advancing") after five
+minutes without an advance, and one `INFO` when the watermark moves again. A
+timer in the pusher's loop checks, so the `ERROR` comes even while a tick is
+held by a read of the fullnode that never returns.
+
+Because the gauge ages from process boot, an alert on it also needs an uptime
+condition, like the cursor alert's, so a node that just started is not paged
+before its fullnode has had time to answer. `THRESHOLD` is the healthy peak
+measured after rollout plus margin:
+
+```promql
+max by (network, host) (
+  time() - (ika_ocs_pusher_upstream_last_advance_timestamp_seconds{metrics_source="ika-proxy"} > 0)
+) > THRESHOLD
+and on (network, host)
+max by (network, host) (uptime{process="validator",metrics_source="ika-proxy"}) > 600
+```
+
 ## A process registers only the families it drives
 
 The three `NodeMode`s share one start sequence, and it used to register nearly
@@ -826,6 +877,8 @@ ika_ocs_pusher_lost_checkpoints_overflow_total
 ika_ocs_pusher_pushed_total
 ika_ocs_pusher_skipped_irrelevant_total
 ika_ocs_pusher_stalled
+ika_ocs_pusher_upstream_last_advance_timestamp_seconds
+ika_ocs_pusher_watermark_probe_failures_total
 ika_ocs_ratchet_failures_total
 ika_ocs_ratchet_stalled
 ika_ocs_relay_failures_total

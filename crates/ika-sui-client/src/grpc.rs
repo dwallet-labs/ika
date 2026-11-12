@@ -368,10 +368,9 @@ impl SuiGrpcClient {
     /// Refuse a checkpoint holding a Move object whose contents are too
     /// short to start with its 32-byte id.
     ///
-    /// Sui's conversion of the checkpoint's object set calls
-    /// `MoveObject::id()`, which unwraps `MoveObject::id_opt`, and BCS accepts
-    /// contents of any length. A failed unwrap ends the process. So each Move
-    /// object is decoded and its id read with `id_opt` first.
+    /// BCS accepts Move object contents of any length, and the checkpoint's
+    /// object set needs each object's id. So each Move object is decoded and
+    /// its id read with `MoveObject::id_opt` first.
     fn check_move_object_ids(checkpoint: &proto::Checkpoint) -> Result<(), TransportError> {
         checkpoint
             .objects
@@ -2278,8 +2277,7 @@ mod tests {
 
     /// BCS accepts a Move object whose contents are shorter than its 32-byte
     /// id. In an otherwise valid checkpoint, which decodes, such an object
-    /// makes the whole-checkpoint decode refuse the checkpoint as `Encoding`,
-    /// where Sui's object-set conversion would abort the process.
+    /// makes the whole-checkpoint decode refuse the checkpoint as `Encoding`.
     #[test]
     fn a_move_object_too_short_for_its_id_is_refused() {
         let object = Object::immutable_with_id_for_testing(ObjectID::random());

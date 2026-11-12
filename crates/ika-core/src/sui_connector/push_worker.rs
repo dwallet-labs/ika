@@ -107,6 +107,21 @@ const ARCHIVE_NOT_FOUND_GIVE_UP_AFTER: Duration = Duration::from_secs(24 * 60 * 
 /// How often settled lost-checkpoint records are checked for collection: one
 /// pass over the cache for all of them.
 const LOST_CHECKPOINT_COLLECT_INTERVAL: Duration = Duration::from_secs(60);
+/// How long the node's own fullnode may go without reporting a checkpoint
+/// watermark past the pusher's before the pusher reports it as not advancing
+/// (see [`UpstreamWatch`]). Sui certifies several checkpoints a second, so a
+/// healthy fullnode never comes near it. The log text says "5 minutes"; keep
+/// it in step.
+const UPSTREAM_FROZEN_AFTER: Duration = Duration::from_secs(5 * 60);
+/// How often [`IkaCheckpointPusher::run`] checks the fullnode's progress while
+/// a tick is running, so a tick held by a read that never returns cannot hold
+/// the report back with it.
+const UPSTREAM_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+/// Bound on one watermark probe. The probe is a single small RPC; the bound
+/// sits above the rate-limit gate's longest cooldown (30 s), so a throttled
+/// endpoint is a wait, not a failure. Without it a hung fullnode holds the
+/// tick forever, and holds the pusher's construction the same way.
+const WATERMARK_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The persisted record of one Sui checkpoint the pusher gave up on, or is
 /// about to — in the perpetual `sui_pusher_lost_checkpoints` table, keyed by
@@ -175,6 +190,31 @@ pub fn load_lost_checkpoints(
             );
             BTreeMap::new()
         })
+}
+
+/// Unix seconds now, for the `*_timestamp_seconds` gauges.
+fn unix_now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+/// The fullnode's checkpoint watermark, failing as `Network` once the probe
+/// passes [`WATERMARK_PROBE_TIMEOUT`].
+async fn probe_watermark(
+    transport: &dyn SuiTransport,
+) -> Result<CheckpointSequenceNumber, TransportError> {
+    tokio::time::timeout(
+        WATERMARK_PROBE_TIMEOUT,
+        transport.get_latest_checkpoint_sequence(),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(TransportError::Network(format!(
+            "watermark probe passed its {WATERMARK_PROBE_TIMEOUT:?} deadline"
+        )))
+    })
 }
 
 pub struct IkaCheckpointPusher {
@@ -255,6 +295,8 @@ pub struct IkaCheckpointPusher {
     /// Whether the watermark-refusal warn has already fired for the current
     /// stretch. See [`Self::stall_warned`].
     watermark_refusal_warned: bool,
+    /// Whether the node's own fullnode is still advancing.
+    upstream: Arc<UpstreamWatch>,
     /// Checkpoints still to be re-folded from the archive (see
     /// [`Self::with_archive_backfill`]). Unlike `pending_gaps` these are
     /// checkpoints behind the cursor whose objects the node lost for good —
@@ -293,6 +335,146 @@ pub struct IkaCheckpointPusher {
     /// size limit — a gap the fullnode answered as too large, or any gap or
     /// lost checkpoint the archive serves. A field so tests can lower it.
     max_checkpoint_object_states: usize,
+}
+
+/// Whether the node's own fullnode is still reporting new checkpoints. Its
+/// watermark advances several times a second, so one that has not advanced for
+/// [`UPSTREAM_FROZEN_AFTER`] — the probe fails, hangs or keeps answering
+/// heights the pusher already has — means the pusher gets nothing new from
+/// it. The lag gauges cannot say so: a failed probe ends the tick before they
+/// are updated, and an answering but stuck fullnode is measured against its
+/// own watermark.
+///
+/// Shared between the tick, which records every probe, and the timer in
+/// [`IkaCheckpointPusher::run`], which reports even while a tick is held by a
+/// read that never returns.
+struct UpstreamWatch {
+    progress: parking_lot::Mutex<UpstreamProgress>,
+    metrics: Arc<OcsMetrics>,
+    /// `true` from the frozen report until the recovery report: set and
+    /// cleared exactly where the report latch flips. See
+    /// [`IkaCheckpointPusher::upstream_frozen`].
+    frozen: tokio::sync::watch::Sender<bool>,
+}
+
+struct UpstreamProgress {
+    /// The previous watermark the probe answered in this process. An advance
+    /// is an answer above the PREVIOUS one rather than above the highest ever
+    /// seen, so one inflated answer cannot make a healthy fullnode read frozen;
+    /// and above the scan cursor, so two stuck load-balanced backends
+    /// answering in turn, or a fullnode that fell back behind the cursor and
+    /// is climbing again, does not read as advancing. The first answer is only
+    /// a baseline.
+    last_seen: Option<CheckpointSequenceNumber>,
+    /// When the watermark last advanced; the pusher's start until it first
+    /// does. Tokio's clock, so tests drive it with paused time.
+    advanced_at: tokio::time::Instant,
+    /// How long the watermark had not advanced when it last did: the length
+    /// of the stretch a recovery report closes.
+    last_stall: Duration,
+    /// The latest probe's error, cleared by an answer.
+    last_error: Option<String>,
+    /// Whether the frozen error has fired for the current stretch: the same
+    /// transition latch as `stall_warned`.
+    frozen_reported: bool,
+}
+
+impl UpstreamWatch {
+    fn new(metrics: Arc<OcsMetrics>, first_watermark: Option<CheckpointSequenceNumber>) -> Self {
+        Self {
+            progress: parking_lot::Mutex::new(UpstreamProgress {
+                last_seen: first_watermark,
+                advanced_at: tokio::time::Instant::now(),
+                last_stall: Duration::ZERO,
+                last_error: None,
+                frozen_reported: false,
+            }),
+            metrics,
+            frozen: tokio::sync::watch::Sender::new(false),
+        }
+    }
+
+    /// Record one watermark probe, taken with the scan cursor at `cursor`.
+    fn record(
+        &self,
+        probe: &Result<CheckpointSequenceNumber, TransportError>,
+        cursor: CheckpointSequenceNumber,
+    ) {
+        let now = tokio::time::Instant::now();
+        let mut progress = self.progress.lock();
+        match probe {
+            Ok(seq) => {
+                if *seq > cursor && progress.last_seen.is_some_and(|previous| *seq > previous) {
+                    progress.last_stall = now.saturating_duration_since(progress.advanced_at);
+                    progress.advanced_at = now;
+                    self.metrics
+                        .pusher_upstream_last_advance_timestamp_seconds
+                        .set(unix_now_secs());
+                }
+                progress.last_seen = Some(*seq);
+                progress.last_error = None;
+            }
+            Err(e) => {
+                self.metrics.pusher_watermark_probe_failures_total.inc();
+                progress.last_error = Some(e.to_string());
+            }
+        }
+    }
+
+    /// Report the fullnode as not advancing on the transition past
+    /// [`UPSTREAM_FROZEN_AFTER`] without an advance, and once more when it
+    /// advances again. `tick_running_for` is how long the current tick has
+    /// been running, when the report comes from outside it. Never changes what
+    /// the pusher does.
+    fn report(&self, tick_running_for: Option<Duration>) {
+        let now = tokio::time::Instant::now();
+        let mut progress = self.progress.lock();
+        let frozen_for = now.saturating_duration_since(progress.advanced_at);
+        let frozen = frozen_for >= UPSTREAM_FROZEN_AFTER;
+        if frozen == progress.frozen_reported {
+            return;
+        }
+        progress.frozen_reported = frozen;
+        self.frozen.send_replace(frozen);
+        let cursor = self.metrics.pusher_cursor_seq.get();
+        let last_seen_watermark = progress.last_seen.map_or_else(
+            || "none since this process started".to_owned(),
+            |seq| seq.to_string(),
+        );
+        if frozen {
+            // Why nothing advanced. A tick running for the whole stretch ran no
+            // probe in it: a read inside the tick has not returned. Otherwise
+            // the last probe's error, or answers at or below the cursor.
+            let cause = match (tick_running_for, &progress.last_error) {
+                (Some(running), _) if running >= UPSTREAM_FROZEN_AFTER => format!(
+                    "none: a read of the fullnode in the current pusher tick has not returned \
+                     for {}s",
+                    running.as_secs()
+                ),
+                (_, Some(error)) => error.clone(),
+                (_, None) => "none: the fullnode answers, but not past the pusher's cursor".into(),
+            };
+            error!(
+                cursor,
+                %last_seen_watermark,
+                frozen_secs = frozen_for.as_secs(),
+                last_probe_error = %cause,
+                pusher_tick_running_secs = tick_running_for.map(|running| running.as_secs()),
+                "Sui fullnode is not advancing: this node's Sui fullnode has not reported a \
+                 checkpoint past the checkpoint pusher's cursor for over 5 minutes, or has not \
+                 answered, so the pusher is getting no new Sui checkpoints from it. Check that the \
+                 fullnode is running, reachable and syncing (logged once until it advances again)"
+            );
+        } else {
+            info!(
+                cursor,
+                %last_seen_watermark,
+                was_frozen_secs = progress.last_stall.as_secs(),
+                "Sui fullnode is advancing again: it reports checkpoints past the checkpoint \
+                 pusher's cursor"
+            );
+        }
+    }
 }
 
 /// Retry state of one scanned-but-unfetchable checkpoint.
@@ -429,6 +611,7 @@ impl IkaCheckpointPusher {
         ika_packages.insert(packages.ika_system_package_id);
 
         let watermark = WatermarkGuard::new();
+        let mut first_watermark = None;
         let cursor = match perpetual.get_sui_pusher_last_seq()? {
             Some(persisted) => {
                 info!(
@@ -440,14 +623,18 @@ impl IkaCheckpointPusher {
             None => {
                 // Watermark probe, not a summary fetch: a fullnode pruning at
                 // head NotFounds its own latest, which would fail node boot
-                // here.
-                let cursor = transport.get_latest_checkpoint_sequence().await?;
+                // here. Bounded like every probe, so a hung fullnode fails the
+                // construction (which the node retries) instead of holding it.
+                let cursor = probe_watermark(transport.as_ref())
+                    .await
+                    .inspect_err(|_| metrics.pusher_watermark_probe_failures_total.inc())?;
                 // The FIRST watermark observation of this process: there is no
                 // prior to meter it against — a node starting against a chain
                 // millions of checkpoints in must pass — so it seeds the
                 // guard's head, and the advance admitted after it is what the
                 // rate bound meters.
                 watermark.admit(cursor);
+                first_watermark = Some(cursor);
                 info!(
                     cursor,
                     "checkpoint pusher first start — initializing at upstream latest"
@@ -458,6 +645,8 @@ impl IkaCheckpointPusher {
         };
         metrics.pusher_cursor_seq.set(cursor as i64);
         metrics.pusher_lag_checkpoints.set(0);
+        // A node that stamped the clock at boot keeps that start.
+        metrics.start_pusher_upstream_clock();
         // Seed the cache's processed head so the reader's staleness tripwire
         // doesn't spuriously fire before the first poll tick advances it.
         cache.note_processed(cursor);
@@ -466,6 +655,7 @@ impl IkaCheckpointPusher {
             .pusher_lost_checkpoints
             .set(lost_checkpoints.len() as i64);
 
+        let upstream = Arc::new(UpstreamWatch::new(metrics.clone(), first_watermark));
         Ok(Self {
             transport,
             perpetual,
@@ -481,6 +671,7 @@ impl IkaCheckpointPusher {
             pending_fast_forward: None,
             stall_warned: false,
             watermark_refusal_warned: false,
+            upstream,
             archive_backfill: BTreeMap::new(),
             lost_checkpoints,
             operator_backfill: BTreeSet::new(),
@@ -863,11 +1054,35 @@ impl IkaCheckpointPusher {
         );
     }
 
+    /// Whether the node's own fullnode is reported as not advancing: `true`
+    /// from the frozen `ERROR` until the recovery `INFO`, flipped exactly
+    /// where that report latch flips.
+    pub fn upstream_frozen(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.upstream.frozen.subscribe()
+    }
+
     pub async fn run(mut self) {
+        let upstream = self.upstream.clone();
         let mut tick = tokio::time::interval(self.poll_interval);
+        let mut check = tokio::time::interval(UPSTREAM_CHECK_INTERVAL);
+        check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            if let Err(e) = self.advance().await {
+            let started = tokio::time::Instant::now();
+            let advance = self.advance();
+            tokio::pin!(advance);
+            // A read of the fullnode inside the tick has no deadline of its
+            // own (the scan's and the gap retries' checkpoint fetches, the
+            // fast-forward's committee capture), so the tick can be held for
+            // as long as the fullnode keeps one open. The report must not
+            // wait for it.
+            let result = loop {
+                tokio::select! {
+                    result = &mut advance => break result,
+                    _ = check.tick() => upstream.report(Some(started.elapsed())),
+                }
+            };
+            if let Err(e) = result {
                 warn!(
                     error = %error_chain(&e),
                     "checkpoint pusher tick failed; will retry"
@@ -896,7 +1111,12 @@ impl IkaCheckpointPusher {
         // through the fullnode's availability window, so a fullnode pruning at
         // head NotFounds its own latest and aborts this tick — permanently,
         // while the window stays empty. The height watermark survives pruning.
-        let latest_seq = self.transport.get_latest_checkpoint_sequence().await?;
+        // Recorded BEFORE a failed probe ends the tick, so a fullnode that
+        // stopped answering is reported like one that stopped advancing.
+        let probe = probe_watermark(self.transport.as_ref()).await;
+        self.upstream.record(&probe, self.cursor);
+        self.upstream.report(None);
+        let latest_seq = probe?;
 
         // Legacy lag flag: a moving cursor can still remain behind upstream.
         // Last-progress time separately identifies a stopped scanner. Lag
@@ -1196,8 +1416,8 @@ impl IkaCheckpointPusher {
     /// Sui's `CheckpointArtifacts` of `data`, from its object states folded
     /// with the written-version check and the object-state cap
     /// ([`fold_checkpoint_object_states`]) — the same artifacts
-    /// `CheckpointArtifacts::from` builds, which instead aborts the process
-    /// on a version written twice and has no bound. Every tree this worker
+    /// `CheckpointArtifacts::from` builds, but a version written twice is
+    /// refused with an error and the fold is bounded. Every tree this worker
     /// builds goes through it.
     fn checkpoint_artifacts(
         &self,
@@ -5687,6 +5907,24 @@ mod tests {
         inner: Arc<dyn SuiTransport>,
         seqs: BTreeSet<CheckpointSequenceNumber>,
         error: fn(CheckpointSequenceNumber) -> TransportError,
+        probe: WatermarkProbe,
+        /// Checkpoints whose fetch never answers, as on a hung fullnode —
+        /// until `release` is notified, when there is one.
+        hang: BTreeSet<CheckpointSequenceNumber>,
+        release: Option<Arc<tokio::sync::Notify>>,
+        /// When set, what the watermark probe answers instead of `inner`.
+        height: Option<Arc<AtomicU64>>,
+    }
+
+    /// How a [`FailingFullnode`] answers the watermark probe.
+    #[derive(Clone, Copy)]
+    enum WatermarkProbe {
+        /// As `inner` does.
+        Answers,
+        /// Fails at once, as an unreachable fullnode does.
+        Fails,
+        /// Never answers, as a hung fullnode does.
+        Hangs,
     }
 
     fn failing_fullnode(
@@ -5698,6 +5936,61 @@ mod tests {
             inner,
             seqs: seqs.iter().copied().collect(),
             error,
+            probe: WatermarkProbe::Answers,
+            hang: BTreeSet::new(),
+            release: None,
+            height: None,
+        })
+    }
+
+    /// `inner`, except that the watermark probe answers as `probe` says.
+    fn fullnode_probed(
+        inner: Arc<dyn SuiTransport>,
+        probe: WatermarkProbe,
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(FailingFullnode {
+            inner,
+            seqs: BTreeSet::new(),
+            error: timed_out,
+            probe,
+            hang: BTreeSet::new(),
+            release: None,
+            height: None,
+        })
+    }
+
+    /// `inner`, except that fetching any of `seqs` never answers.
+    fn fullnode_hanging_on(
+        inner: Arc<dyn SuiTransport>,
+        seqs: &[CheckpointSequenceNumber],
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(FailingFullnode {
+            inner,
+            seqs: BTreeSet::new(),
+            error: timed_out,
+            probe: WatermarkProbe::Answers,
+            hang: seqs.iter().copied().collect(),
+            release: None,
+            height: None,
+        })
+    }
+
+    /// `inner`, with its watermark probe answering `height`, and fetching any
+    /// of `seqs` waiting until `release` is notified.
+    fn fullnode_held_on(
+        inner: Arc<dyn SuiTransport>,
+        seqs: &[CheckpointSequenceNumber],
+        release: Arc<tokio::sync::Notify>,
+        height: Arc<AtomicU64>,
+    ) -> Arc<dyn SuiTransport> {
+        Arc::new(FailingFullnode {
+            inner,
+            seqs: BTreeSet::new(),
+            error: timed_out,
+            probe: WatermarkProbe::Answers,
+            hang: seqs.iter().copied().collect(),
+            release: Some(release),
+            height: Some(height),
         })
     }
 
@@ -5726,12 +6019,27 @@ mod tests {
         async fn get_latest_checkpoint_sequence(
             &self,
         ) -> Result<CheckpointSequenceNumber, TransportError> {
-            self.inner.get_latest_checkpoint_sequence().await
+            match self.probe {
+                WatermarkProbe::Answers => match &self.height {
+                    Some(height) => Ok(height.load(Ordering::SeqCst)),
+                    None => self.inner.get_latest_checkpoint_sequence().await,
+                },
+                WatermarkProbe::Fails => Err(TransportError::Network(
+                    "status: Unavailable, message: \"connection refused\"".to_owned(),
+                )),
+                WatermarkProbe::Hangs => std::future::pending().await,
+            }
         }
         async fn get_full_checkpoint(
             &self,
             seq: CheckpointSequenceNumber,
         ) -> Result<CheckpointData, TransportError> {
+            if self.hang.contains(&seq) {
+                match &self.release {
+                    Some(release) => release.notified().await,
+                    None => return std::future::pending().await,
+                }
+            }
             if self.seqs.contains(&seq) {
                 return Err((self.error)(seq));
             }
@@ -6698,10 +7006,9 @@ mod tests {
 
     /// A checkpoint whose effects write an object version twice is refused
     /// with an error by the archive verification and by the fold's entry
-    /// builder, where Sui's `CheckpointArtifacts::from` would abort the
-    /// process.
+    /// builder.
     #[tokio::test]
-    async fn a_checkpoint_whose_effects_repeat_a_version_is_refused_not_aborted() {
+    async fn a_checkpoint_whose_effects_repeat_a_version_is_refused() {
         let fx = backfill_fixture();
         let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
         let pusher = backfill_pusher(&fx, cache).await;
@@ -7069,5 +7376,561 @@ mod tests {
             "both sacrificed gaps are recorded"
         );
         assert!(pusher.archive_backfill.contains_key(&60));
+    }
+
+    // ---- a frozen own fullnode ----
+
+    /// The cursor the frozen-fullnode tests resume from.
+    const UPSTREAM_CURSOR: CheckpointSequenceNumber = 100;
+    /// What the last-advance gauge is overwritten with, so a tick that
+    /// rewrites it shows: real stamps are the current Unix time.
+    const STALE_STAMP: i64 = 1;
+    const FROZEN: &str = "Sui fullnode is not advancing";
+    const RECOVERED: &str = "Sui fullnode is advancing again";
+
+    struct UpstreamFixture {
+        committee: Committee,
+        keys: Vec<AuthorityKeyPair>,
+        metrics: Arc<OcsMetrics>,
+        perpetual: Arc<AuthorityPerpetualTables>,
+        committees: Arc<CommitteeStore>,
+        _dir: tempfile::TempDir,
+    }
+
+    /// Tables, a committee and fresh metrics, with the pusher's cursor
+    /// persisted at `cursor` when there is one.
+    fn upstream_fixture(cursor: Option<CheckpointSequenceNumber>) -> UpstreamFixture {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::Genesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        if let Some(cursor) = cursor {
+            perpetual.put_sui_pusher_last_seq(cursor).unwrap();
+        }
+        UpstreamFixture {
+            committee,
+            keys,
+            metrics: OcsMetrics::new_for_testing(),
+            perpetual,
+            committees,
+            _dir: dir,
+        }
+    }
+
+    /// A pusher resumed at `UPSTREAM_CURSOR`, its fullnode at that height,
+    /// not ticked yet.
+    async fn fresh_upstream_pusher() -> (UpstreamFixture, IkaCheckpointPusher) {
+        let fx = upstream_fixture(Some(UPSTREAM_CURSOR));
+        let pusher = pusher_over_with_cache(
+            fx.perpetual.clone(),
+            fx.committees.clone(),
+            fx.fullnode_at_height(UPSTREAM_CURSOR),
+            Arc::new(VerifiedStateCache::new()),
+            fx.metrics.clone(),
+        )
+        .await;
+        (fx, pusher)
+    }
+
+    impl UpstreamFixture {
+        /// The node's own fullnode with its latest checkpoint at `height`,
+        /// serving that checkpoint: a tick one behind it scans just that one.
+        fn fullnode_at_height(&self, height: CheckpointSequenceNumber) -> Arc<dyn SuiTransport> {
+            transport_reporting(
+                &self.committee,
+                &self.keys,
+                height,
+                HashMap::from([(
+                    height,
+                    plain_checkpoint(&self.committee, &self.keys, height),
+                )]),
+            )
+        }
+
+        fn last_advance(&self) -> i64 {
+            self.metrics
+                .pusher_upstream_last_advance_timestamp_seconds
+                .get()
+        }
+
+        fn stale_last_advance(&self) {
+            self.metrics
+                .pusher_upstream_last_advance_timestamp_seconds
+                .set(STALE_STAMP);
+        }
+
+        fn probe_failures(&self) -> u64 {
+            self.metrics.pusher_watermark_probe_failures_total.get()
+        }
+    }
+
+    /// A pusher resumed at `UPSTREAM_CURSOR` whose fullnode answered
+    /// `UPSTREAM_CURSOR` (the baseline) and then advanced once, to
+    /// `UPSTREAM_CURSOR + 1`, at the current paused instant — after which the
+    /// last-advance gauge holds [`STALE_STAMP`].
+    async fn advanced_once() -> (UpstreamFixture, IkaCheckpointPusher) {
+        let started = unix_now_secs();
+        let (fx, mut pusher) = fresh_upstream_pusher().await;
+        assert!(
+            fx.last_advance() >= started,
+            "the pusher's start stands in for the first advance"
+        );
+        pusher.advance().await.unwrap();
+        pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 1);
+        fx.stale_last_advance();
+        pusher.advance().await.unwrap();
+        assert!(fx.last_advance() >= started, "an advance stamps the gauge");
+        assert_eq!(pusher.cursor, UPSTREAM_CURSOR + 1);
+        fx.stale_last_advance();
+        (fx, pusher)
+    }
+
+    fn lines_with(logs: &CapturedLogs, needle: &str) -> Vec<String> {
+        logs.text()
+            .lines()
+            .filter(|line| line.contains(needle))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn assert_carries(line: &str, expected: &[&str]) {
+        for expected in expected {
+            assert!(line.contains(expected), "must carry {expected:?}: {line}");
+        }
+    }
+
+    /// The production case: the node's own fullnode stops answering. Every
+    /// probe fails, so the tick ends before the lag gauges are touched and they
+    /// keep their last healthy values. The failures count, the last-advance
+    /// gauge stays where the last advance left it, and once the watermark has
+    /// not advanced for five minutes one ERROR says so.
+    #[tokio::test(start_paused = true)]
+    async fn an_unreachable_fullnode_is_reported_frozen_once_past_the_threshold() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = advanced_once().await;
+        pusher.transport = fullnode_probed(
+            fx.fullnode_at_height(UPSTREAM_CURSOR + 1),
+            WatermarkProbe::Fails,
+        );
+
+        for wait in [0, 299] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            assert!(pusher.advance().await.is_err());
+        }
+        assert!(lines_with(&logs, FROZEN).is_empty(), "under the threshold");
+        for wait in [1, 120] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            assert!(pusher.advance().await.is_err());
+        }
+
+        assert_eq!(fx.probe_failures(), 4);
+        assert_eq!(
+            fx.last_advance(),
+            STALE_STAMP,
+            "a failed probe is no advance"
+        );
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "latched to the transition: {frozen:?}");
+        assert_carries(
+            &frozen[0],
+            &[
+                "ERROR",
+                "cursor=101",
+                "last_seen_watermark=101",
+                "frozen_secs=300",
+                "connection refused",
+            ],
+        );
+        assert_eq!(
+            fx.metrics.pusher_stalled.get(),
+            0,
+            "the legacy lag flag keeps its meaning"
+        );
+        assert_eq!(fx.metrics.pusher_lag_checkpoints.get(), 1);
+    }
+
+    /// A fullnode that answers but has stopped syncing: the lag is measured
+    /// against its own watermark and reads 0. The answers are no advance, so
+    /// the freeze is reported the same way, naming no probe error.
+    #[tokio::test(start_paused = true)]
+    async fn a_fullnode_that_answers_but_stops_advancing_is_reported_frozen() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = advanced_once().await;
+
+        for wait in [0, 299] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            pusher.advance().await.unwrap();
+        }
+        assert!(lines_with(&logs, FROZEN).is_empty(), "under the threshold");
+        for wait in [1, 120] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            pusher.advance().await.unwrap();
+        }
+
+        assert_eq!(fx.probe_failures(), 0);
+        assert_eq!(
+            fx.last_advance(),
+            STALE_STAMP,
+            "an unchanged answer is no advance"
+        );
+        assert_eq!(fx.metrics.pusher_lag_checkpoints.get(), 0);
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "latched to the transition: {frozen:?}");
+        assert_carries(
+            &frozen[0],
+            &[
+                "ERROR",
+                "cursor=101",
+                "last_seen_watermark=101",
+                "frozen_secs=300",
+                "the fullnode answers",
+            ],
+        );
+    }
+
+    /// The fullnode comes back: the first answer above the previous one ends
+    /// the stretch with one INFO and stamps the gauge, and a later freeze is
+    /// reported again, with its own cause rather than the old probe error.
+    #[tokio::test(start_paused = true)]
+    async fn a_fullnode_that_advances_again_is_reported_recovered_once() {
+        let (logs, _guard) = CapturedLogs::start();
+        let started = unix_now_secs();
+        let (fx, mut pusher) = advanced_once().await;
+        let frozen_state = pusher.upstream_frozen();
+        pusher.transport = fullnode_probed(
+            fx.fullnode_at_height(UPSTREAM_CURSOR + 1),
+            WatermarkProbe::Fails,
+        );
+        assert!(pusher.advance().await.is_err());
+        assert!(!*frozen_state.borrow());
+        tokio::time::advance(Duration::from_secs(400)).await;
+        assert!(pusher.advance().await.is_err());
+        assert_eq!(lines_with(&logs, FROZEN).len(), 1);
+        assert!(*frozen_state.borrow(), "set where the report latch flips");
+
+        pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 2);
+        pusher.advance().await.unwrap();
+        assert!(fx.last_advance() >= started, "the advance stamps the gauge");
+        assert!(
+            !*frozen_state.borrow(),
+            "cleared where the report latch flips"
+        );
+        let recovered = lines_with(&logs, RECOVERED);
+        assert_eq!(recovered.len(), 1, "{recovered:?}");
+        assert_carries(
+            &recovered[0],
+            &[
+                "INFO",
+                "cursor=101",
+                "last_seen_watermark=102",
+                "was_frozen_secs=400",
+            ],
+        );
+        assert_eq!(pusher.cursor, UPSTREAM_CURSOR + 2, "and the scan resumes");
+
+        pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 3);
+        pusher.advance().await.unwrap();
+        assert_eq!(lines_with(&logs, RECOVERED).len(), 1, "once per stretch");
+        assert_eq!(lines_with(&logs, FROZEN).len(), 1);
+
+        tokio::time::advance(Duration::from_secs(300)).await;
+        pusher.advance().await.unwrap();
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 2, "the latch re-arms: {frozen:?}");
+        assert_carries(
+            &frozen[1],
+            &["last_seen_watermark=103", "the fullnode answers"],
+        );
+    }
+
+    /// A healthy fullnode advancing between every probe never trips the check
+    /// — including across a gap between probes longer than the threshold (a
+    /// tick held by slow fetches): the probe that ends it sees the advance.
+    /// Every advance stamps the gauge.
+    #[tokio::test(start_paused = true)]
+    async fn an_advancing_fullnode_is_never_reported_frozen() {
+        let (logs, _guard) = CapturedLogs::start();
+        let started = unix_now_secs();
+        let (fx, mut pusher) = advanced_once().await;
+        let mut height = UPSTREAM_CURSOR + 1;
+        for wait in [1, 30, 120, 299, 600, 30, 1] {
+            tokio::time::advance(Duration::from_secs(wait)).await;
+            height += 1;
+            pusher.transport = fx.fullnode_at_height(height);
+            fx.stale_last_advance();
+            pusher.advance().await.unwrap();
+            assert!(
+                fx.last_advance() >= started,
+                "every advance stamps the gauge"
+            );
+        }
+
+        assert_eq!(pusher.cursor, height);
+        assert_eq!(fx.probe_failures(), 0);
+        assert!(lines_with(&logs, FROZEN).is_empty());
+        assert!(lines_with(&logs, RECOVERED).is_empty());
+    }
+
+    /// A fullnode that never answers the probe: each probe fails at its
+    /// deadline instead of holding the tick forever, and the freeze is reported
+    /// like an unreachable fullnode's.
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_probe_fails_at_its_deadline_and_is_reported_frozen() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = advanced_once().await;
+        pusher.transport = fullnode_probed(
+            fx.fullnode_at_height(UPSTREAM_CURSOR + 1),
+            WatermarkProbe::Hangs,
+        );
+
+        let started = TokioInstant::now();
+        for _ in 0..5 {
+            let tick = tokio::time::timeout(Duration::from_secs(3_600), pusher.advance())
+                .await
+                .expect("a hung probe must not hold the tick");
+            assert!(tick.unwrap_err().to_string().contains("deadline"));
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= 5 * WATERMARK_PROBE_TIMEOUT
+                && elapsed < 5 * WATERMARK_PROBE_TIMEOUT + Duration::from_secs(1),
+            "{elapsed:?}"
+        );
+        assert_eq!(fx.probe_failures(), 5);
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "{frozen:?}");
+        assert_carries(&frozen[0], &["ERROR", "frozen_secs=300", "deadline"]);
+    }
+
+    /// Two stuck backends behind one endpoint, answering in turn: an answer of
+    /// the higher one is above the previous answer, but once the scan has
+    /// reached it, not above the cursor, so it is no advance.
+    #[tokio::test(start_paused = true)]
+    async fn a_fullnode_alternating_between_two_stuck_heights_is_reported_frozen() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = advanced_once().await;
+        pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 2);
+        pusher.advance().await.unwrap();
+        assert_eq!(pusher.cursor, UPSTREAM_CURSOR + 2);
+        fx.stale_last_advance();
+
+        for step in 0..32u64 {
+            tokio::time::advance(Duration::from_secs(10)).await;
+            pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 1 + step % 2);
+            pusher.advance().await.unwrap();
+        }
+
+        assert_eq!(
+            fx.last_advance(),
+            STALE_STAMP,
+            "no answer is past the cursor"
+        );
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "{frozen:?}");
+        assert_carries(&frozen[0], &["ERROR", "cursor=102", "frozen_secs=300"]);
+    }
+
+    /// A fullnode that fell back behind the cursor and climbs again: its
+    /// answers rise, but none is past the cursor, so the pusher gets nothing
+    /// new and the freeze is reported. Passing the cursor ends it.
+    #[tokio::test(start_paused = true)]
+    async fn a_fullnode_climbing_back_below_the_cursor_is_reported_frozen() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = advanced_once().await;
+
+        for height in 90..=UPSTREAM_CURSOR + 1 {
+            tokio::time::advance(Duration::from_secs(30)).await;
+            pusher.transport = fx.fullnode_at_height(height);
+            pusher.advance().await.unwrap();
+        }
+        assert_eq!(
+            fx.last_advance(),
+            STALE_STAMP,
+            "no answer is past the cursor"
+        );
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "{frozen:?}");
+        assert_carries(&frozen[0], &["frozen_secs=300", "cursor=101"]);
+
+        pusher.transport = fx.fullnode_at_height(UPSTREAM_CURSOR + 2);
+        pusher.advance().await.unwrap();
+        assert_ne!(fx.last_advance(), STALE_STAMP);
+        let recovered = lines_with(&logs, RECOVERED);
+        assert_eq!(recovered.len(), 1, "{recovered:?}");
+        assert_carries(&recovered[0], &["was_frozen_secs=360"]);
+    }
+
+    /// A checkpoint fetch that never returns holds the tick, so no probe runs
+    /// after it. The check in `run` still reports the freeze, and sets the
+    /// frozen state, once past the threshold.
+    #[tokio::test(start_paused = true)]
+    async fn a_scan_fetch_that_hangs_still_reports_the_freeze() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = fresh_upstream_pusher().await;
+        pusher.transport = fullnode_hanging_on(
+            fx.fullnode_at_height(UPSTREAM_CURSOR + 1),
+            &[UPSTREAM_CURSOR + 1],
+        );
+        let frozen_state = pusher.upstream_frozen();
+        let running = tokio::spawn(pusher.run());
+
+        sleep(Duration::from_secs(295)).await;
+        assert!(lines_with(&logs, FROZEN).is_empty(), "under the threshold");
+        assert!(!*frozen_state.borrow());
+        sleep(Duration::from_secs(20)).await;
+        running.abort();
+
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "{frozen:?}");
+        assert_carries(
+            &frozen[0],
+            &[
+                "ERROR",
+                "cursor=100",
+                "last_seen_watermark=101",
+                "frozen_secs=300",
+                "pusher_tick_running_secs=",
+                "in the current pusher tick has not returned for",
+            ],
+        );
+        assert!(
+            !frozen[0].contains("the fullnode answers"),
+            "the fullnode answered past the cursor; a read is what is stuck: {}",
+            frozen[0]
+        );
+        assert!(*frozen_state.borrow());
+    }
+
+    /// The same for a pending-gap retry that never returns: it runs before
+    /// the probe, so no probe has answered at all.
+    #[tokio::test(start_paused = true)]
+    async fn a_gap_retry_that_hangs_still_reports_the_freeze() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = fresh_upstream_pusher().await;
+        pusher.transport = fullnode_hanging_on(fx.fullnode_at_height(UPSTREAM_CURSOR), &[95]);
+        gap_seen(&mut pusher, 95, Duration::ZERO);
+        let running = tokio::spawn(pusher.run());
+
+        sleep(Duration::from_secs(315)).await;
+        running.abort();
+
+        let frozen = lines_with(&logs, FROZEN);
+        assert_eq!(frozen.len(), 1, "{frozen:?}");
+        assert_carries(
+            &frozen[0],
+            &[
+                "ERROR",
+                "last_seen_watermark=none since this process started",
+                "in the current pusher tick has not returned for",
+            ],
+        );
+        assert_eq!(fx.probe_failures(), 0, "the probe never ran");
+    }
+
+    /// A node that started the clock at boot keeps that start when its pusher
+    /// is built late, so the time the pusher took to start counts; on its own
+    /// the pusher starts the clock when built.
+    #[tokio::test]
+    async fn a_pusher_built_late_keeps_the_boot_start_of_the_clock() {
+        let fx = upstream_fixture(Some(UPSTREAM_CURSOR));
+        fx.metrics.start_pusher_upstream_clock();
+        assert!(fx.last_advance() > 0);
+        fx.stale_last_advance();
+        pusher_over_with_cache(
+            fx.perpetual.clone(),
+            fx.committees.clone(),
+            fx.fullnode_at_height(UPSTREAM_CURSOR),
+            Arc::new(VerifiedStateCache::new()),
+            fx.metrics.clone(),
+        )
+        .await;
+        assert_eq!(fx.last_advance(), STALE_STAMP, "the boot start is kept");
+
+        let (fresh, _pusher) = fresh_upstream_pusher().await;
+        assert!(fresh.last_advance() > STALE_STAMP, "started when built");
+    }
+
+    /// First start against a fullnode whose watermark probe never answers:
+    /// the construction fails at the probe deadline, so the node's start loop
+    /// retries instead of waiting forever, and the failure counts.
+    #[tokio::test(start_paused = true)]
+    async fn a_first_start_against_a_hung_probe_fails_at_the_deadline() {
+        let fx = upstream_fixture(None);
+        let built = tokio::time::timeout(
+            Duration::from_secs(3_600),
+            IkaCheckpointPusher::new(
+                fullnode_probed(
+                    fx.fullnode_at_height(UPSTREAM_CURSOR),
+                    WatermarkProbe::Hangs,
+                ),
+                fx.perpetual.clone(),
+                fx.metrics.clone(),
+                &test_packages(),
+                Duration::from_secs(2),
+                Arc::new(VerifiedStateCache::new()),
+                fx.committees.clone(),
+                None,
+            ),
+        )
+        .await
+        .expect("the first probe must be bounded");
+        assert!(built.is_err());
+        assert_eq!(fx.probe_failures(), 1);
+    }
+
+    /// A freeze the timer reported while a read hung clears once that read
+    /// returns and the fullnode advances: one ERROR, then one INFO from the
+    /// tick that sees the advance, and the frozen state goes back to false.
+    #[tokio::test(start_paused = true)]
+    async fn a_freeze_reported_during_a_hung_tick_clears_when_the_fullnode_advances() {
+        let (logs, _guard) = CapturedLogs::start();
+        let (fx, mut pusher) = fresh_upstream_pusher().await;
+        let next = UPSTREAM_CURSOR + 1;
+        let release = Arc::new(tokio::sync::Notify::new());
+        let height = Arc::new(AtomicU64::new(next));
+        pusher.transport = fullnode_held_on(
+            transport_reporting(
+                &fx.committee,
+                &fx.keys,
+                next + 1,
+                HashMap::from([
+                    (next, plain_checkpoint(&fx.committee, &fx.keys, next)),
+                    (
+                        next + 1,
+                        plain_checkpoint(&fx.committee, &fx.keys, next + 1),
+                    ),
+                ]),
+            ),
+            &[next],
+            release.clone(),
+            height.clone(),
+        );
+        let frozen_state = pusher.upstream_frozen();
+        let running = tokio::spawn(pusher.run());
+
+        sleep(Duration::from_secs(305)).await;
+        assert_eq!(lines_with(&logs, FROZEN).len(), 1, "reported by the timer");
+        assert!(*frozen_state.borrow());
+
+        height.store(next + 1, Ordering::SeqCst);
+        release.notify_one();
+        // Under the timer's 10 s period: the recovery comes from the tick.
+        sleep(Duration::from_secs(2)).await;
+        running.abort();
+
+        assert_eq!(lines_with(&logs, FROZEN).len(), 1);
+        let recovered = lines_with(&logs, RECOVERED);
+        assert_eq!(recovered.len(), 1, "{recovered:?}");
+        assert_carries(&recovered[0], &["INFO", "last_seen_watermark=102"]);
+        assert!(
+            !*frozen_state.borrow(),
+            "cleared where the report latch flips"
+        );
     }
 }
