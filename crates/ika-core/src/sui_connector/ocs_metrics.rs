@@ -81,6 +81,23 @@ pub struct OcsMetrics {
     pub changeset_highest_seen: IntGauge,
     pub changeset_pending_depth: IntGauge,
     pub changeset_last_progress_timestamp_seconds: IntGauge,
+    /// Unix time a relay last served this node a Sui checkpoint past its
+    /// changeset frontier. On a sui-state-mirrored node it is stamped at boot,
+    /// before any Sui I/O, and stays so until the first advance; 0 on a node
+    /// that runs no receiver (sui-state-direct).
+    /// Unlike `changeset_last_progress_timestamp_seconds`, which stays 0 until
+    /// the first advance, it ages from boot, so a node whose relays never
+    /// served it anything, or whose receiver was never built, reads frozen
+    /// too. Sui makes checkpoints
+    /// continuously, so `time() - this` past a few minutes means no relay this
+    /// node can reach is advancing.
+    pub changeset_upstream_last_advance_timestamp_seconds: IntGauge,
+    /// Passes in which the changeset receiver, its frontier stalled, asked
+    /// every relay for the next checkpoint instead of only the one it prefers,
+    /// by outcome: `advanced` (a relay served it, and the relays that had
+    /// nothing newer were demoted), `none` (no relay had anything newer) or
+    /// `failed` (the pass failed).
+    pub changeset_successor_seeks_total: IntCounterVec, // labels: ["outcome"]
     pub changeset_dropped_total: IntCounter,
     pub changeset_fetch_failures_total: IntCounter,
     pub changeset_gap_total: IntCounter,
@@ -269,6 +286,17 @@ impl OcsMetrics {
                 "Unix time of the last contiguous changeset head advance; 0 before bootstrap",
                 registry,
             ).unwrap(),
+            changeset_upstream_last_advance_timestamp_seconds: register_int_gauge_with_registry!(
+                "ika_ocs_changeset_upstream_last_advance_timestamp_seconds",
+                "Unix time a relay last served this node a Sui checkpoint past its changeset frontier (stamped at boot on sui-state-mirrored until the first advance; 0 when no receiver runs); time() minus this is how long no relay has served this node anything new",
+                registry,
+            ).unwrap(),
+            changeset_successor_seeks_total: register_int_counter_vec_with_registry!(
+                "ika_ocs_changeset_successor_seeks_total",
+                "Passes in which the changeset receiver, its frontier stalled, asked every relay for the next checkpoint, by outcome: advanced (a relay served it; relays with nothing newer were demoted), none (no relay had anything newer), failed",
+                &["outcome"],
+                registry,
+            ).unwrap(),
             changeset_dropped_total: register_int_counter_with_registry!(
                 "ika_ocs_changeset_dropped_total",
                 "Out-of-order changesets dropped because the pending queue is at capacity",
@@ -446,7 +474,31 @@ impl OcsMetrics {
         metrics.pusher_lag_checkpoints.set(-1);
         metrics.changeset_contiguous_head.set(-1);
         metrics.changeset_highest_seen.set(-1);
+        // Present at 0 from the start, so a rate over any outcome reads 0
+        // rather than absent on a node whose frontier never stalled.
+        for outcome in ["advanced", "none", "failed"] {
+            metrics
+                .changeset_successor_seeks_total
+                .with_label_values(&[outcome]);
+        }
         metrics
+    }
+
+    /// Start the changeset receiver's last-advance clock
+    /// ([`Self::changeset_upstream_last_advance_timestamp_seconds`]) at now,
+    /// unless it has started already. A sui-state-mirrored node calls it at
+    /// boot, before any Sui I/O, so a node whose receiver is never built ages
+    /// from boot rather than reading 0 like a node that runs no receiver; the
+    /// receiver calls it again when built, which keeps the boot start.
+    pub fn start_changeset_upstream_clock(&self) {
+        if self.changeset_upstream_last_advance_timestamp_seconds.get() == 0 {
+            self.changeset_upstream_last_advance_timestamp_seconds.set(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            );
+        }
     }
 
     /// Start the pusher's last-advance clock

@@ -46,6 +46,7 @@ use sui_types::messages_checkpoint::{
 use crate::proof_provider::{
     BatchVerifiedObjectsResponse, ProofProvider, ProofProviderMetrics,
     VerifiedDynamicFieldsPageRequest, VerifiedDynamicFieldsPageResponse, VerifiedObjectResponse,
+    serve_relayed,
 };
 
 pub use client::{
@@ -125,6 +126,10 @@ pub struct Server {
     transport: Arc<dyn SuiTransport>,
     provider: Arc<dyn ProofProvider>,
     metrics: Arc<ProofProviderMetrics>,
+    /// When the unservable-changeset warn last fired: every mirrored node
+    /// reading through this relay asks for the same checkpoint, so it is
+    /// rate limited; the counter carries the volume.
+    last_unservable_warn: parking_lot::Mutex<Option<std::time::Instant>>,
 }
 
 impl Server {
@@ -137,6 +142,7 @@ impl Server {
             transport,
             provider,
             metrics,
+            last_unservable_warn: parking_lot::Mutex::new(None),
         }
     }
 
@@ -174,7 +180,11 @@ impl Server {
     /// the floor, and then only if `from_seq` is actually behind the head —
     /// ahead of the head means "nothing yet", which is not a gap to skip.
     async fn first_servable_seq(&self, from_seq: CheckpointSequenceNumber) -> Option<u64> {
-        if self.transport.get_full_checkpoint(from_seq).await.is_ok() {
+        // A checkpoint known to be too large to read whole is there; it is not
+        // read whole again to find that out.
+        if self.provider.known_too_large(from_seq)
+            || checkpoint_exists(&self.transport.get_full_checkpoint(from_seq).await)
+        {
             return Some(from_seq);
         }
         let head = *self
@@ -187,7 +197,7 @@ impl Server {
             return None;
         }
         let floor = lowest_available_seq(from_seq + 1, head, |seq| async move {
-            self.transport.get_full_checkpoint(seq).await.is_ok()
+            checkpoint_exists(&self.transport.get_full_checkpoint(seq).await)
         })
         .await?;
         tracing::info!(
@@ -199,6 +209,75 @@ impl Server {
         );
         Some(floor)
     }
+
+    /// Checkpoint `seq`'s changeset read in parts, for a checkpoint too large
+    /// to read whole. A part read that fails refuses the page with the reason:
+    /// skipping the checkpoint would leave the receiver, which folds only a
+    /// contiguous chain, at a gap it reports forever without saying why.
+    // The handler's own error type: anemo fixes it to `Status`.
+    #[allow(clippy::result_large_err)]
+    async fn changeset_in_parts(
+        &self,
+        seq: CheckpointSequenceNumber,
+    ) -> Result<ChangesetEntry, Status> {
+        match serve_relayed(self.provider.checkpoint_changeset_in_parts(seq)).await {
+            Ok((summary, object_states)) => {
+                self.metrics
+                    .serve_changeset_part_reads_total
+                    .with_label_values(&["served"])
+                    .inc();
+                Ok(ChangesetEntry {
+                    summary,
+                    object_states,
+                })
+            }
+            Err(error) => {
+                self.metrics
+                    .serve_changeset_part_reads_total
+                    .with_label_values(&["failed"])
+                    .inc();
+                let mut last = self.last_unservable_warn.lock();
+                if last.is_none_or(|at| at.elapsed() >= UNSERVABLE_CHANGESET_WARN_INTERVAL) {
+                    *last = Some(std::time::Instant::now());
+                    tracing::warn!(
+                        seq,
+                        %error,
+                        "changeset_page: checkpoint is too large to read whole and its part read \
+                         failed; mirrored nodes reading Sui through this relay cannot advance \
+                         past it until it is served"
+                    );
+                }
+                Err(Status::internal(format!(
+                    "{}: the checkpoint is too large to read whole and its part read failed: \
+                     {error}",
+                    unservable_changeset_prefix(seq)
+                )))
+            }
+        }
+    }
+}
+
+/// The start of the message a relay refuses a changeset page with when it
+/// cannot serve checkpoint `seq`'s changeset.
+fn unservable_changeset_prefix(seq: CheckpointSequenceNumber) -> String {
+    format!("changeset {seq} cannot be served")
+}
+
+/// Whether `status` is a relay's refusal to serve checkpoint `seq`'s
+/// changeset. A receiver that is bootstrapping may begin after it; one that
+/// needs the checkpoint gets the refusal.
+pub(crate) fn is_unservable_changeset(status: &Status, seq: CheckpointSequenceNumber) -> bool {
+    status.status() == StatusCode::InternalServerError
+        && status
+            .headers()
+            .get(anemo::types::header::STATUS_MESSAGE)
+            .is_some_and(|message| message.starts_with(&unservable_changeset_prefix(seq)))
+}
+
+/// Whether a whole-checkpoint read shows the checkpoint is there: it was
+/// read, or it is too large to read whole (served from its part read).
+fn checkpoint_exists(read: &Result<CheckpointData, TransportError>) -> bool {
+    matches!(read, Ok(_) | Err(TransportError::TooLarge(_)))
 }
 
 /// Lowest sequence in `[lo, hi]` for which `is_available` holds, by binary
@@ -318,10 +397,29 @@ impl SuiStateMirror for Server {
         };
         let mut entries = Vec::with_capacity(limit);
         for seq in start_seq..start_seq.saturating_add(limit as u64) {
+            // Too large to read whole: served from its part read, alone. A
+            // page ends before it, and the next page is just it, so an entry
+            // this large never shares a response. A checkpoint already known
+            // to be too large is not read whole again.
+            if self.provider.known_too_large(seq) {
+                if entries.is_empty() {
+                    entries.push(self.changeset_in_parts(seq).await?);
+                }
+                break;
+            }
             // Stop at the first unavailable checkpoint (head reached): a
             // short, contiguous prefix is exactly what the receiver folds.
             let checkpoint = match self.transport.get_full_checkpoint(seq).await {
                 Ok(checkpoint) => checkpoint,
+                // Too large to read whole: served from its part read, alone.
+                // A page ends before it, and the next page is just it, so an
+                // entry this large never shares a response.
+                Err(TransportError::TooLarge(_)) => {
+                    if entries.is_empty() {
+                        entries.push(self.changeset_in_parts(seq).await?);
+                    }
+                    break;
+                }
                 Err(_) => break,
             };
             // Ship only the modified object-set, not the bodies. The receiver
@@ -356,9 +454,7 @@ impl SuiStateMirror for Server {
         request: Request<VerifiedObjectRequest>,
     ) -> Result<Response<VerifiedObjectResponse>, Status> {
         let started = self.serve_start("verified_object", request.peer_id().copied());
-        let v = self
-            .provider
-            .verified_object(request.into_inner().id)
+        let v = serve_relayed(self.provider.verified_object(request.into_inner().id))
             .await
             .map_err(map_err)?;
         self.serve_end("verified_object", started);
@@ -369,9 +465,8 @@ impl SuiStateMirror for Server {
         request: Request<BatchVerifiedObjectsRequest>,
     ) -> Result<Response<BatchVerifiedObjectsResponse>, Status> {
         let started = self.serve_start("batch_verified_objects", request.peer_id().copied());
-        let v = self
-            .provider
-            .batch_verified_objects(&request.into_inner().ids)
+        let ids = request.into_inner().ids;
+        let v = serve_relayed(self.provider.batch_verified_objects(&ids))
             .await
             .map_err(map_err)?;
         self.serve_end("batch_verified_objects", started);
@@ -382,11 +477,12 @@ impl SuiStateMirror for Server {
         request: Request<VerifiedDynamicFieldsPageRequest>,
     ) -> Result<Response<VerifiedDynamicFieldsPageResponse>, Status> {
         let started = self.serve_start("verified_dynamic_fields_page", request.peer_id().copied());
-        let v = self
-            .provider
-            .verified_dynamic_fields_page(request.into_inner())
-            .await
-            .map_err(map_err)?;
+        let v = serve_relayed(
+            self.provider
+                .verified_dynamic_fields_page(request.into_inner()),
+        )
+        .await
+        .map_err(map_err)?;
         self.serve_end("verified_dynamic_fields_page", started);
         Ok(Response::new(v))
     }
@@ -416,6 +512,8 @@ const INFLIGHT_METADATA_READ: usize = 256;
 /// checkpoint server-side to extract its object-set, so keep the page modest;
 /// the receiver simply requests the next page to continue.
 const MAX_CHANGESET_PAGE: usize = 64;
+/// How often the relay warns that a changeset cannot be served.
+const UNSERVABLE_CHANGESET_WARN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Build the anemo router service serving the verified-read and
 /// committee-ratchet RPCs, with per-method inflight caps on the heavy ones.
@@ -509,6 +607,290 @@ mod tests {
             probes.get() <= 21,
             "expected ~log2(1e6) probes, made {}",
             probes.get()
+        );
+    }
+
+    // ---- changeset_page over a checkpoint too large to read whole ----
+
+    use std::collections::{HashMap, HashSet};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction};
+    use sui_types::base_types::TransactionDigest;
+    use sui_types::committee::Committee;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::{
+        CheckpointCommitment, CheckpointContents, CheckpointSummary,
+    };
+    use sui_types::object::Object;
+
+    use crate::proof_provider::CheckpointChangeset;
+
+    /// A committee-signed checkpoint `seq` with no transactions.
+    fn checkpoint(seq: CheckpointSequenceNumber) -> CheckpointData {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::CheckpointArtifactsDigest(
+                CheckpointArtifacts::from_object_states(BTreeMap::new())
+                    .digest()
+                    .unwrap(),
+            )],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        CheckpointData {
+            checkpoint_summary: CertifiedCheckpointSummary::new_from_keypairs_for_testing(
+                summary, &keys, &committee,
+            ),
+            checkpoint_contents: contents,
+            transactions: vec![],
+        }
+    }
+
+    /// A fullnode holding checkpoints `10..=head`, of which `too_large` are
+    /// over the decode limit for a whole read.
+    struct Fullnode {
+        checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
+        too_large: HashSet<CheckpointSequenceNumber>,
+        head: CheckpointSequenceNumber,
+        /// Every whole read, in order.
+        whole_reads: Arc<parking_lot::Mutex<Vec<CheckpointSequenceNumber>>>,
+    }
+
+    impl Fullnode {
+        fn new(head: CheckpointSequenceNumber, too_large: &[CheckpointSequenceNumber]) -> Self {
+            Self {
+                checkpoints: (10..=head).map(|seq| (seq, checkpoint(seq))).collect(),
+                too_large: too_large.iter().copied().collect(),
+                head,
+                whole_reads: Default::default(),
+            }
+        }
+    }
+
+    #[anemo::async_trait]
+    impl SuiTransport for Fullnode {
+        async fn get_chain_identifier(&self) -> Result<String, TransportError> {
+            unimplemented!()
+        }
+        async fn get_current_epoch(&self) -> Result<u64, TransportError> {
+            unimplemented!()
+        }
+        async fn get_committee(&self, _epoch: Option<u64>) -> Result<Committee, TransportError> {
+            unimplemented!()
+        }
+        async fn get_latest_checkpoint(
+            &self,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            Ok(self.checkpoints[&self.head].checkpoint_summary.clone())
+        }
+        async fn get_full_checkpoint(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointData, TransportError> {
+            self.whole_reads.lock().push(seq);
+            if self.too_large.contains(&seq) {
+                return Err(TransportError::TooLarge(format!(
+                    "checkpoint {seq} is over the decode limit"
+                )));
+            }
+            self.checkpoints
+                .get(&seq)
+                .cloned()
+                .ok_or_else(|| TransportError::NotFound(format!("checkpoint {seq} not found")))
+        }
+        async fn get_checkpoint_summary_by_digest(
+            &self,
+            _digest: CheckpointDigest,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unimplemented!()
+        }
+        async fn last_checkpoint_of_epoch(
+            &self,
+            _epoch: u64,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object(&self, _id: ObjectID) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object_with_version(
+            &self,
+            _id: ObjectID,
+            _version: SequenceNumber,
+        ) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn batch_get_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<Vec<Object>, TransportError> {
+            unimplemented!()
+        }
+        async fn list_dynamic_fields(
+            &self,
+            _parent: ObjectID,
+            _page_size: Option<u32>,
+            _page_token: Option<Vec<u8>>,
+        ) -> Result<DynamicFieldPage, TransportError> {
+            unimplemented!()
+        }
+        async fn get_transaction(
+            &self,
+            _tx: TransactionDigest,
+        ) -> Result<ExecutedTransaction, TransportError> {
+            unimplemented!()
+        }
+    }
+
+    /// A provider whose part read answers `answer`, counting the reads, and
+    /// which remembers the checkpoints it was asked to read in parts as too
+    /// large, as the real provider does.
+    struct PartReader {
+        answer: Result<CheckpointChangeset, TransportError>,
+        reads: AtomicU32,
+        known_too_large: parking_lot::Mutex<HashSet<CheckpointSequenceNumber>>,
+    }
+
+    #[anemo::async_trait]
+    impl ProofProvider for PartReader {
+        async fn verified_object(
+            &self,
+            _id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            unimplemented!()
+        }
+        async fn batch_verified_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            unimplemented!()
+        }
+        async fn verified_dynamic_fields_page(
+            &self,
+            _request: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
+            unimplemented!()
+        }
+        async fn checkpoint_changeset_in_parts(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointChangeset, TransportError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            self.known_too_large.lock().insert(seq);
+            self.answer.clone()
+        }
+
+        fn known_too_large(&self, seq: CheckpointSequenceNumber) -> bool {
+            self.known_too_large.lock().contains(&seq)
+        }
+    }
+
+    fn server(fullnode: Fullnode, answer: Result<CheckpointChangeset, TransportError>) -> Server {
+        Server::new(
+            Arc::new(fullnode),
+            Arc::new(PartReader {
+                answer,
+                reads: AtomicU32::new(0),
+                known_too_large: Default::default(),
+            }),
+            ProofProviderMetrics::new_for_testing(),
+        )
+    }
+
+    #[allow(clippy::result_large_err)]
+    async fn page(server: &Server, from_seq: CheckpointSequenceNumber) -> Result<Vec<u64>, Status> {
+        server
+            .changeset_page(Request::new(ChangesetPageRequest {
+                from_seq,
+                limit: 64,
+            }))
+            .await
+            .map(|response| {
+                response
+                    .into_inner()
+                    .entries
+                    .iter()
+                    .map(|entry| *entry.summary.sequence_number())
+                    .collect()
+            })
+    }
+
+    fn part_reads(server: &Server, outcome: &str) -> u64 {
+        server
+            .metrics
+            .serve_changeset_part_reads_total
+            .with_label_values(&[outcome])
+            .get()
+    }
+
+    /// Checkpoint 12 is too large to read whole. A page ends before it, the
+    /// next page is it alone, served from its part read, and the page after
+    /// carries on: the stream stays contiguous.
+    #[tokio::test]
+    async fn a_checkpoint_too_large_to_read_whole_is_served_alone_from_its_part_read() {
+        let changeset = (checkpoint(12).checkpoint_summary, BTreeMap::new());
+        let server = server(Fullnode::new(14, &[12]), Ok(changeset));
+
+        assert_eq!(page(&server, 10).await.unwrap(), vec![10, 11]);
+        assert_eq!(page(&server, 12).await.unwrap(), vec![12]);
+        assert_eq!(page(&server, 13).await.unwrap(), vec![13, 14]);
+        assert_eq!(part_reads(&server, "served"), 1);
+        assert_eq!(part_reads(&server, "failed"), 0);
+    }
+
+    /// When the part read fails, the page is refused with the checkpoint and
+    /// the reason, rather than skipping to 13, which would leave the receiver
+    /// at a gap it reports forever without saying why.
+    #[tokio::test]
+    async fn a_part_read_that_fails_refuses_the_page_with_the_reason() {
+        let server = server(
+            Fullnode::new(14, &[12]),
+            Err(TransportError::Encoding(
+                "checkpoint 12 writes more than 2000000 object states".into(),
+            )),
+        );
+
+        let refused = page(&server, 12).await.expect_err("refused, not skipped");
+        let message = format!("{refused:?}");
+        assert!(
+            message.contains("changeset 12 cannot be served"),
+            "{message}"
+        );
+        assert!(message.contains("2000000 object states"), "{message}");
+        assert_eq!(part_reads(&server, "failed"), 1);
+        assert_eq!(
+            page(&server, 10).await.unwrap(),
+            vec![10, 11],
+            "the checkpoints before it are still served"
+        );
+    }
+
+    /// A checkpoint already known to be too large is not read whole again:
+    /// the next page of it goes straight to its (cached) part read.
+    #[tokio::test]
+    async fn a_checkpoint_known_too_large_is_not_read_whole_again() {
+        let changeset = (checkpoint(12).checkpoint_summary, BTreeMap::new());
+        let fullnode = Fullnode::new(14, &[12]);
+        let whole_reads = fullnode.whole_reads.clone();
+        let server = server(fullnode, Ok(changeset));
+
+        assert_eq!(page(&server, 12).await.unwrap(), vec![12]);
+        let after_first = whole_reads.lock().iter().filter(|seq| **seq == 12).count();
+        assert!(after_first > 0, "found too large by reading it whole");
+        assert_eq!(page(&server, 12).await.unwrap(), vec![12]);
+        assert_eq!(
+            whole_reads.lock().iter().filter(|seq| **seq == 12).count(),
+            after_first,
+            "not read whole again"
         );
     }
 }

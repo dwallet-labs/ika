@@ -473,6 +473,74 @@ missing checkpoint, or weakens `previous_digest`, BLS or artifacts binding.
 If every available relay has pruned the successor, recovery requires a relay
 that retains it; this change does not manufacture missing verified history.
 
+**A frozen relay.** A relay whose own fullnode is dead or stuck serves empty
+pages, which read exactly like being caught up. In automatic peer mode the
+first relay that answers keeps being preferred, so one frozen relay at the
+front stopped the node's changeset index, and nothing said so: only
+`ika_ocs_changeset_last_progress_timestamp_seconds` aged, and the gap signal
+(highest seen past the contiguous head) stayed 0. Sui makes
+checkpoints continuously, so the receiver measures the frontier against time
+instead. Once it has not advanced for 30 s, the receiver asks every relay for
+the next checkpoint, at most every 30 s while the stall lasts. This is the
+same pass a known gap uses: a relay with nothing newer is demoted and passed
+over, and the first relay that serves the successor wins. The demotion lives
+in the peer order that verified reads and the committee ratchet share, so in
+automatic mode they move to that relay too. Pinned mode visits every
+configured peer in the pass. When no relay has anything newer, that is the
+answer, not a failure (`ika_ocs_changeset_successor_seeks_total{outcome}`).
+Five minutes without an advance logs one `ERROR` with the frontier, the time
+frozen and the last relay error, then one `INFO` when a relay serves a newer
+checkpoint. `ika_ocs_changeset_upstream_last_advance_timestamp_seconds` is
+stamped on every advance, and at boot on a sui-state-mirrored node, before any
+Sui I/O, so `time() -` it is the alert signal even on a node whose relays
+never served it or whose receiver was never built (an alert gates on it being
+above 0, with an uptime condition). A page with an entry that fails
+verification (a bad committee signature, an artifacts mismatch, a broken
+chain link, or an epoch the chain cannot have reached after the index head)
+passes its relay over: the relay is demoted and left out of the next pass, so
+it cannot keep winning passes with an entry this node can show is forged. An
+entry whose epoch has no committee installed here cannot be checked at all.
+It is plausible only while the index is bootstrapping (it may begin in a later
+epoch than the committee ratchet has reached) or right after the end-of-epoch
+checkpoint of the committee store's head epoch when the next committee is not
+installed yet. Since the receiver installs that committee as it folds the
+end-of-epoch checkpoint, a normal epoch boundary has no wait; one remains only
+when that install failed, or while bootstrapping. Such an entry is a wait, not
+a fault: its relay is left out of the passes until the frontier advances,
+without being demoted. The relays left out form a set, so several relays
+serving such entries cannot take turns at the front and keep the others from
+being asked: they cannot hold the receiver on those entries while another
+relay can serve, and an honest one keeps its place. When no relay outside the
+set has a page to serve, the set is cleared and every relay is asked again.
+Any other entry of an epoch without a committee claims
+an epoch the chain cannot have reached after the index head, so it is forged
+whatever signs it, and its relay is rejected. The receiver installs the next committee itself
+when it folds the end-of-epoch checkpoint that carries it (the same
+head-guarded install the committee follower uses), so the entries after it
+verify in the same page; otherwise the committee ratchet installs it. A wait
+counts no failure and logs once per epoch. Nothing about verification
+changes: every entry is still BLS- and artifacts-bound and folded only
+contiguously. A relay that is behind but still advancing is not passed over:
+the frontier then moves, slowly, and the stall measure does not see it.
+
+**A checkpoint too large to read whole.** A relay serves its changeset from
+the bounded part read (summary plus object states, which is exactly what an
+entry carries), alone in its page. A page ends before it, and the next page
+is just it. This works only up to 2 million object states per entry (about
+150 MB on the wire; Sui allows a checkpoint about 131 million) and only when
+the part read succeeds. A part read that fails, or a checkpoint past the cap,
+refuses the page with the checkpoint and the reason, counted in
+`ika_ocs_serve_changeset_part_reads_total{outcome="failed"}`. A receiver that
+needs that checkpoint then stops at it, with the reason in its logs, rather
+than at a gap it reported forever without saying why; a receiver that is
+bootstrapping begins after it, as it did when the relay fast-forwarded past
+it. A mirrored node running an older binary has no such skip: if it is
+bootstrapping exactly at a checkpoint that upgraded relays refuse, it stays
+there until the relays it reads through, or the node, upgrade. A checkpoint
+the relay already knows is too large is not read whole again. The receiver binds the entry to the summary's artifacts digest as it
+does any other, so a part-read entry gains no trust. The receiver's fold of a
+large entry holds the index's write lock while it re-derives that digest.
+
 The out-of-order queue retains at most 256 changesets. It counts each drop,
 reports contiguous head, highest verified sequence seen and queue depth,
 and warns at most once a minute per index. Last-progress Unix time changes
@@ -751,7 +819,28 @@ dropping entries are layered:
   fails as `Network` after 60 s (`PART_READ_DEADLINE`), so it is retried
   within its four tries and then fails the page, and the next walk tries
   again. So one build holds the permit for at most about 4 × 60 s + 1.75 s
-  per part read, with 16 effects reads in flight at a time. The tree cache is
+  per part read, with 16 effects reads in flight at a time. A checkpoint can
+  need about 225,000 effects reads, so a part read as a whole is watched
+  too: it is abandoned when it completes no read for 5 minutes (longer than
+  any single read may take with its retries), or after 6 hours however it
+  progresses (about 225,000 reads at 16 in flight finish within that at up to
+  about 1.5 s per read). A slow fullnode that keeps completing reads is not
+  cut off before the backstop. An abandoned read gives the permit back, and
+  its checkpoint is refused at once for 10 minutes. Every part-read build, the
+  node's own included, waits at most 20 s for the permit, then fails as a
+  retriable `Network` error; a relayed request whose wait is most of its time
+  gets that answer before the relay client's 30 s deadline. Part-read builds
+  run in a task of their own: a relayed request's handler is dropped when the
+  client gives up at 30 s, and a part read tied to it used to be abandoned
+  with it, so a part read longer than that never completed over relays. Now
+  it finishes, within those bounds, and caches its tree for the next
+  request. Simultaneous requests for one checkpoint's tree, or for its
+  changeset, join the part read already running. At most 4 part reads that
+  relayed requests started run at once, waiting or reading; a relayed request
+  that would start a fifth is refused at once, and the node's own reads need
+  no such slot. Whole reads stay in the request, under the relay server's
+  inflight caps, and end with it. A checkpoint past an
+  object-state cap is remembered for the process's lifetime. The tree cache is
   weighed by object states, 32 million in all across the cached trees,
   about 220 bytes per state, so about 7 GB at most; trees from the whole
   read are weighed the same way. The cache evicts the least recently used
