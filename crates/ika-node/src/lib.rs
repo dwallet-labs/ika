@@ -610,6 +610,12 @@ impl IkaNode {
             // reading 0 like a node that runs no pusher.
             ocs_metrics.start_pusher_upstream_clock();
         }
+        if is_sui_state_mirrored {
+            // Likewise the changeset receiver's, for a node whose receiver is
+            // never built (the connector stack's first Sui reads do not
+            // answer, or the boot stops before it).
+            ocs_metrics.start_changeset_upstream_clock();
+        }
         // The plan selects direct gRPC or the peer-only verified relay.
         let plan = select_sui_transport(
             &config.sui_connector_config.sui_data_source,

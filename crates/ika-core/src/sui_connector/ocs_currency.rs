@@ -146,6 +146,13 @@ pub enum ChangesetError {
         expected: CheckpointSequenceNumber,
         received: CheckpointSequenceNumber,
     },
+    /// The entry is for the epoch after the committee store's head, whose
+    /// committee is not installed yet: a wait, not a fault of the relay.
+    #[error("changeset at seq {seq} waits for Sui epoch {epoch}'s committee to be installed")]
+    AwaitingCommittee {
+        seq: CheckpointSequenceNumber,
+        epoch: u64,
+    },
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -154,6 +161,8 @@ struct PendingChangeset {
     digest: CheckpointDigest,
     previous_digest: Option<CheckpointDigest>,
     object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>,
+    /// The epoch this checkpoint ends, when it is an end-of-epoch checkpoint.
+    ends_epoch: Option<u64>,
 }
 
 /// Hard cap on the out-of-order `pending` queue. A byzantine relay can withhold
@@ -177,6 +186,9 @@ pub struct ChangesetIndex {
     index: HashMap<ObjectID, IdRecord>,
     /// `(seq, digest)` of the highest contiguously-folded checkpoint.
     contiguous_head: Option<(CheckpointSequenceNumber, CheckpointDigest)>,
+    /// The epoch the contiguous head ends, when the head is an end-of-epoch
+    /// checkpoint: the next checkpoint is then of the following epoch.
+    head_ends_epoch: Option<u64>,
     /// Lowest folded checkpoint — the floor below which currency is `Unknown`.
     oldest_folded: Option<CheckpointSequenceNumber>,
     /// Highest checkpoint seq ever absorbed (contiguous or not) — observability.
@@ -215,6 +227,7 @@ impl ChangesetIndex {
             last_queue_warning: None,
             index: HashMap::new(),
             contiguous_head: None,
+            head_ends_epoch: None,
             oldest_folded: None,
             highest_seen: None,
             pending: BTreeMap::new(),
@@ -250,6 +263,13 @@ impl ChangesetIndex {
 
     pub fn highest_seen_seq(&self) -> Option<CheckpointSequenceNumber> {
         self.highest_seen
+    }
+
+    /// The epoch the contiguous head ends, when the head is an end-of-epoch
+    /// checkpoint. The next checkpoint is then of the following epoch;
+    /// otherwise it is of the head's own epoch.
+    pub fn head_ends_epoch(&self) -> Option<u64> {
+        self.head_ends_epoch
     }
 
     /// Fold one checkpoint's changeset.
@@ -314,6 +334,7 @@ impl ChangesetIndex {
 
         self.highest_seen = Some(self.highest_seen.map_or(seq, |h| h.max(seq)));
         let incoming = PendingChangeset {
+            ends_epoch: data.end_of_epoch_data.as_ref().map(|_| data.epoch),
             digest: data.digest(),
             previous_digest: data.previous_digest,
             object_states,
@@ -325,6 +346,7 @@ impl ChangesetIndex {
                 self.fold(seq, &incoming.object_states);
                 self.oldest_folded = Some(seq);
                 self.contiguous_head = Some((seq, incoming.digest));
+                self.head_ends_epoch = incoming.ends_epoch;
                 self.drain_pending();
                 Ok(AbsorbOutcome::Advanced {
                     new_head: self.head_seq(),
@@ -339,6 +361,7 @@ impl ChangesetIndex {
                     }
                     self.fold(seq, &incoming.object_states);
                     self.contiguous_head = Some((seq, incoming.digest));
+                    self.head_ends_epoch = incoming.ends_epoch;
                     self.drain_pending();
                     Ok(AbsorbOutcome::Advanced {
                         new_head: self.head_seq(),
@@ -458,6 +481,7 @@ impl ChangesetIndex {
                     let p = self.pending.remove(&next).expect("just matched");
                     self.fold(next, &p.object_states);
                     self.contiguous_head = Some((next, p.digest));
+                    self.head_ends_epoch = p.ends_epoch;
                 }
                 // A queued successor that doesn't chain is byzantine — drop it
                 // (it can never legitimately drain) and stop at the gap.
