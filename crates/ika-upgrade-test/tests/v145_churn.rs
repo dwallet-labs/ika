@@ -1,15 +1,15 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Literal v1.4.1 upgrade rehearsal **with post-upgrade committee churn** —
+//! Literal v1.4.5 upgrade rehearsal **with post-upgrade committee churn** —
 //! the successor to the retired `v118_churn`/`cross_binary` churn coverage.
 //!
-//! Boot a 4-validator committee on the actual v1.4.1 release (deployed on
-//! mainnet AND testnet, protocol v7), sequentially swap **all validators** to
+//! Boot a 4-validator committee on the actual v1.4.5 release (the release
+//! for mainnet AND testnet, protocol v7), sequentially swap **all validators** to
 //! the current build — then, on the now all-current committee:
 //!
 //! - **join a brand-new validator** (candidate → stake → activate) so the
-//!   next reshare encrypts the network key (originally DKG'd by v1.4.1's
+//!   next reshare encrypts the network key (originally DKG'd by v1.4.5's
 //!   binary) to a 5-member committee that includes a party which never held
 //!   it. The joiner boots peer-only `SuiStateMirrored`, reading verified Sui
 //!   state through the direct relay validators — the OCS joiner
@@ -26,22 +26,30 @@
 //! `ika_swarm_config::sui_client::request_add_validator_candidate` — not
 //! #2120's CLI placeholder.
 //!
+//! What the v1.4.1 -> v1.4.5 retarget does change here is the boot phase
+//! and the swap: the OCS read path the direct relays serve (#2135, #2136,
+//! #2139, #2183, #2184, #2197, #2201, #2203, #2205) and the startup
+//! preparation each restart runs (#2138, #2176, #2190) are now the same code
+//! on both sides, and the OLD committee boots on the default Sui localnet
+//! rather than the `UPGRADE_TEST_LEGACY_SUI_TRANSACTIONS` one literal v1.4.1
+//! needed.
+//!
 //! The sequential replacement has transient mixed states but intentionally
-//! avoids an MPC boundary; real mixed-committee MPC is `v141_rollout`'s job.
+//! avoids an MPC boundary; real mixed-committee MPC is `v145_rollout`'s job.
 //! The OCS read topology splits at the swap: validators 0 and 1 stay direct
 //! (serving the relay), 2 and 3 flip to peer-only mirrored, and the joiner
 //! comes up mirrored — the topology the retired `cross_binary` exercised.
 //!
-//! Opt-in, via `RUN_V141_CHURN=1` (same binaries as `v141_rollout`):
+//! Opt-in, via `RUN_V145_CHURN=1` (same binaries as `v145_rollout`):
 //!
 //! ```bash
-//! RUN_V141_CHURN=1 \
-//!   OLD_BIN=/path/to/ika-validator-v1.4.1 \
+//! RUN_V145_CHURN=1 \
+//!   OLD_BIN=/path/to/ika-validator-v1.4.5 \
 //!   NEW_BIN=target/release/ika-validator \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
-//!   cargo test --release -p ika-upgrade-test --test v141_churn -- --nocapture
+//!   cargo test --release -p ika-upgrade-test --test v145_churn -- --nocapture
 //! ```
 
 use std::path::PathBuf;
@@ -57,10 +65,10 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn v141_full_swap_then_committee_churn() {
-    if std::env::var("RUN_V141_CHURN").is_err() {
+async fn v145_full_swap_then_committee_churn() {
+    if std::env::var("RUN_V145_CHURN").is_err() {
         eprintln!(
-            "skipping: set RUN_V141_CHURN=1 \
+            "skipping: set RUN_V145_CHURN=1 \
              (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
@@ -72,7 +80,7 @@ async fn v141_full_swap_then_committee_churn() {
 
     let old = BinarySpec::Path(bin_from_env(
         "OLD_BIN",
-        "/mnt/nvme0n1p1/v141-bins/ika-validator",
+        "/mnt/nvme0n1p1/v145-bins/ika-validator",
     ));
     let current = BinarySpec::Path(bin_from_env("NEW_BIN", "target/release/ika-validator"));
     let notifier = bin_from_env("NOTIFIER_BIN", "target/release/ika-notifier");
@@ -86,7 +94,7 @@ async fn v141_full_swap_then_committee_churn() {
         .to_path_buf();
     let base = PathBuf::from(
         std::env::var("UPGRADE_TEST_DIR")
-            .unwrap_or_else(|_| "/mnt/nvme0n1p1/tmp/ika-v141-churn".to_string()),
+            .unwrap_or_else(|_| "/mnt/nvme0n1p1/tmp/ika-v145-churn".to_string()),
     );
     let _ = std::fs::remove_dir_all(&base);
     let epoch_duration_ms = std::env::var("EPOCH_DURATION_MS")
@@ -95,7 +103,7 @@ async fn v141_full_swap_then_committee_churn() {
         .unwrap_or(600_000);
     assert!(
         epoch_duration_ms >= 480_000,
-        "the v1.4.1 churn scenario requires an epoch of at least 480000ms so the bounded sequential \
+        "the v1.4.5 churn scenario requires an epoch of at least 480000ms so the bounded sequential \
          restarts complete before the mid-epoch reconfiguration"
     );
 
@@ -116,13 +124,13 @@ async fn v141_full_swap_then_committee_churn() {
         .with_epoch_timeout(Duration::from_secs(1200))
         // OCS read topology: 0 and 1 stay direct (relay servers); 2, 3 and
         // the joiner run peer-only SuiStateMirrored through them. The split
-        // materializes at the swap; the v1.4.1 boot phase is all-direct.
+        // materializes at the swap; the v1.4.5 boot phase is all-direct.
         .with_direct_validators(&[0, 1])
         .with_ika_cli(ika_cli)
         // Deployed-faithful on-chain state (populated global-presign config).
         .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Full)
-        // Boot the literal v1.4.1 committee at protocol v7; epoch 2
-        // guarantees the genesis network DKG (v1.4.1 binary) completed
+        // Boot the literal v1.4.5 committee at protocol v7; epoch 2
+        // guarantees the genesis network DKG (v1.4.5 binary) completed
         // before the swap.
         .start_all(old)
         .wait_for_epoch(2)
@@ -131,13 +139,13 @@ async fn v141_full_swap_then_committee_churn() {
         .expect_committee_size(4)
         .expect_protocol_version_at_least(7)
         // Sequentially swap every validator to the current build. The
-        // current binaries inherit the v1.4.1-written RocksDB state and
-        // reshare the v1.4.1-DKG'd network key. v1.4.1, like the v1.4.0
-        // release it replaces here, is post-#2074, so that inheritance has
-        // been within ONE storage model since the 1.3.1 -> 1.4.0 retarget
-        // stopped crossing that boundary — the durable tables both binaries
-        // keep, not a fold-side set one writes and the other does not.
-        // Crossing the event-sourcing change was
+        // current binaries inherit the v1.4.5-written RocksDB state and
+        // reshare the v1.4.5-DKG'd network key. v1.4.5, like the v1.4.0 and
+        // v1.4.1 releases before it here, is post-#2074, so that inheritance
+        // has been within ONE storage model since the 1.3.1 -> 1.4.0
+        // retarget stopped crossing that boundary — the durable tables both
+        // binaries keep, not a fold-side set one writes and the other does
+        // not. Crossing the event-sourcing change was
         // `mid_epoch_rollback`'s job; that scenario was retired with v1.4.0
         // (#2077, #2064), so nothing exercises that crossing now.
         .stop_and_swap(&[0, 1, 2, 3], current.clone())
@@ -147,7 +155,7 @@ async fn v141_full_swap_then_committee_churn() {
         .expect_all_validators_healthy()
         .expect_committee_size(4)
         // ── Churn 1: grow 4 → 5 with a mirrored joiner. ────────────────────
-        // The reshare encrypts the v1.4.1-origin key to a committee
+        // The reshare encrypts the v1.4.5-origin key to a committee
         // including a party that never held it; the joiner installs the key
         // by the cert-pinned digest over the OCS mirrored path.
         .join_validator_mirrored(current)
@@ -170,7 +178,7 @@ async fn v141_full_swap_then_committee_churn() {
         .expect_network_key_output_converged(&current_observer)
         .expect_malicious_actors_exactly(&current_observer, 0)
         // The 5-member committee runs a full lifecycle against the reshared
-        // v1.4.1-origin network key.
+        // v1.4.5-origin network key.
         .run_workload("v7-with-joiner")
         .record_mpc_timings("v7-with-joiner")
         // ── Churn 2: shrink 5 → 4 by removing an original validator. ──────
@@ -199,11 +207,11 @@ async fn v141_full_swap_then_committee_churn() {
         .expect_log_line_absent("failed to submit an MPC output message to consensus")
         .run()
         .await
-        .expect("v1.4.1 -> current full-committee upgrade + committee churn in both directions");
+        .expect("v1.4.5 -> current full-committee upgrade + committee churn in both directions");
 
     tracing::info!(
-        "v1.4.1 churn PASSED: full binary swap over v1.4.1 state, a mirrored joiner folded \
-         into the reshared v1.4.1-origin key (4→5), and a shrink reshare (5→4) all converged \
+        "v1.4.5 churn PASSED: full binary swap over v1.4.5 state, a mirrored joiner folded \
+         into the reshared v1.4.5-origin key (4→5), and a shrink reshare (5→4) all converged \
          while serving a full user lifecycle"
     );
 }

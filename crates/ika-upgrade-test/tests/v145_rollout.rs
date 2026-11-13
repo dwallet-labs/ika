@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! Deployed-release rolling-upgrade rehearsal at protocol v7: the literal
-//! v1.4.1 release against the candidate build.
+//! v1.4.5 release against the candidate build.
 //!
-//! - **OLD** = the v1.4.1 `ika-validator` (built from the
-//!   `release/mainnet-v1.4.1` tag, deployed on mainnet AND testnet).
+//! - **OLD** = the v1.4.5 `ika-validator` (built from the
+//!   `release/mainnet-v1.4.5` tag; `release/testnet-v1.4.5` is the same
+//!   commit, so this is the release for mainnet AND testnet).
 //! - **NEW** = the candidate build.
 //!
 //! `MIN_PROTOCOL_VERSION = MAX_PROTOCOL_VERSION = 7`, so both binaries support
@@ -22,55 +23,69 @@
 //! epoch. All six class-group keys and the VSS HPKE key must stay unchanged.
 //!
 //! **What the retarget removes from this gate's reach.** Retargeting from
-//! v1.4.0 moved the OLD side across everything that shipped in v1.4.1, so
-//! each of the following is now identical on both sides and is no longer a
-//! difference this gate straddles. They are listed because the OLD side's
-//! behaviour moved with them, not because the mixed committee exercises a
-//! disagreement about them:
+//! v1.4.1 moved the OLD side across everything that shipped in v1.4.2
+//! through v1.4.5. The `v141_*` gates straddled those changes; both sides of
+//! this one are past them, so each of the following is now identical on both
+//! sides and is no longer a difference this gate straddles. They are listed
+//! because the OLD side's behaviour moved with them, not because the mixed
+//! committee exercises a disagreement about them:
 //!
-//! - the validator no longer READS the deprecated on-chain `mpc_data_bytes`
-//!   (#2121, Part A of #2119), and a newly registered validator writes a
-//!   placeholder into it (#2120). Both sides of this scenario are now past
-//!   that change, so the mixed phase no longer has one side decoding a field
-//!   the other side stubs — the compatibility hazard that made activation
-//!   order load-bearing on v1.4.0 (see
-//!   dev-docs/specs/validator-mpc-data-announcements.md);
-//! - the optional previous-root-seed field (#2121), which both binaries
-//!   support. This rollout keeps each validator's configured root seed unchanged;
-//! - the prepare-then-start handoff barrier on cold start and joiner
-//!   promotion (#2123), which both sides now run;
-//! - `ika_sui_client_sui_response_errors_total` split out of
-//!   `ika_sui_client_sui_rpc_errors` (#2122). This gate asserts on neither
-//!   family, so the split is inert here — it is listed because the OLD
-//!   side's metric surface changed with it.
+//! - the Sui dependency move from mainnet-v1.77.2 to mainnet-v1.83.1 (#2146,
+//!   #2182), including #2146's consensus-owned full-epoch replay and raw
+//!   consensus-key authority labels;
+//! - the published-inkrypto upgrade (#2168). The encryption-key
+//!   preservation checkpoint above came with it, to prove the candidate keeps
+//!   the keys a pre-#2168 binary generated. Both sides now derive with the
+//!   same production sampler, so the checkpoint now guards the NEXT
+//!   derivation or key-selection change rather than #2168's;
+//! - certified inherited MPC inputs prepared before epoch startup (#2138,
+//!   with #2190's fix for the boot-replay wedge it introduced) and startup
+//!   key-mapping recovery (#2176) — startup paths every `stop_and_swap`
+//!   restart takes.
+//!
+//! The v1.4.1 retarget's own list — #2121 (no on-chain `mpc_data_bytes`
+//! read, optional previous-root-seed field), #2120 (registration
+//! placeholder), #2123 (prepare-then-start handoff barrier) and the #2122
+//! metric split — was already on both sides of the `v141_*` gates and stays
+//! so here.
+//!
+//! **What the retarget gives back.** Literal v1.4.1 could not decode Sui's
+//! `TransactionExpiration::Validity`, so the `v141_*` scenarios ran on a
+//! localnet with Sui's simulation proposer restriction disabled
+//! (`UPGRADE_TEST_LEGACY_SUI_TRANSACTIONS`) and said nothing about an OLD
+//! reader meeting that format. v1.4.5 decodes it (#2146), so that carve-out
+//! is retired: both sides now run on the default localnet every other
+//! scenario uses, where setup and workload simulation can introduce it (see
+//! dev-docs/specs/cross-binary-upgrade.md).
 //!
 //! **What the storage model does to this gate's reach.** Against v1.3.1 the
 //! mixed phase also straddled the event-sourcing change (#2074): the OLD
 //! validators wrote per-round MPC tables and a `last_consensus_stats`
 //! watermark, the NEW ones kept that state in memory, and a green run said
 //! something about two committee members disagreeing about what is durable.
-//! v1.4.1 — like the v1.4.0 release it replaces here — is post-#2074, so both
-//! sides of this scenario share one storage model and that ingredient is GONE
-//! from here: the assertions below are unchanged and still gate wire and
-//! MPC-output agreement, but they no longer stand behind any claim about
-//! mixed storage models. NOTHING crosses that boundary any more:
+//! v1.4.5 — like the v1.4.0 and v1.4.1 releases before it here — is
+//! post-#2074, so both sides of this scenario share one storage model and
+//! that ingredient is GONE from here: the assertions below are unchanged and
+//! still gate wire and MPC-output agreement, but they no longer stand behind
+//! any claim about mixed storage models. NOTHING crosses that boundary any
+//! more:
 //! `mid_epoch_rollback` was the one scenario that did — pinned to
 //! `release/mainnet-v1.3.1`, the last release that reopens an epoch store
 //! expecting its own fold's tables to be there — and it was retired once
 //! v1.4.0 shipped and was validated in production (#2077, #2064). A future
 //! storage-model boundary needs a scenario built for it.
 //!
-//! Opt-in (real binaries + long-running), via `RUN_V141_ROLLOUT=1`:
+//! Opt-in (real binaries + long-running), via `RUN_V145_ROLLOUT=1`:
 //!
 //! ```bash
-//! # OLD_BIN: the v1.4.1 ika-validator; NEW_BIN: the candidate
-//! RUN_V141_ROLLOUT=1 \
-//!   OLD_BIN=/path/to/ika-validator-v1.4.1 \
+//! # OLD_BIN: the v1.4.5 ika-validator; NEW_BIN: the candidate
+//! RUN_V145_ROLLOUT=1 \
+//!   OLD_BIN=/path/to/ika-validator-v1.4.5 \
 //!   NEW_BIN=target/release/ika-validator \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
-//!   cargo test --release -p ika-upgrade-test --test v141_rollout -- --nocapture
+//!   cargo test --release -p ika-upgrade-test --test v145_rollout -- --nocapture
 //! ```
 
 use std::path::PathBuf;
@@ -87,10 +102,10 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn v141_rollout_converges_across_binary_swap_at_v7() {
-    if std::env::var("RUN_V141_ROLLOUT").is_err() {
+async fn v145_rollout_converges_across_binary_swap_at_v7() {
+    if std::env::var("RUN_V145_ROLLOUT").is_err() {
         eprintln!(
-            "skipping: set RUN_V141_ROLLOUT=1 \
+            "skipping: set RUN_V145_ROLLOUT=1 \
              (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
         );
         return;
@@ -102,7 +117,7 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
 
     let old = BinarySpec::Path(bin_from_env(
         "OLD_BIN",
-        "/mnt/nvme0n1p1/v141-bins/ika-validator",
+        "/mnt/nvme0n1p1/v145-bins/ika-validator",
     ));
     let current = BinarySpec::Path(bin_from_env("NEW_BIN", "target/release/ika-validator"));
     let notifier = bin_from_env("NOTIFIER_BIN", "target/release/ika-notifier");
@@ -116,7 +131,7 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .to_path_buf();
     let base = PathBuf::from(
         std::env::var("UPGRADE_TEST_DIR")
-            .unwrap_or_else(|_| "/mnt/nvme0n1p1/tmp/ika-v141-rollout".to_string()),
+            .unwrap_or_else(|_| "/mnt/nvme0n1p1/tmp/ika-v145-rollout".to_string()),
     );
     let _ = std::fs::remove_dir_all(&base);
     let epoch_duration_ms = std::env::var("EPOCH_DURATION_MS")
@@ -125,7 +140,7 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .unwrap_or(600_000);
     assert!(
         epoch_duration_ms >= 480_000,
-        "the v1.4.1 rollout requires an epoch of at least 480000ms so the bounded sequential \
+        "the v1.4.5 rollout requires an epoch of at least 480000ms so the bounded sequential \
          restarts complete before the mid-epoch reconfiguration"
     );
 
@@ -241,12 +256,12 @@ async fn v141_rollout_converges_across_binary_swap_at_v7() {
         .run()
         .await
         .expect(
-            "v1.4.1/candidate committee must converge across the mixed phase and the full binary \
+            "v1.4.5/candidate committee must converge across the mixed phase and the full binary \
              swap at protocol v7, and every validator must preserve its deployed native encryption keys",
         );
 
     tracing::info!(
-        "v1.4.1 rollout PASSED: the mixed v1.4.1/candidate committee converged across two \
+        "v1.4.5 rollout PASSED: the mixed v1.4.5/candidate committee converged across two \
          reshares at v7, and the fully-upgraded committee converged and kept serving a full \
          user lifecycle at each stage; all four validators preserved their deployed native encryption \
          keys through epoch 6"

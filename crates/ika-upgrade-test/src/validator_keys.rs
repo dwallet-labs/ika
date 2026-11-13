@@ -1,7 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Certified validator-key checkpoints for the fixed-committee v1.4.1 rollout.
+//! Certified validator-key checkpoints for the deployed-release rollout gate's
+//! fixed committee: the OLD binary's keys are the baseline, and the candidate
+//! must preserve them across the binary swap.
 //! Expected identities contain public keys only; proof bytes never identify a key.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
