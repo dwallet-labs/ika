@@ -92,6 +92,7 @@ public(package) fun create(
 // === Private Functions ===
 
 /// Creates initial `Display` for the `DWalletCap` type.
+#[allow(deprecated_usage)]
 fun init_dwallet_cap_display(
     p: &Publisher,
     image_url: String,
@@ -112,6 +113,7 @@ fun init_dwallet_cap_display(
 }
 
 /// Creates initial `Display` for the `ImportedKeyDWalletCap` type.
+#[allow(deprecated_usage)]
 fun init_imported_key_dwallet_cap_display(
     p: &Publisher,
     image_url: String,
@@ -132,6 +134,7 @@ fun init_imported_key_dwallet_cap_display(
 }
 
 /// Creates initial `Display` for the `UnverifiedPresignCap` type.
+#[allow(deprecated_usage)]
 fun init_unverified_presign_cap_display(
     p: &Publisher,
     image_url: String,
@@ -152,6 +155,7 @@ fun init_unverified_presign_cap_display(
 }
 
 /// Creates initial `Display` for the `VerifiedPresignCap` type.
+#[allow(deprecated_usage)]
 fun init_verified_presign_cap_display(
     p: &Publisher,
     image_url: String,
@@ -172,6 +176,7 @@ fun init_verified_presign_cap_display(
 }
 
 /// Creates initial `Display` for the `UnverifiedPartialUserSignatureCap` type.
+#[allow(deprecated_usage)]
 fun init_unverified_partial_user_signature_cap_display(
     p: &Publisher,
     image_url: String,
@@ -192,6 +197,7 @@ fun init_unverified_partial_user_signature_cap_display(
 }
 
 /// Creates initial `Display` for the `VerifiedPartialUserSignatureCap` type.
+#[allow(deprecated_usage)]
 fun init_verified_partial_user_signature_cap_display(
     p: &Publisher,
     image_url: String,

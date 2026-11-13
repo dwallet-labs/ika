@@ -233,7 +233,8 @@ impl ValidatorTelemetryMetrics {
                 "ika_consensus_commit_silence_seconds",
                 "Seconds since this process last received a live consensus commit; -1 while the \
                  commit-liveness watchdog is unarmed, held for reconfiguration, or disabled; -2 \
-                 while held because no peer is advancing either (network-wide halt)",
+                 while held because peers answer and none is advancing either (network-wide \
+                 halt), or because there is no fresh probe of the peers to judge by",
                 registry,
             )
             .unwrap(),

@@ -32,9 +32,7 @@ use crate::authority::round_transport::round_transport;
 use crate::consensus_handler::{
     CommitOrigin, ConsensusCommitSink, ConsensusHandler, MysticetiConsensusHandler,
 };
-use crate::consensus_manager::{
-    CONSENSUS_METRICS_PREFIX, ConsensusManagerMetrics, highest_peer_accepted_round,
-};
+use crate::consensus_manager::ConsensusManagerMetrics;
 use crate::consensus_throughput_calculator::ConsensusThroughputCalculator;
 use crate::dwallet_checkpoints::DWalletCheckpointService;
 use crate::epoch::epoch_metrics::EpochMetrics;
@@ -160,14 +158,6 @@ impl Fixture {
     }
 
     async fn start(&self, consumer: CommitConsumerArgs) -> ConsensusAuthority {
-        self.start_with_registry(consumer, Registry::new()).await
-    }
-
-    async fn start_with_registry(
-        &self,
-        consumer: CommitConsumerArgs,
-        registry: Registry,
-    ) -> ConsensusAuthority {
         ConsensusAuthority::start(
             NetworkType::Tonic,
             0,
@@ -180,7 +170,7 @@ impl Fixture {
             Arc::new(AcceptEmptyTransactions),
             None,
             consumer,
-            registry,
+            Registry::new(),
             1,
             None,
         )
@@ -462,40 +452,69 @@ fn commit_origin_splits_at_the_replay_target() {
     );
 }
 
-/// Pins the upstream metric the commit-liveness watchdog reads peer progress
-/// from against a REAL consensus authority, started the way production starts
-/// it: under the same registry prefix. The reader goes through the registry
-/// because consensus-core keeps its round tracker crate-private, so nothing
-/// but this test notices if a Sui bump renames or drops the gauge — and a
-/// reader that finds nothing makes the watchdog hold forever, which would
-/// quietly retire it for the isolation it exists to catch.
+/// The commit-liveness watchdog's peer-progress input, from a REAL consensus
+/// authority: the round prober must publish `PeerProgress` on the commit
+/// consumer monitor after startup, and keep publishing it. A monitor that
+/// never reports a probe makes the watchdog hold on every silence, which
+/// would quietly retire it for the isolation it exists to catch.
+///
+/// Only this node of a four-member committee is running, so every probe
+/// request fails: this is also consensus-core's own rendering of the
+/// isolation pattern the watchdog exits on — fresh probes that no peer
+/// answers.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_round_prober_publishes_the_peer_round_the_watchdog_reads() {
+async fn the_round_prober_publishes_peer_progress_after_startup() {
     let fixture = Fixture::new(0);
-    let registry = Registry::new_custom(Some(CONSENSUS_METRICS_PREFIX.to_string()), None).unwrap();
     let (consumer, _receiver) = CommitConsumerArgs::new_with_full_replay();
-    let authority = timeout(
-        Duration::from_secs(30),
-        fixture.start_with_registry(consumer, registry.clone()),
-    )
-    .await
-    .unwrap();
-    let peer_round = timeout(Duration::from_secs(30), async {
+    let monitor = consumer.monitor();
+    assert_eq!(
+        monitor.peer_progress().probed_at_ms,
+        0,
+        "no probe has run before consensus starts"
+    );
+    let authority = timeout(Duration::from_secs(30), fixture.start(consumer))
+        .await
+        .unwrap();
+    let first = timeout(Duration::from_secs(30), async {
         loop {
-            if let Some(round) = highest_peer_accepted_round(&registry.gather()) {
-                return round;
+            let progress = monitor.peer_progress();
+            if progress.probed_at_ms > 0 {
+                return progress;
             }
             sleep(Duration::from_millis(100)).await;
         }
     })
-    .await;
+    .await
+    .ok();
+    let next = match first {
+        Some(first) => timeout(Duration::from_secs(30), async {
+            loop {
+                let progress = monitor.peer_progress();
+                if progress.probed_at_ms > first.probed_at_ms {
+                    return progress;
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .ok(),
+        None => None,
+    };
     authority.stop().await;
-    assert!(
-        peer_round.is_ok(),
-        "consensus-core's round prober published no {CONSENSUS_METRICS_PREFIX}_\
-         round_tracker_low_accepted_quorum_round within 30s of startup. If a Sui bump renamed \
-         or removed it, repoint ConsensusManager::peer_accepted_round at its replacement — \
-         until then the commit-liveness watchdog reads every stall as network-wide and never \
-         exits an isolated validator"
+    let first = first.expect(
+        "consensus-core's round prober published no PeerProgress within 30s of startup. If a \
+         Sui bump moved or removed ConsumerMonitor::peer_progress, repoint \
+         ConsensusManager::peer_progress at its replacement — until then the commit-liveness \
+         watchdog reads every stall as having no information and never exits an isolated \
+         validator",
+    );
+    let next = next.expect(
+        "the round prober published one probe and then stopped: the watchdog judges freshness \
+         by probed_at_ms moving, so it would read a live prober as stale",
+    );
+    assert_eq!(
+        (first.responsive_stake, next.responsive_stake),
+        (0, 0),
+        "no peer of this authority is running, so no probe request can complete"
     );
 }

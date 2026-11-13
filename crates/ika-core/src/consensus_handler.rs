@@ -25,7 +25,7 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use consensus_config::Committee as ConsensusCommittee;
-use consensus_core::{CommitConsumerMonitor, CommitIndex};
+use consensus_core::{CommitIndex, ConsumerMonitor};
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
 use ika_types::digests::ConsensusCommitDigest;
@@ -513,7 +513,7 @@ impl MysticetiConsensusHandler {
     pub(crate) fn new(
         mut consensus_handler: ConsensusHandler<DWalletCheckpointService>,
         mut commit_receiver: UnboundedReceiver<consensus_core::CommittedSubDag>,
-        commit_consumer_monitor: Arc<CommitConsumerMonitor>,
+        commit_consumer_monitor: Arc<ConsumerMonitor>,
         metrics: Arc<ConsensusManagerMetrics>,
     ) -> Self {
         let epoch_store = consensus_handler.epoch_store.clone();
@@ -545,7 +545,7 @@ impl MysticetiConsensusHandler {
     /// needs neither a storage handle nor a second interpretation of commits.
     fn spawn_progress_publisher(
         &mut self,
-        monitor: Arc<CommitConsumerMonitor>,
+        monitor: Arc<ConsumerMonitor>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         metrics: Arc<ConsensusManagerMetrics>,
     ) {

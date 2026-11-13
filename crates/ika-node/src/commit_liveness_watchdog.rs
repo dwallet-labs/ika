@@ -57,9 +57,9 @@
 //! not recover from on its own.
 //!
 //! Two of the holds below exist for that: replayed commits do not arm the
-//! clock, and the clock does not run while no peer is advancing either. An
-//! exit now needs both halves of the isolation signature — this node
-//! hearing nothing, and its peers demonstrably moving on without it.
+//! clock, and the clock does not run while the committee reads as halted. An
+//! exit needs this node hearing nothing AND evidence that the silence is its
+//! own: its peers moving on without it, or not one of them answering it.
 //!
 //! ## What holds the clock, and why each hold exists
 //!
@@ -81,25 +81,49 @@
 //! - **A minimum process uptime** on top of that, so a boot that arms early
 //!   (a first live commit, then waiting on components that are still
 //!   starting) cannot exit inside its own startup.
-//! - **While no peer is advancing either.** The clock runs only while
-//!   consensus-core's round prober reports the committee's rounds climbing
-//!   (`ConsensusManager::peer_accepted_round`); once that reading has stood
-//!   still for a quarter of the bound the network reads as halted, the clock
-//!   holds, and `ika_consensus_commit_silence_seconds` reads `-2`. The
-//!   prober asks every peer for its accepted rounds over a request of its
-//!   own, so the reading keeps climbing on a node whose block subscriptions
-//!   are gone — the isolation this watchdog exists for still exits — and
-//!   it stands still when the committee does, because no authority can
-//!   advance a round without a quorum of the round before it. A live commit
-//!   counts as peer progress too (it took a quorum to make), and a consensus
-//!   (re)start gets one stall window to show some before the hold can
-//!   engage. Neither can turn a halt into an exit: the window is a quarter of
-//!   the bound, so a node silent since then is held well before it could
-//!   breach. What this hold gives up: a node that cannot reach its peers'
-//!   probe endpoint at all, or a consensus-core that stops publishing the
-//!   reading, looks exactly like a halted network and is held, not exited.
-//!   The `-2` reading and the log line on entering the hold are how that
-//!   case stays visible.
+//! - **By what consensus-core reports about the committee**
+//!   (`ConsensusManager::peer_progress`, consensus-core's `PeerProgress`).
+//!   Every few seconds the round prober asks every peer for its accepted
+//!   rounds over a request of its own, independent of the block
+//!   subscriptions, and publishes the highest round a quorum has accepted
+//!   (`quorum_accepted_round`), the stake of the peers that answered, this
+//!   node excluded (`responsive_stake`), and when the probe finished
+//!   (`probed_at_ms`). The commit syncer adds the highest commit index a
+//!   quorum has voted for (`quorum_commit_index`). No authority can advance
+//!   a round or a commit without a quorum, so the two indices stand still
+//!   when the whole committee does. Each poll judges that reading over the
+//!   last stall window (a quarter of the bound):
+//!
+//!   | the reading | verdict | clock |
+//!   |---|---|---|
+//!   | no probe yet, or none new for [`PROBE_STALE_AFTER`] | no information | holds, `-2` |
+//!   | the round or the commit index rose in the window | peers advance without this node | runs |
+//!   | some peer answered a probe in the window, and nothing rose | network-wide halt | holds, `-2` |
+//!   | no peer answered any probe in the window, and probes stayed fresh throughout it | this node is cut off | runs |
+//!   | no peer answered, but probes have been fresh for less than a window | no information yet | holds, `-2` |
+//!
+//!   A reading whose probe time stopped moving says nothing about the
+//!   present (consensus, or its prober, has stopped), so it fails safe and
+//!   holds. The cut-off row is the Tecnodes wedge above: every round-prober
+//!   request it made failed, about 11 a second, so the accepted round froze
+//!   and a rule that looked only at the round read it as a halt and never
+//!   exited. The bar is exactly zero answering stake, not "less than a
+//!   quorum": during a real halt only a minority of validators may be up
+//!   (13 of 55 on 2026-11-08), and a healthy node still reaches those. A
+//!   single answer anywhere in the window keeps the node on the halt row, and
+//!   the zero-stake row also needs fresh probes across the whole window,
+//!   because the first probes after a consensus start can fail against
+//!   peers that are not up yet. A live commit counts as peer progress too (it
+//!   took a quorum to make), and a consensus (re)start resets the reading and
+//!   gets one stall window to show progress before the halt row can apply.
+//!   Neither can turn a halt into an exit: the window is a quarter of the
+//!   bound, so a node silent since then is held well before it could breach.
+//!   What this gives up: a node that reaches only part of the committee,
+//!   which may itself be cut off from the rest, reads as a halt and is held;
+//!   a validator that is the only one still running reads as cut off and
+//!   exits; and a prober that stops publishing holds every silence. The `-2`
+//!   reading and the log line on each change of verdict are how those cases
+//!   stay visible.
 //! - **While consensus is torn down**, from the teardown at the epoch
 //!   boundary until `ConsensusManager::start` returns. Commits legitimately
 //!   stop in that window, and the prepare-then-start handoff barrier inside
@@ -129,9 +153,11 @@
 //! The peer-stall window is a quarter of the bound (225s by default). The
 //! prober reports every five seconds and a live committee advances many
 //! rounds per second, so a healthy reading climbs on every 15-second poll;
-//! a quarter of the bound tolerates minutes of failed probes before reading
-//! a halt, and still engages the hold long before a halted node's silence
-//! reaches the bound.
+//! a quarter of the bound asks for minutes of unanswered probes before
+//! reading this node as cut off, and still engages the halt hold long before
+//! a halted node's silence reaches the bound. Freshness is on a shorter
+//! scale: [`PROBE_STALE_AFTER`] is three prober intervals, so one poll that
+//! finds no new probe already reads as no information.
 //!
 //! `IKA_COMMIT_LIVENESS_WATCHDOG_SECS` overrides the bound in seconds; `0`
 //! disables the watchdog (and its exit) entirely. The live silence is
@@ -141,6 +167,7 @@
 //! nodes, where logs are never available to us.
 
 use ika_core::consensus_handler::{CommitOrigin, ConsensusCommitSink};
+use ika_core::consensus_manager::PeerProgress;
 use prometheus::IntGauge;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -163,12 +190,22 @@ const BOUND_ENV_VAR: &str = "IKA_COMMIT_LIVENESS_WATCHDOG_SECS";
 /// the floor with it instead of suppressing the exit outright.
 const MIN_UPTIME_BOUND_MULTIPLE: u32 = 2;
 
-/// The network reads as halted — and the clock holds — once the peer round
-/// has not risen for the bound divided by this. Derived from the bound for
-/// the same reason as the uptime floor, and it has to stay a fraction of
-/// it: the hold must engage before a halted node's silence reaches the
-/// bound. See the module docs.
+/// The committee reading is judged over the bound divided by this: the
+/// network reads as halted — and the clock holds — once peers that answer
+/// have not advanced for that long, and this node reads as cut off once no
+/// peer has answered for that long. Derived from the bound for the same
+/// reason as the uptime floor, and it has to stay a fraction of it: the hold
+/// must engage before a halted node's silence reaches the bound. See the
+/// module docs.
 const PEER_STALL_BOUND_DIVISOR: u32 = 4;
+
+/// A peer-progress reading whose probe time has not moved for this long
+/// carries no information, and holds the clock. Three of consensus-core's
+/// round-prober intervals (`round_prober_interval_ms`, 5s by default); each
+/// probe is bounded by the prober's request timeout, so a running prober
+/// publishes several times in this span. At the 15-second poll it means one
+/// poll that finds no new probe.
+const PROBE_STALE_AFTER: Duration = Duration::from_secs(15);
 
 /// Silence is sampled, not computed on the commit path: the commit path is
 /// hot and this only has to resolve a 15-minute bound. Also the gauge's
@@ -182,15 +219,16 @@ const POLL_INTERVAL: Duration = Duration::from_secs(15);
 const NOT_ARMED: i64 = -1;
 
 /// Exported on `ika_consensus_commit_silence_seconds` while the armed clock
-/// is held because no peer is advancing either: the network is halted, or
-/// this node cannot see that it is not. Distinct from [`NOT_ARMED`] so a
-/// fleet-wide halt reads as one from every validator's metrics.
+/// is held by the committee reading: peers answer and none is advancing (the
+/// network is halted), or there is no fresh reading to tell. Distinct from
+/// [`NOT_ARMED`] so a fleet-wide halt reads as one from every validator's
+/// metrics.
 const NETWORK_STALLED: i64 = -2;
 
-/// Reads the highest round the committee has accepted, as this node's peers
-/// report it (`ConsensusManager::peer_accepted_round`); `None` when there is
-/// no reading. Called once per poll.
-pub(crate) type PeerRoundSource = Box<dyn Fn() -> Option<u64> + Send + Sync>;
+/// Reads this node's view of committee progress
+/// (`ConsensusManager::peer_progress`); `None` when there is no consensus
+/// instance to ask. Called once per poll.
+pub(crate) type PeerProgressSource = Box<dyn Fn() -> Option<PeerProgress> + Send + Sync>;
 
 fn resolve_bound() -> Option<Duration> {
     parse_bound(std::env::var(BOUND_ENV_VAR).ok().as_deref())
@@ -227,12 +265,52 @@ fn default_breach_action() {
 enum Tick {
     /// Unarmed or held — the clock is not running.
     Idle,
-    /// Armed, but held because no peer is advancing either.
+    /// Armed, but held because peers answer and none is advancing either.
     NetworkStalled,
+    /// Armed, but held because there is no fresh committee reading to judge by.
+    NoPeerInformation,
     /// Armed and running: this much silence so far, under the bound.
     Silent(Duration),
     /// The bound is breached; the caller runs the breach action once.
     Breach(Duration),
+}
+
+/// What the committee reading says about this node's commit silence, judged
+/// over the stall window. See the table in the module docs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerVerdict {
+    /// No probe yet, none new for [`PROBE_STALE_AFTER`], or — with no peer
+    /// answering — fresh probes for less than a window. Holds.
+    NoInformation,
+    /// The committee's round or commit index rose inside the window, or a
+    /// live commit or a consensus start happened there. The clock runs.
+    Advancing,
+    /// Some peer answered inside the window, but nothing rose for the whole
+    /// of it. Holds.
+    Halted,
+    /// Probes stayed fresh for the whole window and no peer answered any of
+    /// them: this node is cut off. The clock runs.
+    Unreachable,
+}
+
+/// Folds `value` into a high-water mark and says whether it rose. Zero is
+/// consensus-core's value before anything is reported, so it is not a
+/// reading, and the first reading after a reset is a baseline, not a rise.
+fn rose(high_water: &mut Option<u32>, value: u32) -> bool {
+    if value == 0 {
+        return false;
+    }
+    match *high_water {
+        Some(mark) if value <= mark => false,
+        Some(_) => {
+            *high_water = Some(value);
+            true
+        }
+        None => {
+            *high_water = Some(value);
+            false
+        }
+    }
 }
 
 /// The decision state, separated from the timer and the gauges so it can be
@@ -255,15 +333,28 @@ struct LivenessState {
     /// breach log: it is the round an operator correlates against the fleet
     /// to see how far behind the isolated node froze.
     last_leader_round: Option<u64>,
-    /// Highest peer round read since consensus last (re)started. Compared as
-    /// a high-water mark, not against the previous reading, so peers that
-    /// drop out of a probe and answer again later — a reading that dips and
-    /// recovers with nobody advancing — are not mistaken for progress.
-    peer_round_high_water: Option<u64>,
-    /// The last evidence that the committee advanced: the high-water mark
+    /// The latest committee reading, carried for the logs.
+    last_peer_progress: Option<PeerProgress>,
+    /// Highest `quorum_accepted_round` and `quorum_commit_index` read since
+    /// consensus last (re)started. Compared as high-water marks rather than
+    /// against the previous reading, so a value that dips and recovers with
+    /// nobody advancing is not mistaken for progress.
+    accepted_round_high_water: Option<u32>,
+    commit_index_high_water: Option<u32>,
+    /// The last evidence that the committee advanced: a high-water mark
     /// rising, a live commit, or a consensus (re)start. `None` until the
     /// first of those, which reads as no evidence.
     peers_advanced_at: Option<Instant>,
+    /// `probed_at_ms` of the newest probe read, and when this watchdog first
+    /// read it. Freshness is how long ago the probe time last moved, on this
+    /// watchdog's clock: consensus-core's clock may differ from it.
+    last_probe: Option<(u64, Instant)>,
+    /// When the current unbroken run of fresh readings began; `None` while
+    /// the reading is stale. The cut-off verdict needs it to span the window.
+    fresh_since: Option<Instant>,
+    /// When a probe that some peer answered was last read. `None` reads as
+    /// never.
+    peers_answered_at: Option<Instant>,
     /// Set when the breach action has run, so it runs exactly once even if
     /// the breach action returns (it does under msim).
     breached: bool,
@@ -276,8 +367,13 @@ impl LivenessState {
             last_progress: None,
             held: false,
             last_leader_round: None,
-            peer_round_high_water: None,
+            last_peer_progress: None,
+            accepted_round_high_water: None,
+            commit_index_high_water: None,
             peers_advanced_at: None,
+            last_probe: None,
+            fresh_since: None,
+            peers_answered_at: None,
             breached: false,
         }
     }
@@ -314,32 +410,69 @@ impl LivenessState {
     /// mesh join back on the clock, which is the whole point.
     ///
     /// Also starts peer tracking over. A new consensus instance counts
-    /// rounds from zero, so a high-water mark carried over from the previous
-    /// epoch would read the new one as halted until it overtook the old.
-    /// The start itself stands in as peer progress for one stall window,
-    /// long enough for a first reading and a first rise.
+    /// rounds and commits from zero, so high-water marks carried over from
+    /// the previous epoch would read the new one as halted until it overtook
+    /// the old. The start itself stands in as peer progress for one stall
+    /// window, long enough for a first reading and a first rise.
     fn resume(&mut self, now: Instant) {
         self.held = false;
-        self.peer_round_high_water = None;
+        self.accepted_round_high_water = None;
+        self.commit_index_high_water = None;
         self.peers_advanced_at = Some(now);
         if let Some(last_progress) = self.last_progress.as_mut() {
             *last_progress = now;
         }
     }
 
-    /// Folds one peer-round reading into the high-water mark. The first
-    /// reading after a reset is a baseline, not a rise.
-    fn observe_peers(&mut self, now: Instant, peer_round: Option<u64>) {
-        let Some(round) = peer_round else {
-            return;
-        };
-        match self.peer_round_high_water {
-            Some(high_water) if round <= high_water => {}
-            Some(_) => {
-                self.peer_round_high_water = Some(round);
+    /// Folds one committee reading: the high-water marks, and whether it
+    /// carries a new probe and whether any peer answered that probe.
+    fn observe_peers(&mut self, now: Instant, peers: Option<PeerProgress>) {
+        if let Some(peers) = peers {
+            self.last_peer_progress = Some(peers);
+            let round_rose = rose(
+                &mut self.accepted_round_high_water,
+                peers.quorum_accepted_round,
+            );
+            let commit_index_rose =
+                rose(&mut self.commit_index_high_water, peers.quorum_commit_index);
+            if round_rose || commit_index_rose {
                 self.peers_advanced_at = Some(now);
             }
-            None => self.peer_round_high_water = Some(round),
+            let new_probe = peers.probed_at_ms != 0
+                && self
+                    .last_probe
+                    .is_none_or(|(probed_at_ms, _)| probed_at_ms != peers.probed_at_ms);
+            if new_probe {
+                self.last_probe = Some((peers.probed_at_ms, now));
+                self.fresh_since.get_or_insert(now);
+                if peers.responsive_stake > 0 {
+                    self.peers_answered_at = Some(now);
+                }
+            }
+        }
+        if !self.probe_is_fresh(now) {
+            self.fresh_since = None;
+        }
+    }
+
+    fn probe_is_fresh(&self, now: Instant) -> bool {
+        self.last_probe
+            .is_some_and(|(_, read_at)| now.saturating_duration_since(read_at) < PROBE_STALE_AFTER)
+    }
+
+    /// The table in the module docs, in its order.
+    fn peer_verdict(&self, now: Instant, peer_stall_window: Duration) -> PeerVerdict {
+        let within_window = |at: Instant| now.saturating_duration_since(at) < peer_stall_window;
+        if !self.probe_is_fresh(now) {
+            PeerVerdict::NoInformation
+        } else if self.peers_advanced_at.is_some_and(within_window) {
+            PeerVerdict::Advancing
+        } else if self.peers_answered_at.is_some_and(within_window) {
+            PeerVerdict::Halted
+        } else if self.fresh_since.is_some_and(|since| !within_window(since)) {
+            PeerVerdict::Unreachable
+        } else {
+            PeerVerdict::NoInformation
         }
     }
 
@@ -350,14 +483,14 @@ impl LivenessState {
         min_uptime: Duration,
         peer_stall_window: Duration,
         held: bool,
-        peer_round: Option<u64>,
+        peers: Option<PeerProgress>,
     ) -> Tick {
         if self.breached {
             return Tick::Idle;
         }
         // Read even while unarmed or held, so a baseline exists by the time
         // the clock first runs.
-        self.observe_peers(now, peer_round);
+        self.observe_peers(now, peers);
         let Some(last_progress) = self.last_progress else {
             return Tick::Idle;
         };
@@ -367,14 +500,17 @@ impl LivenessState {
             self.last_progress = Some(now);
             return Tick::Idle;
         }
-        let network_stalled = self.peers_advanced_at.is_none_or(|advanced_at| {
-            now.saturating_duration_since(advanced_at) >= peer_stall_window
-        });
-        if network_stalled {
-            // Same anchor pull as any other hold: once peers move again, a
-            // node that is still connected gets the full bound to show it.
+        let peer_hold = match self.peer_verdict(now, peer_stall_window) {
+            PeerVerdict::NoInformation => Some(Tick::NoPeerInformation),
+            PeerVerdict::Halted => Some(Tick::NetworkStalled),
+            PeerVerdict::Advancing | PeerVerdict::Unreachable => None,
+        };
+        if let Some(peer_hold) = peer_hold {
+            // Same anchor pull as any other hold: once the reading lets the
+            // clock run again, a node that is still connected gets the full
+            // bound to show it.
             self.last_progress = Some(now);
-            return Tick::NetworkStalled;
+            return peer_hold;
         }
         let silence = now.saturating_duration_since(last_progress);
         if silence >= bound && now.saturating_duration_since(self.started_at) >= min_uptime {
@@ -388,7 +524,7 @@ impl LivenessState {
 
 /// Watches the interval between live consensus commits and exits the node
 /// when it grows past the bound outside any reconfiguration, while its peers
-/// keep advancing.
+/// keep advancing or none of them answers it.
 pub(crate) struct CommitLivenessWatchdog {
     state: Mutex<LivenessState>,
     /// `ika_consensus_commit_silence_seconds`.
@@ -401,11 +537,12 @@ pub(crate) struct CommitLivenessWatchdog {
     /// Where peer progress is read from. Late-bound: the consensus manager
     /// that can answer is built after this watchdog, and rebuilt if the node
     /// leaves the committee and rejoins. Until it is set every reading is
-    /// `None`, which an armed clock treats as no evidence of peer progress.
-    peer_rounds: Mutex<Option<PeerRoundSource>>,
-    /// Whether the last tick held for a network-wide stall, so entering and
-    /// leaving that hold are each logged once rather than every poll.
-    network_stalled: AtomicBool,
+    /// `None`, which an armed clock treats as no information and holds on.
+    peer_progress: Mutex<Option<PeerProgressSource>>,
+    /// The verdict of the last tick that judged one (`None` after an idle
+    /// tick), so each change of verdict is logged once rather than every
+    /// poll.
+    peer_verdict: Mutex<Option<PeerVerdict>>,
     breach_action: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// True while the consensus fold is parked waiting for the MPC drain to
     /// take a round.
@@ -447,9 +584,9 @@ impl CommitLivenessWatchdog {
 
     /// Installs (or replaces) the reader of peer progress. Whoever starts
     /// consensus must call this with that consensus's manager, or the clock
-    /// holds on every silence as though the network were halted.
-    pub(crate) fn watch_peers(&self, peer_rounds: PeerRoundSource) {
-        *self.peer_rounds.lock().unwrap() = Some(peer_rounds);
+    /// holds on every silence for lack of information.
+    pub(crate) fn watch_peers(&self, peer_progress: PeerProgressSource) {
+        *self.peer_progress.lock().unwrap() = Some(peer_progress);
     }
 
     /// The flag the consensus fold raises while it is parked waiting for the
@@ -466,7 +603,7 @@ impl CommitLivenessWatchdog {
         bound: Option<Duration>,
         breach_action: impl FnOnce() + Send + 'static,
         fold_blocked: Arc<AtomicBool>,
-        peer_rounds: Option<PeerRoundSource>,
+        peer_progress: Option<PeerProgressSource>,
     ) -> Option<Arc<Self>> {
         let bound = bound?;
         let watchdog = Arc::new(Self {
@@ -476,8 +613,8 @@ impl CommitLivenessWatchdog {
             bound,
             min_uptime: bound * MIN_UPTIME_BOUND_MULTIPLE,
             peer_stall_window: bound / PEER_STALL_BOUND_DIVISOR,
-            peer_rounds: Mutex::new(peer_rounds),
-            network_stalled: AtomicBool::new(false),
+            peer_progress: Mutex::new(peer_progress),
+            peer_verdict: Mutex::new(None),
             breach_action: Mutex::new(Some(Box::new(breach_action))),
             fold_blocked,
         });
@@ -488,7 +625,7 @@ impl CommitLivenessWatchdog {
             peer_stall_window_secs = watchdog.peer_stall_window.as_secs(),
             "commit-liveness watchdog started; it arms on this process's first LIVE consensus \
              commit (not on the boot replay) and exits the node if commits then stop for longer \
-             than the bound while its peers keep advancing (ika #1864)"
+             than the bound while its peers keep advancing or none of them answers it (ika #1864)"
         );
         let ticker = watchdog.clone();
         tokio::spawn(async move {
@@ -521,13 +658,13 @@ impl CommitLivenessWatchdog {
     fn tick(&self, now: Instant) -> bool {
         let held =
             self.reconfig_phase_gauge.get() != 0 || self.fold_blocked.load(Ordering::Acquire);
-        let peer_round = self
-            .peer_rounds
+        let peers = self
+            .peer_progress
             .lock()
             .unwrap()
             .as_ref()
             .and_then(|read| read());
-        let (tick, peer_round_high_water) = {
+        let (tick, verdict) = {
             let mut state = self.state.lock().unwrap();
             let tick = state.tick(
                 now,
@@ -535,37 +672,29 @@ impl CommitLivenessWatchdog {
                 self.min_uptime,
                 self.peer_stall_window,
                 held,
-                peer_round,
+                peers,
             );
-            (tick, state.peer_round_high_water)
+            // An idle tick (unarmed, held, or already breached) judges
+            // nothing, so a verdict reached after one is logged afresh.
+            let verdict =
+                (tick != Tick::Idle).then(|| state.peer_verdict(now, self.peer_stall_window));
+            (tick, verdict)
         };
-        let stalled = tick == Tick::NetworkStalled;
-        let was_stalled = self.network_stalled.swap(stalled, Ordering::Relaxed);
-        if stalled && !was_stalled {
-            warn!(
-                peer_round,
-                peer_round_high_water,
-                stall_window_secs = self.peer_stall_window.as_secs(),
-                "commit-liveness clock held: this validator is receiving no consensus commits, \
-                 but no peer has advanced a round either, so this reads as a network-wide \
-                 consensus halt rather than this node's isolation, and exiting would only add a \
-                 replaying validator to a committee that needs every live one to regain quorum. \
-                 The clock restarts in full once peers advance again. If the rest of the fleet \
-                 IS committing, this node cannot see it: a peer_round of None means no reading \
-                 at all (consensus not running, or its round prober not publishing)"
-            );
-        } else if was_stalled && !stalled {
-            info!(
-                ?tick,
-                peer_round, "commit-liveness clock left the network-stall hold"
-            );
+        let previous = {
+            let mut last_verdict = self.peer_verdict.lock().unwrap();
+            let previous = *last_verdict;
+            *last_verdict = verdict;
+            previous
+        };
+        if verdict != previous {
+            self.log_verdict(verdict, previous, peers);
         }
         match tick {
             Tick::Idle => {
                 self.silence_gauge.set(NOT_ARMED);
                 false
             }
-            Tick::NetworkStalled => {
+            Tick::NetworkStalled | Tick::NoPeerInformation => {
                 self.silence_gauge.set(NETWORK_STALLED);
                 false
             }
@@ -575,18 +704,73 @@ impl CommitLivenessWatchdog {
             }
             Tick::Breach(silence) => {
                 self.silence_gauge.set(silence.as_secs() as i64);
-                self.breach(silence);
+                self.breach(silence, verdict);
                 true
             }
         }
     }
 
-    fn breach(&self, silence: Duration) {
-        let (last_leader_round, peer_round_high_water, uptime) = {
+    fn log_verdict(
+        &self,
+        verdict: Option<PeerVerdict>,
+        previous: Option<PeerVerdict>,
+        peers: Option<PeerProgress>,
+    ) {
+        let stall_window_secs = self.peer_stall_window.as_secs();
+        match verdict {
+            None => {}
+            Some(PeerVerdict::NoInformation) => warn!(
+                ?peers,
+                stale_after_secs = PROBE_STALE_AFTER.as_secs(),
+                "commit-liveness clock held: this validator is receiving no consensus commits, \
+                 and consensus-core's probes of its peers do not cover enough time to judge by \
+                 (no probe yet, the probe time stopped moving, or probing resumed less than a \
+                 stall window ago with no peer answering), so there is no telling whether it is \
+                 cut off or the network has halted. Holding is the safe side. Brief around a \
+                 consensus start; if it persists, consensus or its round prober has stopped \
+                 publishing (peers of None means no consensus instance to ask at all)"
+            ),
+            Some(PeerVerdict::Halted) => warn!(
+                ?peers,
+                stall_window_secs,
+                "commit-liveness clock held: this validator is receiving no consensus commits, \
+                 but its peers still answer and none has advanced a round or a commit either, so \
+                 this reads as a network-wide consensus halt rather than this node's isolation, \
+                 and exiting would only add a replaying validator to a committee that needs \
+                 every live one to regain quorum. The clock restarts in full once peers advance \
+                 again"
+            ),
+            Some(PeerVerdict::Unreachable) => warn!(
+                ?peers,
+                stall_window_secs,
+                bound_secs = self.bound.as_secs(),
+                "commit-liveness clock running: this validator is receiving no consensus commits \
+                 and not one peer has answered its round prober for the whole stall window, \
+                 while the prober keeps probing. That is this node cut off, not a halt (a healthy \
+                 node still reaches the validators that are up), so it exits at the bound unless \
+                 a live commit arrives first"
+            ),
+            Some(PeerVerdict::Advancing) => {
+                if matches!(
+                    previous,
+                    Some(PeerVerdict::NoInformation | PeerVerdict::Halted)
+                ) {
+                    info!(
+                        ?peers,
+                        ?previous,
+                        "commit-liveness clock left its hold: peers are advancing"
+                    );
+                }
+            }
+        }
+    }
+
+    fn breach(&self, silence: Duration, verdict: Option<PeerVerdict>) {
+        let (last_leader_round, last_peer_progress, uptime) = {
             let state = self.state.lock().unwrap();
             (
                 state.last_leader_round,
-                state.peer_round_high_water,
+                state.last_peer_progress,
                 Instant::now().saturating_duration_since(state.started_at),
             )
         };
@@ -594,20 +778,22 @@ impl CommitLivenessWatchdog {
             silence_secs = silence.as_secs(),
             bound_secs = self.bound.as_secs(),
             last_leader_round,
-            peer_round_high_water,
+            ?last_peer_progress,
+            ?verdict,
             uptime_secs = uptime.as_secs(),
             "this validator has received no live consensus commit for longer than the \
              commit-liveness bound, while its consensus was running, outside any \
-             reconfiguration, and while its peers kept advancing rounds without it. That is the \
-             boundary-isolation form of ika #1864: the process is healthy in every other respect \
-             (network connected, metrics served, Sui reads retrying) but its consensus \
-             subscriptions are gone in both directions and nothing retries them, so it will \
-             contribute nothing and never learn that the epoch advanced. A process restart \
-             re-runs the consensus mesh join from scratch and is the only recovery observed in \
-             production, so we exit for the supervisor to restart us. If this repeats every \
-             bound, each join is re-wedging: capture ika_consensus_subscribed_to and \
-             ika_consensus_commit_silence_seconds, report on ika #1864, and set \
-             IKA_COMMIT_LIVENESS_WATCHDOG_SECS=0 to stop the exits while investigating"
+             reconfiguration, and while its peers either kept advancing without it or stopped \
+             answering it altogether. That is the boundary-isolation form of ika #1864: the \
+             process is healthy in every other respect (network connected, metrics served, Sui \
+             reads retrying) but its consensus subscriptions are gone in both directions and \
+             nothing retries them, so it will contribute nothing and never learn that the epoch \
+             advanced. A process restart re-runs the consensus mesh join from scratch and is the \
+             only recovery observed in production, so we exit for the supervisor to restart us. \
+             If this repeats every bound, each join is re-wedging: capture \
+             ika_consensus_subscribed_to and ika_consensus_commit_silence_seconds, report on ika \
+             #1864, and set IKA_COMMIT_LIVENESS_WATCHDOG_SECS=0 to stop the exits while \
+             investigating"
         );
         if let Some(action) = self.breach_action.lock().unwrap().take() {
             action();
@@ -637,22 +823,80 @@ impl ConsensusCommitSink for CommitLivenessWatchdog {
 mod tests {
     use super::*;
     use ika_core::authority::round_transport::{ConsensusRoundPayload, round_transport};
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU32, AtomicU64};
 
     const BOUND: Duration = Duration::from_secs(900);
     const MIN_UPTIME: Duration = Duration::from_secs(1800);
     const PEER_STALL_WINDOW: Duration = Duration::from_secs(225);
 
-    /// A committee that advances between every two reads: what a spawned
-    /// watchdog sees on a live network.
-    fn climbing_peers() -> Option<PeerRoundSource> {
-        let round = AtomicU64::new(0);
-        Some(Box::new(move || Some(round.fetch_add(1, Ordering::SeqCst))))
+    /// Stake of the peers that answer a probe, unless a test says otherwise.
+    /// The watchdog compares it with zero only.
+    const ANSWERING_STAKE: u64 = 3;
+
+    /// A probe that finished at `secs` (so every call with a new `secs` is a
+    /// new probe) and that the peers answered, with the committee at `round`.
+    fn answered(secs: u64, round: u64) -> Option<PeerProgress> {
+        answered_by(secs, round, ANSWERING_STAKE)
     }
 
-    /// Peers whose round the test moves by hand.
-    fn peers_at(round: Arc<AtomicU64>) -> Option<PeerRoundSource> {
-        Some(Box::new(move || Some(round.load(Ordering::SeqCst))))
+    fn answered_by(secs: u64, round: u64, responsive_stake: u64) -> Option<PeerProgress> {
+        let round = u32::try_from(round).unwrap();
+        Some(PeerProgress {
+            quorum_accepted_round: round,
+            quorum_commit_index: round,
+            responsive_stake,
+            probed_at_ms: secs * 1_000 + 1,
+        })
+    }
+
+    /// A probe that finished at `secs` and that no peer answered. `round` is
+    /// the accepted round that probe reports. With no answers, consensus-core
+    /// computes it from the blocks this node already holds, so an isolated
+    /// node reads it frozen, at or below the last answered value.
+    fn unanswered(secs: u64, round: u64) -> Option<PeerProgress> {
+        answered_by(secs, round, 0)
+    }
+
+    /// A committee that advances between every two reads: what a spawned
+    /// watchdog sees on a live network.
+    fn climbing_peers() -> Option<PeerProgressSource> {
+        let probe = AtomicU32::new(0);
+        Some(Box::new(move || {
+            let probe = probe.fetch_add(1, Ordering::SeqCst) + 1;
+            Some(PeerProgress {
+                quorum_accepted_round: probe,
+                quorum_commit_index: probe,
+                responsive_stake: ANSWERING_STAKE,
+                probed_at_ms: probe.into(),
+            })
+        }))
+    }
+
+    /// Peers that answer every probe, at a round the test moves by hand.
+    fn peers_at(round: Arc<AtomicU32>) -> Option<PeerProgressSource> {
+        let probe = AtomicU64::new(0);
+        Some(Box::new(move || {
+            Some(PeerProgress {
+                quorum_accepted_round: round.load(Ordering::SeqCst),
+                quorum_commit_index: 0,
+                responsive_stake: ANSWERING_STAKE,
+                probed_at_ms: probe.fetch_add(1, Ordering::SeqCst) + 1,
+            })
+        }))
+    }
+
+    /// A prober that keeps probing and that no peer ever answers, with the
+    /// committee frozen where this node last saw it: the Tecnodes wedge.
+    fn unreachable_peers() -> Option<PeerProgressSource> {
+        let probe = AtomicU64::new(0);
+        Some(Box::new(move || {
+            Some(PeerProgress {
+                quorum_accepted_round: 500,
+                quorum_commit_index: 400,
+                responsive_stake: 0,
+                probed_at_ms: probe.fetch_add(1, Ordering::SeqCst) + 1,
+            })
+        }))
     }
 
     fn gauge(name: &str) -> IntGauge {
@@ -675,9 +919,11 @@ mod tests {
         state: LivenessState,
     }
 
-    /// Unless a helper says otherwise, ticks run on a LIVE network: peers
-    /// report a round equal to the tick's time in seconds, so it has risen
-    /// since any earlier tick and the network-stall hold never engages.
+    /// Unless a helper says otherwise, ticks run on a LIVE network: every
+    /// tick reads a new probe that peers answered, with the round one past
+    /// the tick's time in seconds, so it has risen since any earlier tick and
+    /// the network-stall hold never engages. (One past, because a round of 0
+    /// is consensus-core's "nothing reported yet", not a reading.)
     impl Clock {
         fn new() -> Self {
             let t0 = Instant::now();
@@ -710,25 +956,26 @@ mod tests {
         }
 
         fn tick_at_with_phase(&mut self, secs: u64, reconfiguring: bool) -> Tick {
-            self.tick_with(secs, reconfiguring, Some(secs))
+            self.tick_with(secs, reconfiguring, answered(secs, secs + 1))
         }
 
         /// A tick taken while the consensus fold is parked on a full round
         /// channel — the same `held` input the reconfiguration phase feeds.
         fn tick_at_while_fold_blocked(&mut self, secs: u64) -> Tick {
-            self.tick_with(secs, true, Some(secs))
+            self.tick_with(secs, true, answered(secs, secs + 1))
         }
 
-        /// A tick on which peers report exactly `peer_round`; the same value
-        /// on successive ticks is a committee standing still.
-        fn tick_at_with_peers(&mut self, secs: u64, peer_round: Option<u64>) -> Tick {
-            self.tick_with(secs, false, peer_round)
+        /// A tick that reads exactly `peers`; the same round on successive
+        /// ticks is a committee standing still, and the same probe time is a
+        /// prober that stopped.
+        fn tick_at_with_peers(&mut self, secs: u64, peers: Option<PeerProgress>) -> Tick {
+            self.tick_with(secs, false, peers)
         }
 
-        fn tick_with(&mut self, secs: u64, held: bool, peer_round: Option<u64>) -> Tick {
+        fn tick_with(&mut self, secs: u64, held: bool, peers: Option<PeerProgress>) -> Tick {
             let now = self.at(secs);
             self.state
-                .tick(now, BOUND, MIN_UPTIME, PEER_STALL_WINDOW, held, peer_round)
+                .tick(now, BOUND, MIN_UPTIME, PEER_STALL_WINDOW, held, peers)
         }
 
         /// Consensus restarts at `secs`; the poller takes its first reading
@@ -940,9 +1187,12 @@ mod tests {
     #[test]
     fn a_network_wide_halt_holds_the_clock_past_the_bound() {
         let mut clock = Clock::new();
-        let halted = Some(2_000);
+        let halted = 2_000;
         // The last commit lands with the committee at round 2_000...
-        assert_eq!(clock.tick_at_with_peers(2_000, halted), Tick::Idle);
+        assert_eq!(
+            clock.tick_at_with_peers(2_000, answered(2_000, halted)),
+            Tick::Idle
+        );
         clock.commit_at(2_000);
         // ...and then nobody commits and the round stands still: polled at
         // the real cadence for six bounds.
@@ -950,7 +1200,7 @@ mod tests {
         let mut first_stalled_tick = None;
         let mut last_tick = 2_000;
         for secs in (2_000 + POLL_INTERVAL.as_secs()..=2_000 + 6 * BOUND.as_secs()).step_by(poll) {
-            let tick = clock.tick_at_with_peers(secs, halted);
+            let tick = clock.tick_at_with_peers(secs, answered(secs, halted));
             assert!(
                 !matches!(tick, Tick::Breach(_)),
                 "no peer is advancing either, so this is a halted network, not an isolated \
@@ -971,8 +1221,9 @@ mod tests {
         // Quorum is back and peers advance: the clock restarts from the last
         // held tick, so a node that is still connected gets the full bound to
         // receive its first commit instead of exiting on the spot.
+        let next_tick = last_tick + POLL_INTERVAL.as_secs();
         assert_eq!(
-            clock.tick_at_with_peers(last_tick + POLL_INTERVAL.as_secs(), Some(2_001)),
+            clock.tick_at_with_peers(next_tick, answered(next_tick, halted + 1)),
             Tick::Silent(POLL_INTERVAL),
         );
     }
@@ -994,15 +1245,264 @@ mod tests {
                 peer_round += 50;
             }
             assert_eq!(
-                clock.tick_at_with_peers(secs, Some(peer_round)),
+                clock.tick_at_with_peers(secs, answered(secs, peer_round)),
                 Tick::Silent(Duration::from_secs(secs - 2_000)),
                 "peers rose within the stall window, so the clock must keep running"
             );
         }
+        let breach_tick = 2_000 + BOUND.as_secs();
         assert_eq!(
-            clock.tick_at_with_peers(2_000 + BOUND.as_secs(), Some(peer_round)),
+            clock.tick_at_with_peers(breach_tick, answered(breach_tick, peer_round)),
             Tick::Breach(BOUND),
             "silent for a bound while the committee moved on without it: the #1864 isolation"
+        );
+    }
+
+    /// The 2026-08-14 Tecnodes wedge: every round-prober request failed, so
+    /// the accepted round froze. Read by the round alone that is a halt, and
+    /// the node was held forever. Fresh probes that no peer answers are this
+    /// node cut off: the clock must run to the bound without a hold.
+    #[test]
+    fn an_unreachable_node_exits_at_the_bound() {
+        let mut clock = Clock::new();
+        let frozen = 2_000;
+        assert_eq!(
+            clock.tick_at_with_peers(2_000, answered(2_000, frozen)),
+            Tick::Idle
+        );
+        clock.commit_at(2_000);
+        let poll = POLL_INTERVAL.as_secs();
+        for secs in (2_000 + poll..2_000 + BOUND.as_secs()).step_by(poll as usize) {
+            assert_eq!(
+                clock.tick_at_with_peers(secs, unanswered(secs, frozen)),
+                Tick::Silent(Duration::from_secs(secs - 2_000)),
+                "fresh probes that no peer answers are isolation, not a halt: the clock must run"
+            );
+        }
+        let breach_tick = 2_000 + BOUND.as_secs();
+        assert_eq!(
+            clock.tick_at_with_peers(breach_tick, unanswered(breach_tick, frozen)),
+            Tick::Breach(BOUND),
+            "silent for a bound with no peer answering: the Tecnodes isolation"
+        );
+    }
+
+    /// The other side of that line: a halt during which only a minority of
+    /// the committee is up, so most probes fail and one peer answers now and
+    /// then. One answer anywhere in the window is not isolation. The bar is
+    /// exactly zero answering stake, never "below a quorum".
+    #[test]
+    fn a_halt_that_one_peer_still_answers_holds_past_several_bounds() {
+        let mut clock = Clock::new();
+        let halted = 2_000;
+        assert_eq!(
+            clock.tick_at_with_peers(2_000, answered(2_000, halted)),
+            Tick::Idle
+        );
+        clock.commit_at(2_000);
+        let poll = POLL_INTERVAL.as_secs();
+        // Every tenth poll: inside the stall window, far from every probe.
+        let answer_every = 10 * poll;
+        let one_peer = 1;
+        for secs in (2_000 + poll..=2_000 + 6 * BOUND.as_secs()).step_by(poll as usize) {
+            let peers = if (secs - 2_000) % answer_every == 0 {
+                answered_by(secs, halted, one_peer)
+            } else {
+                unanswered(secs, halted)
+            };
+            let expected = if secs < 2_000 + PEER_STALL_WINDOW.as_secs() {
+                // The last commit is still inside the window.
+                Tick::Silent(Duration::from_secs(secs - 2_000))
+            } else {
+                Tick::NetworkStalled
+            };
+            assert_eq!(
+                clock.tick_at_with_peers(secs, peers),
+                expected,
+                "at {secs}s: a peer that answers inside the window makes this a halt, and \
+                 exiting would add a replaying validator to a committee short of quorum"
+            );
+        }
+    }
+
+    /// consensus-core reports each probe's accepted round as that probe
+    /// measured it, so a probe that fewer peers answer can read a lower round,
+    /// down to 0, and a later probe reads the old round again. During a halt
+    /// whose answers come and go, that recovery is not peers advancing.
+    #[test]
+    fn an_accepted_round_that_drops_and_recovers_is_not_peers_advancing() {
+        let mut clock = Clock::new();
+        let halted = 2_000;
+        assert_eq!(
+            clock.tick_at_with_peers(2_000, answered(2_000, halted)),
+            Tick::Idle
+        );
+        clock.commit_at(2_000);
+        let poll = POLL_INTERVAL.as_secs();
+        for secs in (2_000 + poll..=2_000 + 2 * BOUND.as_secs()).step_by(poll as usize) {
+            let peers = match (secs / poll) % 3 {
+                0 => unanswered(secs, 0),
+                1 => answered_by(secs, halted - 10, 1),
+                _ => answered(secs, halted),
+            };
+            let expected = if secs < 2_000 + PEER_STALL_WINDOW.as_secs() {
+                // The last commit is still inside the window.
+                Tick::Silent(Duration::from_secs(secs - 2_000))
+            } else {
+                Tick::NetworkStalled
+            };
+            assert_eq!(
+                clock.tick_at_with_peers(secs, peers),
+                expected,
+                "at {secs}s: the round dropped and came back to {halted}, which is no higher \
+                 than before, so the committee is still halted"
+            );
+        }
+    }
+
+    /// The commit syncer's quorum commit index is peer progress on its own:
+    /// while the highest accepted round reads flat, commits that a quorum
+    /// keeps voting for are still the committee moving on without this node.
+    #[test]
+    fn a_rising_quorum_commit_index_alone_is_peers_advancing() {
+        let mut clock = Clock::new();
+        let round = 2_000;
+        assert_eq!(
+            clock.tick_at_with_peers(2_000, answered(2_000, round)),
+            Tick::Idle
+        );
+        clock.commit_at(2_000);
+        let poll = POLL_INTERVAL.as_secs();
+        let rise_every = PEER_STALL_WINDOW.as_secs() - poll;
+        for secs in (2_000 + poll..2_000 + BOUND.as_secs()).step_by(poll as usize) {
+            let peers = Some(PeerProgress {
+                quorum_commit_index: u32::try_from(round + (secs - 2_000) / rise_every).unwrap(),
+                ..answered(secs, round).unwrap()
+            });
+            assert_eq!(
+                clock.tick_at_with_peers(secs, peers),
+                Tick::Silent(Duration::from_secs(secs - 2_000)),
+                "the quorum commit index rose within the stall window, so the clock must run"
+            );
+        }
+        let breach_tick = 2_000 + BOUND.as_secs();
+        let peers = Some(PeerProgress {
+            quorum_commit_index: u32::try_from(round + BOUND.as_secs() / rise_every).unwrap(),
+            ..answered(breach_tick, round).unwrap()
+        });
+        assert_eq!(
+            clock.tick_at_with_peers(breach_tick, peers),
+            Tick::Breach(BOUND)
+        );
+    }
+
+    /// No information holds: no consensus instance to ask, or one whose
+    /// prober has not completed a probe yet — even while its commit syncer
+    /// has already published a quorum commit index.
+    #[test]
+    fn no_reading_or_no_probe_yet_holds_the_clock() {
+        let syncer_only = PeerProgress {
+            quorum_commit_index: 800,
+            ..PeerProgress::default()
+        };
+        for peers in [None, Some(PeerProgress::default()), Some(syncer_only)] {
+            let mut clock = Clock::new();
+            clock.commit_at(2_000);
+            let poll = POLL_INTERVAL.as_secs();
+            for secs in (2_000 + poll..=2_000 + 6 * BOUND.as_secs()).step_by(poll as usize) {
+                assert_eq!(
+                    clock.tick_at_with_peers(secs, peers),
+                    Tick::NoPeerInformation,
+                    "at {secs}s with {peers:?}: without a probe there is no telling isolation \
+                     from a halt, so the clock must hold"
+                );
+            }
+        }
+    }
+
+    /// A prober that stopped publishing leaves a reading that no longer
+    /// moves. Its last probe found nobody, which on a single read is exactly
+    /// what isolation looks like; only its age says it carries no
+    /// information, and it must hold rather than exit. When probing resumes,
+    /// still unanswered, the cut-off verdict needs a whole window of fresh
+    /// probes before the clock runs.
+    #[test]
+    fn a_reading_that_stopped_moving_holds_even_when_no_peer_answered_it() {
+        let mut clock = Clock::new();
+        let frozen = 2_000;
+        assert_eq!(
+            clock.tick_at_with_peers(2_000, answered(2_000, frozen)),
+            Tick::Idle
+        );
+        clock.commit_at(2_000);
+        let poll = POLL_INTERVAL.as_secs();
+        let last_probe = unanswered(2_000 + poll, frozen);
+        assert_eq!(
+            clock.tick_at_with_peers(2_000 + poll, last_probe),
+            Tick::Silent(POLL_INTERVAL)
+        );
+        let resumed = 2_000 + 6 * BOUND.as_secs();
+        for secs in (2_000 + 2 * poll..resumed).step_by(poll as usize) {
+            assert_eq!(
+                clock.tick_at_with_peers(secs, last_probe),
+                Tick::NoPeerInformation,
+                "at {secs}s: a probe time that stopped moving is no information, not isolation"
+            );
+        }
+
+        let running = resumed + PEER_STALL_WINDOW.as_secs();
+        for secs in (resumed..running).step_by(poll as usize) {
+            assert_eq!(
+                clock.tick_at_with_peers(secs, unanswered(secs, frozen)),
+                Tick::NoPeerInformation,
+                "at {secs}s: probing resumed less than a window ago; one probe that nobody \
+                 answers is how every consensus start can look"
+            );
+        }
+        // A whole window of fresh, unanswered probes: the clock runs from the
+        // last held tick and breaches a bound later.
+        for secs in (running..running - poll + BOUND.as_secs()).step_by(poll as usize) {
+            assert_eq!(
+                clock.tick_at_with_peers(secs, unanswered(secs, frozen)),
+                Tick::Silent(Duration::from_secs(secs - (running - poll))),
+            );
+        }
+        let breach_tick = running - poll + BOUND.as_secs();
+        assert_eq!(
+            clock.tick_at_with_peers(breach_tick, unanswered(breach_tick, frozen)),
+            Tick::Breach(BOUND)
+        );
+    }
+
+    /// A consensus restart starts the reading over: the new instance counts
+    /// rounds and commits from zero, so marks carried over from the old one
+    /// would read its climb as a committee standing still, and hold an
+    /// isolated node as though the network had halted.
+    #[test]
+    fn a_consensus_restart_starts_the_peer_reading_over() {
+        let mut clock = Clock::new();
+        let old_instance_round = 50_000;
+        assert_eq!(
+            clock.tick_at_with_peers(2_000, answered(2_000, old_instance_round)),
+            Tick::Idle
+        );
+        clock.commit_at(2_000);
+        clock.state.hold();
+        clock.state.resume(clock.at(3_000));
+        // The new instance climbs from round 10, far below the old mark, and
+        // this node still receives nothing from it.
+        let poll = POLL_INTERVAL.as_secs();
+        for secs in (3_000 + poll..3_000 + BOUND.as_secs()).step_by(poll as usize) {
+            assert_eq!(
+                clock.tick_at_with_peers(secs, answered(secs, 10 + secs - 3_000)),
+                Tick::Silent(Duration::from_secs(secs - 3_000)),
+                "the new instance's rising rounds are peer progress, whatever the old one reached"
+            );
+        }
+        let breach_tick = 3_000 + BOUND.as_secs();
+        assert_eq!(
+            clock.tick_at_with_peers(breach_tick, answered(breach_tick, 10 + BOUND.as_secs())),
+            Tick::Breach(BOUND)
         );
     }
 
@@ -1232,7 +1732,7 @@ mod tests {
         );
         assert_eq!(silence.get(), NETWORK_STALLED);
 
-        let peer_round = Arc::new(AtomicU64::new(7));
+        let peer_round = Arc::new(AtomicU32::new(7));
         watchdog.watch_peers(peers_at(peer_round.clone()).unwrap());
         tokio::time::sleep(4 * BOUND).await;
         assert!(
@@ -1264,6 +1764,45 @@ mod tests {
         assert!(
             fired.load(Ordering::SeqCst),
             "silent for a bound while peers advanced must exit the node"
+        );
+    }
+
+    /// The Tecnodes isolation end to end, through the late-bound reader
+    /// production installs: probes that no peer answers keep the clock
+    /// running and the gauge counting, and the node exits.
+    #[tokio::test(start_paused = true)]
+    async fn a_spawned_watchdog_exits_an_unreachable_node_and_exports_the_silence() {
+        let (fired, on_breach) = flag();
+        let silence = gauge("test_unreachable_commit_silence_seconds");
+        let watchdog = CommitLivenessWatchdog::spawn_with(
+            silence.clone(),
+            gauge("test_unreachable_reconfig_phase"),
+            Some(BOUND),
+            on_breach,
+            Arc::new(AtomicBool::new(false)),
+            None,
+        )
+        .expect("an enabled watchdog spawns");
+        watchdog.watch_peers(unreachable_peers().unwrap());
+
+        // The prober has been failing for a few polls when the last live
+        // commit lands, one second past a poll.
+        tokio::time::sleep(Duration::from_secs(61)).await;
+        watchdog.commit_received(1_234, CommitOrigin::Live);
+        tokio::time::sleep(BOUND / 2).await;
+        assert_eq!(
+            silence.get(),
+            510 - 61,
+            "polls land on multiples of 15s; the last one ran at 510s, and the clock must have \
+             run from the commit at 61s without a single hold"
+        );
+        assert!(!fired.load(Ordering::SeqCst), "inside the bound");
+
+        tokio::time::sleep(2 * BOUND - BOUND / 2 - Duration::from_secs(61) + POLL_INTERVAL).await;
+        assert!(
+            fired.load(Ordering::SeqCst),
+            "silent past the bound with no peer answering, on a process past the uptime floor, \
+             must exit"
         );
     }
 

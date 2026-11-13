@@ -4,7 +4,7 @@
 derived from it is held in memory and rebuilt by replay on every restart.**
 
 Actors: `ConsensusManager::start`, consensus-core's `CommitObserver` and
-`CommitConsumerMonitor`, `ConsensusHandler::handle_consensus_commit`, the
+`ConsumerMonitor`, `ConsensusHandler::handle_consensus_commit`, the
 in-memory state on `AuthorityPerEpochStore`, the MPC round drain, and the
 checkpoint builders.
 
@@ -278,7 +278,7 @@ collapse the gate exists to prevent; only a restart would rescue it, through
 the boot replay's head publication.
 
 The head is published by **consensus-core**, through
-`CommitConsumerMonitor::subscribe_progress()`. Its producer runs independently
+`ConsumerMonitor::subscribe_progress()`. Its producer runs independently
 of the application fold, so it can report the actual backlog while the fold
 is blocked. Ika's publisher lives in the handler's `JoinSet` and stops at the
 epoch boundary. It holds neither a database nor a consensus-authority handle.

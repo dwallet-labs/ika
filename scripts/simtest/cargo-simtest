@@ -55,12 +55,12 @@ else
   # mysten-sim rev — MUST match the msim/sui-simulator rev the pinned Sui
   # version uses (see Sui's own scripts/simtest/cargo-simtest at the tag),
   # else simtest links two mysten-sim copies and panics "no reactor running".
-  # Bump together with the Sui tag in root Cargo.toml. (mainnet-v1.83.1 -> 6b8e1e8c)
+  # Bump together with the Sui tag in root Cargo.toml. (MystenLabs/sui#28614 head 222ffe21 -> 13c14bdf)
   cargo_patch_args=(
     --config 'patch.crates-io.tokio.git = "https://github.com/MystenLabs/mysten-sim.git"'
-    --config 'patch.crates-io.tokio.rev = "6b8e1e8cdce408e73d46538773fc85a56c082db7"'
+    --config 'patch.crates-io.tokio.rev = "13c14bdf0932e13f374857bcdd77ede55e8c2237"'
     --config 'patch.crates-io.futures-timer.git = "https://github.com/MystenLabs/mysten-sim.git"'
-    --config 'patch.crates-io.futures-timer.rev = "6b8e1e8cdce408e73d46538773fc85a56c082db7"'
+    --config 'patch.crates-io.futures-timer.rev = "13c14bdf0932e13f374857bcdd77ede55e8c2237"'
   )
 fi
 

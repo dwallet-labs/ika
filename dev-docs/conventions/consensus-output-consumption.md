@@ -35,7 +35,7 @@ of the commit.
 
 Consensus-core owns the database and feeds historical and live commits into
 that fold. Ika requests full replay from zero and observes replay readiness
-and committed-head metadata through `CommitConsumerMonitor`. It does not
+and committed-head metadata through `ConsumerMonitor`. It does not
 open the consensus database, decode a parallel replay, or poll a store handle.
 The metadata publisher runs separately from the fold so a blocked consumer
 cannot hide backlog. Replay acknowledgements follow the completed fold and
@@ -140,7 +140,7 @@ file.
 | sink | fed | why |
 |---|---|---|
 | `ConsensusCommitSink::commit_received` (ika's liveness watchdog) | **arrival**, before the fold, tagged `Replayed` or `Live` against the replay target | a fold waiting on a consumer is busy, not isolated (rule 4); a replayed commit is not evidence of a live connection, so the watchdog counts only live ones |
-| `CommitConsumerMonitor::set_highest_handled_commit` (consensus-core) | **after the fold** | it is a memory guard: `commit_syncer` pauses fetch scheduling when `highest_handled_index + threshold < range_end` (`commit_syncer.rs:238`, reading `commit_consumer_monitor.highest_handled_commit()` at `:205`; threshold = `commit_sync_batch_size` × `commit_sync_batches_ahead` = 100 × 32 = 3,200 at `consensus/config/src/parameters.rs:203`/`:220`). Reporting it early would remove the backpressure that bounds sync-fed backlog. |
+| `ConsumerMonitor::set_highest_handled_commit` (consensus-core) | **after the fold** | it is a memory guard: `commit_syncer` pauses fetch scheduling when `highest_handled_index + threshold < range_end` (`commit_syncer.rs:238`, reading `commit_consumer_monitor.highest_handled_commit()` at `:205`; threshold = `commit_sync_batch_size` × `commit_sync_batches_ahead` = 100 × 32 = 3,200 at `consensus/config/src/parameters.rs:203`/`:220`). Reporting it early would remove the backpressure that bounds sync-fed backlog. |
 
 They will look confusable to the next reader, which is why both call sites say
 so. Anchors are at the pinned rev
