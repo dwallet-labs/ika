@@ -694,7 +694,7 @@ pub enum GenesisGlobalPresignConfig {
     /// routes workload presigns through the per-dWallet (targeted) path —
     /// the only coverage of that path, since a populated config makes it
     /// unreachable. The cross-binary malicious-party rehearsal
-    /// (`malicious_v141`) genesises with this.
+    /// (`malicious_v145`) genesises with this.
     Empty,
 }
 

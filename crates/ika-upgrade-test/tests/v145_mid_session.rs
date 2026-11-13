@@ -24,8 +24,8 @@ fn binary_from_env(name: &str) -> Result<PathBuf> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn old_to_new_validator_participates_in_the_same_running_session() -> Result<()> {
-    if std::env::var("RUN_V141_MID_SESSION").is_err() {
-        eprintln!("skipping: set RUN_V141_MID_SESSION=1 to run the real-crypto upgrade test");
+    if std::env::var("RUN_V145_MID_SESSION").is_err() {
+        eprintln!("skipping: set RUN_V145_MID_SESSION=1 to run the real-crypto upgrade test");
         return Ok(());
     }
     let _guard = telemetry_subscribers::TelemetryConfig::new()
@@ -41,7 +41,7 @@ async fn old_to_new_validator_participates_in_the_same_running_session() -> Resu
     ensure!(old != new, "OLD and NEW must be separate binary paths");
     let base = PathBuf::from(
         std::env::var("UPGRADE_TEST_DIR")
-            .unwrap_or_else(|_| "/tmp/ika-v141-mid-session".to_string()),
+            .unwrap_or_else(|_| "/tmp/ika-v145-mid-session".to_string()),
     );
     if base.exists() {
         std::fs::remove_dir_all(&base).context("clear previous scenario data")?;
@@ -99,7 +99,7 @@ async fn old_to_new_validator_participates_in_the_same_running_session() -> Resu
         .expect_malicious_actors_exactly(&[0, 1, 2, 3], 0)
         .await?;
     tracing::info!(
-        "v141_mid_session PASSED: OLD rounds one/two and NEW round three completed the same \
+        "v145_mid_session PASSED: OLD rounds one/two and NEW round three completed the same \
          session with the upgraded validator's accepted output required for quorum"
     );
     Ok(())

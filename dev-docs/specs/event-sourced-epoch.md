@@ -834,7 +834,7 @@ What in-process coverage cannot reach, and belongs on CI or a cluster:
 
   The FORWARD direction across this change was covered by `v131_rollout` /
   `v131_churn` while v1.3.1 was the deployed release. Their successors
-  `v141_rollout` / `v141_churn` boot v1.4.1, which is itself post-#2074, so
+  `v145_rollout` / `v145_churn` boot v1.4.5, which is itself post-#2074, so
   they no longer put two storage models in one committee — they gate wire and
   MPC-output agreement between two event-sourced binaries. **Nothing now
   exercises a pre-#2074 binary sharing an epoch with a current one, in either

@@ -192,11 +192,11 @@ of those rollouts completed on the deployed networks.
 Beyond the MIN-driven retirements, the mixed-committee family is retargeted
 whenever the DEPLOYED release moves — the scenario names carry the old
 binary's release (`v125_*` → `v127_*` → `v128_*` → `v131_*` → `v140_*` →
-`v141_*`), so the maintenance is visible rather than silent. The current
-deployed-release gate is `tests/v141_rollout.rs`: the one-upgraded-validator
-mixed topology against the literal **v1.4.1** release at protocol v7. Both
-sides support v7 and only v7, so the boundary under test is a pure binary
-swap. It is the PR-gating scenario and the one a release manager dispatches
+`v141_*` → `v145_*`), so the maintenance is visible rather than silent.
+The current deployed-release gate is `tests/v145_rollout.rs`: the
+one-upgraded-validator mixed topology against the literal **v1.4.5** release
+at protocol v7. Both sides support v7 and only v7, so the boundary under
+test is a pure binary swap. It is the PR-gating scenario and the one a release manager dispatches
 against every release tag.
 
 **No scenario crosses the storage-model change any more.**
@@ -211,7 +211,7 @@ rollback safety net.
 
 Note what that leaves the forward gate standing on. The v1.3.1-based
 `v131_rollout` straddled the storage-model change by accident of timing;
-`v141_rollout` has both sides post-#2074 and stands behind wire and
+`v145_rollout` has both sides post-#2074 and stands behind wire and
 MPC-output agreement only. Nothing in it was weakened to get there, and that
 ingredient used to survive in the scenario pinned for it — but with that
 scenario retired it now lives nowhere in the matrix. Any future change that
@@ -220,29 +220,34 @@ none to inherit.
 
 ## Sui transaction-format compatibility during rollout
 
-The literal Ika v1.4.1 checkpoint reader cannot decode Sui's
-`TransactionExpiration::Validity` (BCS variant index three). A checkpoint
-containing it fails ingestion even when the transaction is unrelated to Ika.
-The Sui mainnet-v1.83.1 dependencies include the decoder support; updating
-only a transaction producer or disabling simulation does not repair an old
-reader that encounters the format.
+Literal Ika v1.4.1 could not decode Sui's `TransactionExpiration::Validity`
+(BCS variant index three). A checkpoint containing it fails ingestion even
+when the transaction is unrelated to Ika, and updating only a transaction
+producer or disabling simulation does not repair an old reader that
+encounters the format. The Sui mainnet-v1.82.3 dependencies (#2146), and the
+mainnet-v1.83.1 pin after them (#2182), include the decoder support.
 
-For the v1.4.1 upgrade scenarios, CI sets
-`UPGRADE_TEST_LEGACY_SUI_TRANSACTIONS=1`. The harness generates a persisted
-Sui localnet configuration and sets the fullnode's
-`enable-simulate-allowed-proposers` to false. This prevents setup and workload
-simulation from automatically introducing `Validity` before the old committee
-can run. It does not disable Sui's protocol feature or change either Ika
-binary. Other scenarios retain the default localnet behavior.
+While v1.4.1 was the OLD side, CI set `UPGRADE_TEST_LEGACY_SUI_TRANSACTIONS=1`
+for the `v141_*` scenarios: the harness generated a persisted Sui localnet
+configuration with the fullnode's `enable-simulate-allowed-proposers` set to
+false, so setup and workload simulation could not introduce `Validity` before
+the old committee ran. Those runs proved Ika binary-swap compatibility only on
+a chain whose transactions the old reader understood, not that v1.4.1 could
+operate after `Validity` transactions appear.
 
-These runs prove Ika binary-swap compatibility on a chain whose transactions
-the old reader understands; they do not prove that v1.4.1 can operate after
-`Validity` transactions appear. The gRPC regression separately decodes a
-`Validity` checkpoint through both SDK and core types, preserves its original
-transaction bytes and digest, and verifies its certified contents. Production
-readers must be upgraded before encountering unsupported formats; a stalled
-reader must recover its existing cursor with the original checkpoint history,
-never skip checkpoints or rewrite transaction bytes to an older variant.
+v1.4.5 decodes `Validity`, so the retarget to it retired that carve-out — the
+CI export, the harness branch that honored the flag and the flag itself. Every
+scenario, OLD side included, now runs on the default `sui start` localnet,
+where simulation can introduce `Validity`. If a future OLD release cannot read
+a format the pinned Sui localnet produces, that needs the same kind of
+explicit, scoped and documented carve-out, recorded here, not a silent one.
+
+The gRPC regression separately decodes a `Validity` checkpoint through both
+SDK and core types, preserves its original transaction bytes and digest, and
+verifies its certified contents. Production readers must be upgraded before
+encountering unsupported formats; a stalled reader must recover its existing
+cursor with the original checkpoint history, never skip checkpoints or
+rewrite transaction bytes to an older variant.
 
 ## How this is verified
 
@@ -254,8 +259,8 @@ drives them across epochs. The surviving scenarios (current build only):
   epoch 2 on the genesis epoch cadence.
 - `tests/workload.rs` — the session-lifecycle invariant: a full user
   DKG → Presign → Sign completing on-chain at genesis protocol v7.
-- `tests/v141_rollout.rs` — the current deployed-release compatibility gate:
-  boot the literal v1.4.1 release at genesis protocol v7, upgrade exactly one
+- `tests/v145_rollout.rs` — the current deployed-release compatibility gate:
+  boot the literal v1.4.5 release at genesis protocol v7, upgrade exactly one
   of four validators to the candidate, require two mixed
   network-key reshares to converge byte-identically with zero malicious
   reports and a served user lifecycle after each, then swap the remaining
@@ -272,20 +277,20 @@ drives them across epochs. The surviving scenarios (current build only):
   it independently the way a fleet does, while the in-process cluster test
   shares one such global across all four simulated validators and can only
   gate the vote arithmetic and the cross-epoch handoff path.
-- `tests/v141_churn.rs` — the churn counterpart: full sequential swap over
-  the literal v1.4.1 committee (on-disk RocksDB continuity), then a
-  peer-only-mirrored joiner folds into the reshared v1.4.1-origin key
+- `tests/v145_churn.rs` — the churn counterpart: full sequential swap over
+  the literal v1.4.5 committee (on-disk RocksDB continuity), then a
+  peer-only-mirrored joiner folds into the reshared v1.4.5-origin key
   (4→5, the OCS joiner trust-anchor path) and a shrink reshare removes an
   original validator (5→4).
-- `tests/malicious_v141.rs` — the test-testing counterpart: an honest
-  literal-v1.4.1 committee plus ONE current-build validator carrying the
+- `tests/malicious_v145.rs` — the test-testing counterpart: an honest
+  literal-v1.4.5 committee plus ONE current-build validator carrying the
   `test-testing`-gated reconfiguration-message fault (the hook lives in
   the main reconfiguration advance path in
   `crytographic_computation/mpc_computations.rs`); honest validators must
   convict it and reshare without it, asserted via the malicious-actors
   gauge. Green = the compatibility gates above are not vacuous. The
   workflow's `test_testing_fault` input runs the same fault through
-  `v141_rollout` itself (that run must fail closed); `malicious_v141` is
+  `v145_rollout` itself (that run must fail closed); `malicious_v145` is
   also directly dispatchable (the workflow builds the faulty binary).
 - **There is no BACKWARD direction in the matrix, and no scenario whose OLD
   side is pinned to a capability rather than to the deployed release.**
@@ -342,8 +347,12 @@ Every boundary still requires healthy validators, correct local epochs,
 protocol v7, quorum output convergence, zero malicious actors, zero rejected
 envelopes, no self-malicious logs, and no stranded sessions.
 
-The dependency upgrade has a separate **validator encryption-key preservation
-checkpoint** in `v141_rollout`. Before the first swap, the harness verifies
+The crypto-dependency upgrade (#2168) added a separate **validator
+encryption-key preservation checkpoint** to the deployed-release rollout, now
+`v145_rollout`. Under the v1.4.1-based gate it proved the candidate kept the
+keys a pre-#2168 binary generated; since the v1.4.5 retarget both sides derive
+with the same production sampler, so it guards the next derivation or
+key-selection change instead. Before the first swap, the harness verifies
 that the certified handoff into epoch 2 contains every original validator's
 public keys. That authenticated snapshot is the baseline for the upgraded
 committee. The existing store-backed seed-recovery regression separately
@@ -412,7 +421,7 @@ Run them on CI via the **Upgrade Test** workflow
 
 ## Binary upgrade during an active session
 
-`tests/v141_mid_session.rs` covers a different boundary from the rollout:
+`tests/v145_mid_session.rs` covers a different boundary from the rollout:
 OLD has already contributed to an identified epoch-2 network-key
 reconfiguration when its process is replaced. The harness waits for OLD's
 round-three computation to start and rejects any run where OLD already
