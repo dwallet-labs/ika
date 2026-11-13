@@ -407,6 +407,11 @@ impl ChangesetReceiver {
                         break;
                     }
                     advanced_total += advanced;
+                    // Noted per page, not once the drain ends: a node far
+                    // behind (after a restart it can start hundreds of
+                    // thousands of checkpoints back) drains for hours, and the
+                    // last-advance gauge must move with it.
+                    self.note_frontier(true);
                     debug!(advanced, "ChangesetReceiver folded changesets");
                 }
                 Err(e @ ChangesetError::AwaitingCommittee { .. }) => {
@@ -450,7 +455,9 @@ impl ChangesetReceiver {
                 }
             }
         }
-        self.note_frontier(advanced_total > 0);
+        if advanced_total == 0 {
+            self.note_frontier(false);
+        }
     }
 
     fn count_seek(&self, outcome: &str) {
@@ -460,9 +467,11 @@ impl ChangesetReceiver {
             .inc();
     }
 
-    /// Record whether this tick advanced the frontier, and report a frozen
-    /// upstream on the transition past [`UPSTREAM_FROZEN_AFTER`] without an
-    /// advance, and once more when the frontier advances again.
+    /// Record whether the frontier advanced: called on every page that
+    /// advances it, and once at the end of a tick that advanced nothing.
+    /// Reports a frozen upstream on the transition past
+    /// [`UPSTREAM_FROZEN_AFTER`] without an advance, and once more when the
+    /// frontier advances again.
     fn note_frontier(&mut self, advanced: bool) {
         let now = tokio::time::Instant::now();
         let previous_advance = self.frontier.advanced_at;
@@ -967,6 +976,15 @@ mod tests {
         /// A receiver bootstrapping at 10 over relays at `heads`, in preference
         /// order, serving one chain from 10 to 120.
         fn new(heads: &[u64]) -> Self {
+            Self::with_source(heads, |relays, _| relays)
+        }
+
+        /// [`Self::new`], with the receiver pulling through the source that
+        /// `source` builds over the relays and the metrics.
+        fn with_source(
+            heads: &[u64],
+            source: impl FnOnce(Arc<Relays>, Arc<OcsMetrics>) -> Arc<dyn ChangesetSource>,
+        ) -> Self {
             let (committee, keys) = Committee::new_simple_test_committee();
             let (dir, store) = committee_store(committee.clone());
             let mut chain = Vec::new();
@@ -994,7 +1012,7 @@ mod tests {
             let started = unix_now_secs();
             let receiver = ChangesetReceiver::new(
                 index.clone(),
-                relays.clone(),
+                source(relays.clone(), metrics.clone()),
                 store,
                 64,
                 10,
@@ -1256,6 +1274,62 @@ mod tests {
         );
         assert!(logs.lines_with(FROZEN).is_empty());
         assert!(logs.lines_with(RECOVERED).is_empty());
+    }
+
+    /// The relays, recording the last-advance gauge as each pull begins.
+    struct GaugeWatchingRelays {
+        relays: Arc<Relays>,
+        metrics: Arc<OcsMetrics>,
+        gauge_at_pull: Arc<parking_lot::Mutex<Vec<i64>>>,
+    }
+
+    #[async_trait]
+    impl ChangesetSource for GaugeWatchingRelays {
+        async fn changeset_page(
+            &self,
+            from_seq: CheckpointSequenceNumber,
+            limit: u32,
+            require_contiguous: bool,
+            seek_successor: bool,
+        ) -> Result<Vec<ChangesetEntry>, TransportError> {
+            self.gauge_at_pull.lock().push(
+                self.metrics
+                    .changeset_upstream_last_advance_timestamp_seconds
+                    .get(),
+            );
+            self.relays
+                .changeset_page(from_seq, limit, require_contiguous, seek_successor)
+                .await
+        }
+    }
+
+    /// A node far behind drains page after page in one tick; after a restart
+    /// that can take hours. Every page that advances the frontier stamps the
+    /// gauge as it folds, not only the end of the drain.
+    #[tokio::test(start_paused = true)]
+    async fn a_long_catch_up_stamps_the_gauge_on_every_page() {
+        let gauge_at_pull = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let pulls = gauge_at_pull.clone();
+        let mut fx = FrozenRelayFixture::with_source(&[120], move |relays, metrics| {
+            Arc::new(GaugeWatchingRelays {
+                relays,
+                metrics,
+                gauge_at_pull: pulls,
+            })
+        });
+        fx.stale_last_advance();
+        fx.tick_at(tokio::time::Instant::now(), [0].into_iter())
+            .await;
+
+        assert_eq!(fx.head(), Some(120), "one tick drains the whole chain");
+        // Pages of 64 from 10: pulls from 10, 74 and 121, the last one empty.
+        let seen = gauge_at_pull.lock().clone();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert_eq!(seen[0], STALE_STAMP, "nothing has folded yet");
+        assert!(
+            seen[1..].iter().all(|stamp| *stamp >= fx.started),
+            "each page stamps the gauge as it folds: {seen:?}"
+        );
     }
 
     /// A relay that serves one fixed page, counting how often its pages are
