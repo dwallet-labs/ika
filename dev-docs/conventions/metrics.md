@@ -477,8 +477,10 @@ so the gap alert never fires. These families cover that case:
   `ika_ocs_changeset_last_progress_timestamp_seconds`, which is 0 until the
   first advance, it ages even when no relay ever served this node, so
   `time() - ika_ocs_changeset_upstream_last_advance_timestamp_seconds` is how
-  long no relay has served the node anything new. It is evaluated once per
-  receiver poll (2 s); measure its healthy peak across the fleet after
+  long no relay has served the node anything new. It is stamped on every page
+  that advances the frontier, so it keeps moving through the hours-long
+  catch-up after a restart, and checked at least once per receiver poll
+  (2 s); measure its healthy peak across the fleet after
   rollout before paging on it. Because it ages from boot, an alert also needs
   the uptime condition, as for the pusher's gauge:
 
