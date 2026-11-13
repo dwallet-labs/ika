@@ -280,24 +280,24 @@ lazy_static = "1.5.0"
 
 # TEMPORARY Sui source: every Sui-workspace crate below (the Move crates and
 # the Sui members) is pinned to the head of MystenLabs/sui#28614, which adds
-# `consensus_core::CommitConsumerMonitor::peer_progress()` for the
+# `consensus_core::ConsumerMonitor::peer_progress()` for the
 # commit-liveness watchdog. That revision is on Sui `main`, after
 # mainnet-v1.83.1, so the fastcrypto, anemo, mysten-sim (`msim`, and
 # scripts/simtest) and exact `tokio` pins follow it. Return every pin to a Sui
 # release tag once a release includes #28614.
 # Move dependencies
-move-binary-format = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-move-bytecode-utils = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-move-compiler = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-move-package = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-move-package-compilation = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-move-symbol-pool = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-move-core-types = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
+move-binary-format = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+move-bytecode-utils = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+move-compiler = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+move-package = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+move-package-compilation = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+move-symbol-pool = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+move-core-types = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
 
 
-fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "0a263279c31a45ba4bcd986a82b7e99c63ed16c0" }
-fastcrypto-tbls = { git = "https://github.com/MystenLabs/fastcrypto", rev = "0a263279c31a45ba4bcd986a82b7e99c63ed16c0" }
-fastcrypto-zkp = { git = "https://github.com/MystenLabs/fastcrypto", rev = "0a263279c31a45ba4bcd986a82b7e99c63ed16c0", package = "fastcrypto-zkp" }
+fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "a58b2984d6ac827b40c48fc0f2478a46569b5b17" }
+fastcrypto-threshold = { git = "https://github.com/MystenLabs/fastcrypto", rev = "a58b2984d6ac827b40c48fc0f2478a46569b5b17" }
+fastcrypto-zkp = { git = "https://github.com/MystenLabs/fastcrypto", rev = "a58b2984d6ac827b40c48fc0f2478a46569b5b17", package = "fastcrypto-zkp" }
 
 # anemo dependencies
 anemo = { git = "https://github.com/mystenlabs/anemo.git", rev = "845a9b5aab1f8b78fb67c0e8e1998cb2e6a4d72e" }
@@ -305,27 +305,27 @@ anemo-build = { git = "https://github.com/mystenlabs/anemo.git", rev = "845a9b5a
 anemo-tower = { git = "https://github.com/mystenlabs/anemo.git", rev = "845a9b5aab1f8b78fb67c0e8e1998cb2e6a4d72e" }
 
 ### Sui Members ###
-bin-version =  { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-mysten-common = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-mysten-metrics = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-mysten-network = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-mysten-service = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-shared-crypto = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-config = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-faucet = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-indexer = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-json = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-keys = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-light-client = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-macros = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-metrics-push-client = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-move = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-move-build = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-package-management = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-protocol-config = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-protocol-config-macros = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-sdk = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
+bin-version =  { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+mysten-common = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+mysten-metrics = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+mysten-network = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+mysten-service = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+shared-crypto = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-config = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-faucet = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-indexer = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-json = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-keys = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-light-client = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-macros = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-metrics-push-client = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-move = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-move-build = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-package-management = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-protocol-config = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-protocol-config-macros = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-sdk = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
 # Client, proto, BCS types, and transaction builder used by Ika's Sui-facing
 # paths. Pin all crates to the sui-rust-sdk revision that
 # sui@mainnet-v1.83.1 itself depends on, so there is exactly one copy of each
@@ -334,22 +334,22 @@ sui-rpc = { git = "https://github.com/MystenLabs/sui-rust-sdk.git", rev = "8c356
 sui-crypto = { git = "https://github.com/MystenLabs/sui-rust-sdk.git", rev = "8c356d65b1c324590a3fd25990c382af308ea545", features = ["ed25519", "secp256k1", "secp256r1"] }
 sui-sdk-types = { git = "https://github.com/MystenLabs/sui-rust-sdk.git", rev = "8c356d65b1c324590a3fd25990c382af308ea545" }
 sui-transaction-builder = { git = "https://github.com/MystenLabs/sui-rust-sdk.git", rev = "8c356d65b1c324590a3fd25990c382af308ea545" }
-sui-simulator = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-storage = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-swarm = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-swarm-config = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-test-transaction-builder = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-tls = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-transaction-checks = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-sui-types = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-telemetry-subscribers = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-test-cluster = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-typed-store = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-typed-store-error = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
+sui-simulator = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-storage = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-swarm = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-swarm-config = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-test-transaction-builder = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-tls = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-transaction-checks = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+sui-types = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+telemetry-subscribers = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+test-cluster = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+typed-store = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+typed-store-error = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
 
-consensus-config = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-consensus-core = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
-consensus-types = { git = "https://github.com/dwallet-labs/sui", rev = "0dba9307f024faa2711881c504b50f34e47d65b2" }
+consensus-config = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+consensus-core = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
+consensus-types = { git = "https://github.com/dwallet-labs/sui", rev = "222ffe21c711f2c8a75cf570cb8a0a3732107783" }
 
 ### Workspace Members ###
 dwallet-rng = { path = "crates/dwallet-rng" }

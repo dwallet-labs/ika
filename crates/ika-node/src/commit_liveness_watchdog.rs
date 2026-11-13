@@ -850,8 +850,9 @@ mod tests {
     }
 
     /// A probe that finished at `secs` and that no peer answered. `round` is
-    /// what the last answered probe left behind: consensus-core never lowers
-    /// it, so an isolated node reads it frozen.
+    /// the accepted round that probe reports. With no answers, consensus-core
+    /// computes it from the blocks this node already holds, so an isolated
+    /// node reads it frozen, at or below the last answered value.
     fn unanswered(secs: u64, round: u64) -> Option<PeerProgress> {
         answered_by(secs, round, 0)
     }
@@ -1320,6 +1321,41 @@ mod tests {
                 expected,
                 "at {secs}s: a peer that answers inside the window makes this a halt, and \
                  exiting would add a replaying validator to a committee short of quorum"
+            );
+        }
+    }
+
+    /// consensus-core reports each probe's accepted round as that probe
+    /// measured it, so a probe that fewer peers answer can read a lower round,
+    /// down to 0, and a later probe reads the old round again. During a halt
+    /// whose answers come and go, that recovery is not peers advancing.
+    #[test]
+    fn an_accepted_round_that_drops_and_recovers_is_not_peers_advancing() {
+        let mut clock = Clock::new();
+        let halted = 2_000;
+        assert_eq!(
+            clock.tick_at_with_peers(2_000, answered(2_000, halted)),
+            Tick::Idle
+        );
+        clock.commit_at(2_000);
+        let poll = POLL_INTERVAL.as_secs();
+        for secs in (2_000 + poll..=2_000 + 2 * BOUND.as_secs()).step_by(poll as usize) {
+            let peers = match (secs / poll) % 3 {
+                0 => unanswered(secs, 0),
+                1 => answered_by(secs, halted - 10, 1),
+                _ => answered(secs, halted),
+            };
+            let expected = if secs < 2_000 + PEER_STALL_WINDOW.as_secs() {
+                // The last commit is still inside the window.
+                Tick::Silent(Duration::from_secs(secs - 2_000))
+            } else {
+                Tick::NetworkStalled
+            };
+            assert_eq!(
+                clock.tick_at_with_peers(secs, peers),
+                expected,
+                "at {secs}s: the round dropped and came back to {halted}, which is no higher \
+                 than before, so the committee is still halted"
             );
         }
     }

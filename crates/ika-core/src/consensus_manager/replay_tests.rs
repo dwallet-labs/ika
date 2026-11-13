@@ -475,14 +475,13 @@ async fn the_round_prober_publishes_peer_progress_after_startup() {
     let authority = timeout(Duration::from_secs(30), fixture.start(consumer))
         .await
         .unwrap();
-    let mut probes = monitor.subscribe_peer_progress();
     let first = timeout(Duration::from_secs(30), async {
         loop {
-            let progress = probes.latest();
+            let progress = monitor.peer_progress();
             if progress.probed_at_ms > 0 {
                 return progress;
             }
-            probes.changed().await.unwrap();
+            sleep(Duration::from_millis(100)).await;
         }
     })
     .await
@@ -490,10 +489,11 @@ async fn the_round_prober_publishes_peer_progress_after_startup() {
     let next = match first {
         Some(first) => timeout(Duration::from_secs(30), async {
             loop {
-                let progress = probes.changed().await.unwrap();
+                let progress = monitor.peer_progress();
                 if progress.probed_at_ms > first.probed_at_ms {
                     return progress;
                 }
+                sleep(Duration::from_millis(100)).await;
             }
         })
         .await
@@ -503,7 +503,7 @@ async fn the_round_prober_publishes_peer_progress_after_startup() {
     authority.stop().await;
     let first = first.expect(
         "consensus-core's round prober published no PeerProgress within 30s of startup. If a \
-         Sui bump moved or removed CommitConsumerMonitor::peer_progress, repoint \
+         Sui bump moved or removed ConsumerMonitor::peer_progress, repoint \
          ConsensusManager::peer_progress at its replacement — until then the commit-liveness \
          watchdog reads every stall as having no information and never exits an isolated \
          validator",

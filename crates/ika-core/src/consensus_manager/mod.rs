@@ -10,9 +10,7 @@ use async_trait::async_trait;
 use consensus_config::{
     ChainType, Committee, ConsensusProtocolConfig, NetworkKeyPair, Parameters, ProtocolKeyPair,
 };
-use consensus_core::{
-    Clock, CommitConsumerArgs, CommitConsumerMonitor, ConsensusAuthority, NetworkType,
-};
+use consensus_core::{Clock, CommitConsumerArgs, ConsensusAuthority, ConsumerMonitor, NetworkType};
 use fastcrypto::traits::KeyPair as _;
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
@@ -122,8 +120,8 @@ pub struct ConsensusManager {
 
     consensus_handler: Mutex<Option<MysticetiConsensusHandler>>,
 
-    consumer_monitor: ArcSwapOption<CommitConsumerMonitor>,
-    consumer_monitor_sender: broadcast::Sender<Arc<CommitConsumerMonitor>>,
+    consumer_monitor: ArcSwapOption<ConsumerMonitor>,
+    consumer_monitor_sender: broadcast::Sender<Arc<ConsumerMonitor>>,
 
     running: Mutex<Running>,
     boot_counter: Mutex<u64>,
@@ -400,7 +398,7 @@ impl ConsensusManager {
 
     /// This node's view of committee progress, as the running consensus
     /// instance's round prober and commit syncer publish it on its
-    /// [`CommitConsumerMonitor`] (see [`PeerProgress`] for the fields and how
+    /// [`ConsumerMonitor`] (see [`PeerProgress`] for the fields and how
     /// to read them); `None` before consensus has started for the first time.
     ///
     /// The probe fields are evidence that does not depend on this node
@@ -518,12 +516,12 @@ impl ConsensusClient for UpdatableConsensusClient {
 
 /// Waits for consensus to finish replaying at consensus handler.
 pub struct ReplayWaiter {
-    consumer_monitor_receiver: broadcast::Receiver<Arc<CommitConsumerMonitor>>,
+    consumer_monitor_receiver: broadcast::Receiver<Arc<ConsumerMonitor>>,
 }
 
 impl ReplayWaiter {
     pub(crate) fn new(
-        consumer_monitor_receiver: broadcast::Receiver<Arc<CommitConsumerMonitor>>,
+        consumer_monitor_receiver: broadcast::Receiver<Arc<ConsumerMonitor>>,
     ) -> Self {
         Self {
             consumer_monitor_receiver,
