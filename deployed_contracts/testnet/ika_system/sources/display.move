@@ -48,6 +48,7 @@ public(package) fun create(p: Publisher, staked_ika_image_url: String, ctx: &mut
 // === Private Functions ===
 
 /// Creates initial `Display` for the `StakedIka` type.
+#[allow(deprecated_usage)]
 fun init_staked_ika_display(
     p: &Publisher,
     image_url: String,
